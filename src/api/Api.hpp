@@ -27,6 +27,7 @@
 #include "api/HealthController.hpp"
 #include "api/JobsController.hpp"
 #include "api/Middleware.hpp"
+#include "api/OrganizationsController.hpp"
 
 namespace Api {
 

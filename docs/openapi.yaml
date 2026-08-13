@@ -237,6 +237,80 @@ components:
       properties:
         message: { type: string }
 
+    # Mirrors Tenancy::to_json(Organization) in src/tenancy/Organization.hpp.
+    Organization:
+      type: object
+      required: [id, bin, name, tax_regime, vat_payer, status, created_at, updated_at]
+      properties:
+        id:         { type: string, format: uuid }
+        bin:        { type: string, pattern: '^[0-9]{12}$', description: 12-digit BIN/IIN — format-only in v1, check digit is P1 }
+        name:       { type: string }
+        tax_regime: { type: string, enum: [snr_simplified, standard] }
+        vat_payer:  { type: boolean }
+        status:     { type: string, enum: [active, suspended, archived] }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    # GET /api/v1/orgs/mine item shape: Organization + the caller's role in it.
+    OrganizationWithRole:
+      allOf:
+        - $ref: '#/components/schemas/Organization'
+        - type: object
+          required: [role]
+          properties:
+            role: { type: string, enum: [owner, accountant, viewer] }
+
+    OrganizationListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Organization' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    OrganizationDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Organization' }
+
+    MineOrganizationsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/OrganizationWithRole' }
+
+    # Mirrors Tenancy::to_json(OrgMember) in src/tenancy/OrgMember.hpp.
+    OrgMember:
+      type: object
+      required: [id, org_id, user_id, role, created_at, updated_at]
+      properties:
+        id:         { type: string, format: uuid }
+        org_id:     { type: string, format: uuid }
+        user_id:    { type: string, format: uuid }
+        role:       { type: string, enum: [owner, accountant, viewer] }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    OrgMemberDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/OrgMember' }
+
+    # POST /api/v1/orgs/{id}/switch. Mirrors
+    # OrganizationsController::switchOrg — Response::ok({{"access", access}}).
+    SwitchResponse:
+      type: object
+      required: [access]
+      properties:
+        access: { type: string, description: New HS256 access JWT carrying an `org` claim set to {id} }
+
 # -----------------------------------------------------------------------------
 paths:
   /:
@@ -755,6 +829,160 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AuditListResponse' }
         '403': { description: Missing the audit-read permission }
+
+  # ── Organizations (tenants) + membership ────────────────────────────────────
+  /api/v1/orgs:
+    get:
+      summary: List organizations (admin)
+      tags: [orgs]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Organization page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrganizationListResponse' }
+        '403': { description: Not an admin }
+    post:
+      summary: Create an organization (admin) — tenants are provisioned by a system admin, not self-service
+      tags: [orgs]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bin, name]
+              properties:
+                bin:        { type: string, pattern: '^[0-9]{12}$', description: 'Exactly 12 digits; check-digit validation is P1' }
+                name:       { type: string }
+                tax_regime: { type: string, enum: [snr_simplified, standard], default: snr_simplified }
+                vat_payer:  { type: boolean, default: false }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrganizationDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: Not an admin }
+        '409': { description: An organization with that BIN already exists }
+        '422': { description: BIN does not match the required 12-digit format }
+
+  /api/v1/orgs/mine:
+    get:
+      summary: List the caller's organizations, each with their role in it
+      tags: [orgs]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Organizations the caller is a member of
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MineOrganizationsResponse' }
+        '401': { description: Not authenticated }
+
+  /api/v1/orgs/{id}/switch:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Mint a new access token scoped to this organization
+      description: |
+        Issues a fresh access token with the SAME claim shape as the login/
+        refresh access token (OrganizationsController::switchOrg mirrors
+        AuthController::mint_session's access-claim assembly), plus an `org`
+        claim set to {id}. Requires a live membership row for the caller in
+        {id}. The refresh token/cookie is untouched.
+
+        Caveat for multi-org clients: after the next POST /api/v1/auth/refresh,
+        the active org resets to mint_session's single-membership default
+        (empty if the caller belongs to 0 or >1 organizations) — a client
+        with more than one organization must call /switch again after every
+        refresh to stay scoped to a non-default org. This will be handled by
+        the frontend (Task 8).
+      tags: [orgs]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: New access token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SwitchResponse' }
+        '400': { description: Malformed organization id }
+        '401': { description: Not authenticated }
+        '403': { description: Not a member of this organization }
+
+  /api/v1/orgs/{id}/members:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Add a member to an organization (admin, or owner of this organization)
+      tags: [orgs]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role]
+              properties:
+                user_id: { type: string, format: uuid }
+                role:    { type: string, enum: [owner, accountant, viewer] }
+      responses:
+        '201':
+          description: Member added
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgMemberDetailResponse' }
+        '400': { description: Validation failed }
+        '403': { description: Not an admin or owner of this organization }
+        '409': { description: This user is already a member of the organization }
+
+  /api/v1/orgs/{id}/members/{user_id}:
+    parameters:
+      - { name: id,      in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: user_id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      summary: Change a member's role (admin, or owner of this organization)
+      tags: [orgs]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [owner, accountant, viewer] }
+      responses:
+        '200':
+          description: Role updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgMemberDetailResponse' }
+        '400': { description: Validation failed }
+        '403': { description: Not an admin or owner of this organization }
+        '404': { description: Member not found }
+        '409': { description: Cannot demote the last owner of an organization }
+    delete:
+      summary: Remove a member from an organization (admin, or owner of this organization)
+      tags: [orgs]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Member removed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessageResponse' }
+        '403': { description: Not an admin or owner of this organization }
+        '404': { description: Member not found }
+        '409': { description: Cannot remove the last owner of an organization }
 
   /api/v1/jobs:
     get:
