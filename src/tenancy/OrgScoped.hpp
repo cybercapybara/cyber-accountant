@@ -47,10 +47,10 @@ public:
     /// @p from_primary forces the primary (read-after-write).
     std::optional<Entity> find_in_org(const KeyT& id, const std::string& org_id, bool from_primary = false) {
         auto query = [&](auto& txn) -> std::optional<Entity> {
-            auto r = txn.exec_params(select_prefix() + " WHERE " + Derived::kIdColumn + " = $1 AND " +
-                                         Derived::kOrgColumn + " = $2",
-                                     id,
-                                     org_id);
+            auto r = txn.exec_params(
+                select_prefix() + " WHERE " + Derived::kIdColumn + " = $1 AND " + Derived::kOrgColumn + " = $2",
+                id,
+                org_id);
             if (r.empty())
                 return std::nullopt;
             return Entity::from_row(r[0]);
