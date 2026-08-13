@@ -8,5 +8,5 @@ dependencies:
 - name: cpp-frontend
   repository: file://../cpp-frontend
   version: 0.1.0
-digest: sha256:b61b3cf36d854c8ee080637a6741c265023514d38a39b0980414927350ed75c0
-generated: "2026-06-20T10:27:16.695397+03:00"
+digest: sha256:61736129572a6a7b676319244936be0d6d643170cc099d02438c15471a2d4e1d
+generated: "2026-08-14T04:28:02.037899+05:00"
