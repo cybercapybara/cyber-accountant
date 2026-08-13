@@ -79,6 +79,11 @@ struct AuthPrincipal {
     std::string subject;
     std::vector<std::string> roles;
     std::vector<std::string> scopes;
+    // Active organization, from the access token's "org" claim. Empty string
+    // means the claim wasn't set (0 or >1 memberships at mint time, or a
+    // pre-multitenancy token) — Tenancy::org_context_of() treats that as
+    // fail-closed "no org access", not "unscoped access".
+    std::string org;
     json raw_claims;
 };
 
@@ -175,6 +180,11 @@ public:
 
         AuthPrincipal p;
         p.subject = claims.value("sub", "");
+        // Optional — most tokens (pre-multitenancy, or a user in 0/>1 orgs at
+        // login) simply won't carry it. Never required for verify_jwt to
+        // succeed: the refresh flow must keep working for principals with no
+        // org claim at all.
+        p.org = claims.value("org", "");
         if (claims.contains(config_.jwt_roles_claim)) {
             p.roles = detail::extract_string_array(claims[config_.jwt_roles_claim]);
         }

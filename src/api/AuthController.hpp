@@ -38,6 +38,7 @@
 #include "security/RateLimit.hpp"
 #include "security/SessionStore.hpp"
 #include "security/Tokens.hpp"
+#include "tenancy/OrgMemberRepository.hpp"
 #include "utils/Config.hpp"
 #include "utils/Crypto.hpp"
 #include "utils/ErrorResponse.hpp"
@@ -317,6 +318,25 @@ private:
             {"permissions", perm_bits},
             {cfg.jwt_roles_claim, roles_array},
         };
+        // Org claim: set ONLY when the user belongs to exactly one
+        // organization — an unambiguous default. Zero memberships means
+        // nothing to default to; more than one means the client must pick
+        // explicitly via the switch flow (Task 7). This same rule runs on
+        // BOTH login and refresh (mint_session is the sole minting path for
+        // both), so the claim isn't literally copied from the token being
+        // refreshed — it's recomputed from current membership state every
+        // time. That is deliberate: it self-heals a stale claim (e.g. the
+        // user's one org was deleted, or a second org was added between
+        // login and refresh) instead of blindly carrying forward a value
+        // that may no longer be valid, while still reproducing the same
+        // claim across a refresh in the common case where membership hasn't
+        // changed. verify_jwt() never requires this claim, so tokens minted
+        // before this change (or for 0/>1-membership users) keep working.
+        Tenancy::OrgMemberRepository org_members;
+        auto memberships = org_members.list_for_user(user.id);
+        if (memberships.size() == 1) {
+            access_claims["org"] = memberships.front().org_id;
+        }
         if (!cfg.jwt_issuer.empty())
             access_claims["iss"] = cfg.jwt_issuer;
         if (!cfg.jwt_audience.empty())

@@ -10,6 +10,7 @@
 #pragma once
 
 #include "security/Auth.hpp"
+#include "tenancy/OrgContext.hpp"
 #include "utils/ErrorResponse.hpp"
 
 /// Reject the request with 403 unless the principal is a full admin.
@@ -70,6 +71,22 @@
             callback(_guard_err);                                       \
             return;                                                     \
         }                                                               \
+    } while (0)
+
+/// Bind the caller's organization context (org id + role) into `ctx`
+/// (Tenancy::OrgContext), or reject with 403. Fail-closed like API_REQUIRE_OWNER
+/// — NOT a no-op when auth is disabled: tenant-scoped data is meaningless
+/// without an identity + a live membership row backing the `org` claim.
+/// All org-scoped controllers (P0+) start their handlers with this.
+#define API_REQUIRE_ORG(req, callback, ctx)           \
+    Tenancy::OrgContext ctx;                          \
+    do {                                              \
+        auto _org_ctx = Tenancy::org_context_of(req); \
+        if (!_org_ctx) {                              \
+            callback(ErrorResponse::forbidden());     \
+            return;                                   \
+        }                                             \
+        (ctx) = *_org_ctx;                            \
     } while (0)
 
 /// Reject with 503 when the job queue is disabled. The includer must also
