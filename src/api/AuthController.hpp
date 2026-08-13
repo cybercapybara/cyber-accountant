@@ -333,6 +333,7 @@ private:
         // changed. verify_jwt() never requires this claim, so tokens minted
         // before this change (or for 0/>1-membership users) keep working.
         Tenancy::OrgMemberRepository org_members;
+        // One extra read per mint; login/refresh only, not per-request — no cache at P0.
         auto memberships = org_members.list_for_user(user.id);
         if (memberships.size() == 1) {
             access_claims["org"] = memberships.front().org_id;

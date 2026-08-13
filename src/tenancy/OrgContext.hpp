@@ -38,6 +38,7 @@ inline std::optional<OrgContext> org_context_of(const drogon::HttpRequestPtr& re
     auto p = Security::Auth::principal_of(req);
     if (!p || p->subject.empty() || p->org.empty())
         return std::nullopt;
+    // Per-request membership read; add caching here if it shows up in profiles.
     OrgMemberRepository members;
     auto m = members.find_membership(p->org, p->subject);
     if (!m)
