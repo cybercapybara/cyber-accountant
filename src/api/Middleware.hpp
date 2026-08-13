@@ -306,10 +306,9 @@ inline void register_content_type_check() {
         // application/json, or any structured-suffix JSON type
         // (e.g. application/merge-patch+json).
         const bool is_json = (ct == "application/json") || (ct.starts_with("application/") && ct.ends_with("+json"));
-        // multipart/form-data is the legitimate non-JSON body: file uploads
-        // (POST /api/v1/admin/uploads). Without this exemption the gate 415s
-        // EVERY upload before UploadController — which does its own strict
-        // validation (admin gate + magic-byte sniff + size cap) — ever runs.
+        // multipart/form-data is the legitimate non-JSON body: file uploads.
+        // Without this exemption the gate would 415 every multipart request
+        // before a controller's own body validation ever runs.
         const bool is_multipart = ct.starts_with("multipart/form-data");
         if (is_json || is_multipart)
             return {};

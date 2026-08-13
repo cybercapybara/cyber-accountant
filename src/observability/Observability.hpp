@@ -331,7 +331,8 @@ public:
      * @param service_name Service name for traces
      * @param otlp_endpoint OTLP HTTP endpoint (empty = OStream fallback)
      */
-    void initialize(const std::string& service_name = "cyber_accountant_service", const std::string& otlp_endpoint = "") {
+    void initialize(const std::string& service_name = "cyber_accountant_service",
+                    const std::string& otlp_endpoint = "") {
         // No endpoint → leave the global no-op TracerProvider in place. The
         // old OStream fallback exported EVERY span synchronously to stdout
         // under a global mutex (SimpleSpanProcessor) — a per-request hot-path

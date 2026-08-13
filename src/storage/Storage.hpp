@@ -62,10 +62,10 @@ public:
 };
 
 /// Same-origin path prefix under which the backend serves LocalStorage objects
-/// when no CDN/public base URL is configured — see the `GET /uploads/{key}`
-/// route and nginx's `/uploads/` proxy. url() returns `<prefix><key>`, which is
-/// absolute, so a stored `![](…)` still resolves from /posts/<slug> or
-/// /admin/media (a bare key did not).
+/// when no CDN/public base URL is configured. A caller wiring an HTTP
+/// upload/download surface on top of this seam serves reads under this
+/// prefix and proxies it same-origin (e.g. via nginx) so url() — which
+/// returns `<prefix><key>` — resolves regardless of which page embeds it.
 inline constexpr const char* kLocalPublicPrefix = "/uploads/";
 
 /// Reject keys that could escape the storage root (path traversal / absolute

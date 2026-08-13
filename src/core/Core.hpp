@@ -220,7 +220,8 @@ private:
         auto log_level = cfg.get<std::string>("logging.level", "LOG_LEVEL", "info");
         auto log_format = cfg.get<std::string>("logging.format", "LOG_FORMAT", "text");
         auto metrics_addr = cfg.get<std::string>("observability.metrics_address", "METRICS_ADDRESS", "0.0.0.0:9090");
-        auto service_name = cfg.get<std::string>("observability.service_name", "SERVICE_NAME", "cyber_accountant_service");
+        auto service_name =
+            cfg.get<std::string>("observability.service_name", "SERVICE_NAME", "cyber_accountant_service");
         auto otlp_endpoint = cfg.get<std::string>("observability.otlp_endpoint", "OTLP_ENDPOINT", "");
         Observability::initialize(log_name, log_file, metrics_addr, service_name, otlp_endpoint, log_format);
         Observability::get().logger().set_level(log_level);
@@ -405,8 +406,8 @@ private:
         auto brokers = cfg.get<std::string>("messaging.kafka.brokers", "KAFKA_BROKERS", "localhost:9092");
 
         if (cfg.get<bool>("messaging.kafka.producer.enabled", "KAFKA_PRODUCER_ENABLED", false)) {
-            auto producer_id =
-                cfg.get<std::string>("messaging.kafka.producer.client_id", "KAFKA_PRODUCER_ID", "cyber_accountant_producer");
+            auto producer_id = cfg.get<std::string>(
+                "messaging.kafka.producer.client_id", "KAFKA_PRODUCER_ID", "cyber_accountant_producer");
             Messaging::get().initialize_producer(brokers, producer_id);
         }
         if (cfg.get<bool>("messaging.kafka.consumer.enabled", "KAFKA_CONSUMER_ENABLED", false)) {
@@ -830,18 +831,6 @@ inline void begin_shutdown() {
 }
 inline bool is_shutting_down() {
     return shutting_down_flag.load();
-}
-
-/// Content module (posts/uploads/sitemap) master switch. Routes are
-/// statically registered, so handlers consult this per-request and 404
-/// when the module is off. Same is_initialized() guard as
-/// ContentPagesController::base_url — a handler can run before/after Core
-/// teardown in tests, and Config::get() throws when uninitialized; treat
-/// that the same as "off" rather than letting it escape as a 500.
-inline bool content_enabled() {
-    if (!Config::is_initialized())
-        return false;
-    return Config::get().get<bool>("content.enabled", "CONTENT_ENABLED", false);
 }
 
 }  // namespace Core
