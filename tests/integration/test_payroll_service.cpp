@@ -291,7 +291,10 @@ TEST_F(PayrollServiceTest, PostToJournalBalances) {
     EXPECT_EQ(entry->entry_date, "2026-07-31");  // last day of the period
 
     auto lines = journal.load_lines(*entry, /*from_primary=*/true);
-    ASSERT_EQ(lines.size(), 6u);  // debit 7210 + 5 non-zero credits (3150 included, standard regime)
+    // debit 7210 + 6 non-zero credits: 3350 net, 3120 ИПН, 3220 ОПВ+ОПВР,
+    // 3210 СО, 3230 ОСМС+ВОСМС, and 3150 социальный налог (standard regime,
+    // so it is non-zero and posted).
+    ASSERT_EQ(lines.size(), 7u);
 
     long long debit_total = 0;
     long long credit_total = 0;
@@ -410,7 +413,8 @@ TEST_F(PayrollServiceTest, PostToJournalOmitsZeroSocialTaxLineOnSnrSimplified) {
     auto entry = journal.find_in_org(entry_id, org_id, /*from_primary=*/true);
     ASSERT_TRUE(entry);
     auto lines = journal.load_lines(*entry, /*from_primary=*/true);
-    ASSERT_EQ(lines.size(), 5u);  // no 3150 line — social_tax is zero
+    // debit 7210 + 5 credits; no 3150 line, social_tax is zero under СНР
+    ASSERT_EQ(lines.size(), 6u);
     for (const auto& l : lines)
         EXPECT_NE(l.account_code, "3150");
 }
