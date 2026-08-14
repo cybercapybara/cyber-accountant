@@ -164,7 +164,11 @@ private:
     }
 
     static std::string format_date(const std::chrono::year_month_day& ymd) {
-        char buf[11];
+        // Sized for the widest output the conversions can theoretically
+        // produce, not for the 10 characters a valid date needs. GCC's
+        // -Wformat-truncation reasons about the full int/unsigned range and
+        // errors under -Werror on a tightly-sized buffer.
+        char buf[48];
         std::snprintf(buf,
                       sizeof(buf),
                       "%04d-%02u-%02u",

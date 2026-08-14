@@ -786,7 +786,9 @@ private:
         // `floor<days>(...)` here would be resolved against whatever else is
         // visible rather than unambiguously against std::chrono.
         const std::chrono::year_month_day ymd{std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())};
-        char buf[11];
+        // Sized for the conversions' theoretical maximum, not the 10
+        // characters a valid date needs — see TaxCalendar::format_date.
+        char buf[48];
         std::snprintf(buf,
                       sizeof(buf),
                       "%04d-%02u-%02u",

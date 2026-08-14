@@ -163,7 +163,9 @@ inline std::string last_day_of_month(int year, int month) {
     int day = kDaysInMonth[month - 1];
     if (month == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0))
         day = 29;
-    char buf[16];
+    // Sized for the conversions' theoretical maximum, not the 10 characters
+    // a valid date needs — see Tax::TaxCalendar::format_date.
+    char buf[48];
     std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d", year, month, day);
     return std::string(buf);
 }
