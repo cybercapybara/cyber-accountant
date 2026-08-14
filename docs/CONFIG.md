@@ -201,10 +201,16 @@ For URL components: `REDIS_HOST`, `REDIS_PORT`.
 | Env | JSON key | Type | Default |
 |---|---|---|---|
 | `WORKER_ID` | `worker.id` | string | `worker-1` |
-| `WORKER_TYPES` | `worker.types` | csv | `default` | Queues the worker pulls from. MUST include `account_email`, `email.send`, and `webhook.deliver` or those jobs pile up undrained. |
+| `WORKER_TYPES` | `worker.types` | csv | `default` | Queues the worker pulls from. MUST include `account_email`, `email.send`, `webhook.deliver`, and `docgen.render` (needs the worker-runtime image — TeX Live, see `docker/Dockerfile`) or those jobs pile up undrained. |
 | `WORKER_CONCURRENCY` | `worker.concurrency` | int | `2` |
 | `WORKER_HEALTH_PORT` | `worker.health_port` | int | `9091` |
 | `WORKER_BRPOP_TIMEOUT` | `worker.brpop_timeout` | int | `5` |
+
+## Docgen (`docgen.render` job — src/docgen/RenderJob.hpp)
+
+| Env | JSON key | Type | Default | Notes |
+|---|---|---|---|---|
+| `DOCGEN_LATEX_CMD` | `docgen.latex_cmd` | string | `xelatex` | The LaTeX compiler `RenderJob` shells out to (run twice, each under `/usr/bin/timeout 60`). Tests point this at a stub script that copies a canned PDF instead of invoking real XeLaTeX — see `tests/integration/test_render_job.cpp`. |
 
 ## Conventions
 

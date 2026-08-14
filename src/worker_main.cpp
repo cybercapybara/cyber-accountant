@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string_view>
@@ -28,6 +29,7 @@
 
 #include "cache/Cache.hpp"
 #include "core/Core.hpp"
+#include "docgen/RenderJob.hpp"  // "docgen.render" job handler — self-registers on include
 #include "email/AccountEmailWorker.hpp"
 #include "jobs/BuiltinHandlers.hpp"
 #include "jobs/Dispatcher.hpp"
@@ -243,7 +245,45 @@ void worker_loop(const std::string& worker_id, const std::vector<std::string>& t
     spdlog::info("Worker thread stopped: id={}", worker_id);
 }
 
+/**
+ * @brief `--render-template <slug> <fixture.json> <outdir>` — validate,
+ *        render and XeLaTeX-compile one fixture, standalone (no
+ *        Core::initialize: no Postgres/Redis/Storage needed). Used by
+ *        scripts/render-templates.sh, which the `template-render` CI job
+ *        runs against the worker image (the only place TeX Live lives — see
+ *        docker/Dockerfile) for every fixture under every template version
+ *        directory in templates/latex.
+ * @return 0 and prints "PASS ..." on success; 1 and prints "FAIL ...: <why>"
+ *         to stderr otherwise.
+ */
+int run_render_template(const std::string& slug, const std::string& fixture_path, const std::string& out_dir) {
+    try {
+        std::ifstream fixture_file(fixture_path);
+        if (!fixture_file)
+            throw std::runtime_error("cannot open fixture: " + fixture_path);
+        nlohmann::json input;
+        fixture_file >> input;
+
+        std::filesystem::create_directories(out_dir);
+        Docgen::render_and_compile(slug, input, out_dir);
+
+        std::cout << "PASS " << slug << " " << fixture_path << std::endl;
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "FAIL " << slug << " " << fixture_path << ": " << e.what() << std::endl;
+        return 1;
+    }
+}
+
 int main(int argc, char* argv[]) {
+    if (argc > 1 && std::string(argv[1]) == "--render-template") {
+        if (argc < 5) {
+            std::cerr << "Usage: cyber_accountant_worker --render-template <slug> <fixture.json> <outdir>" << std::endl;
+            return 2;
+        }
+        return run_render_template(argv[2], argv[3], argv[4]);
+    }
+
     try {
         // Signal handlers
         std::signal(SIGINT, signal_handler);

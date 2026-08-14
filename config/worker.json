@@ -49,11 +49,15 @@
       "default",
       "account_email",
       "email.send",
-      "webhook.deliver"
+      "webhook.deliver",
+      "docgen.render"
     ],
     "concurrency": 2,
     "health_port": 9091,
     "brpop_timeout": 5
+  },
+  "docgen": {
+    "latex_cmd": "${DOCGEN_LATEX_CMD:-xelatex}"
   },
   "mail": {
     "enabled": "${MAIL_ENABLED:-false}",

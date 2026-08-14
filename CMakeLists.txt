@@ -93,6 +93,14 @@ find_package(spdlog CONFIG REQUIRED)
 find_package(prometheus-cpp CONFIG REQUIRED)
 find_package(opentelemetry-cpp CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+# json-schema-validator (pboettch/json-schema-validator via vcpkg's
+# "json-schema-validator" port): validates docgen template input against
+# each template's schema.json (src/docgen/TemplateRegistry.hpp). The vcpkg
+# port installs its CMake package as "nlohmann_json_schema_validator" with a
+# single exported target aliased "nlohmann_json_schema_validator::validator"
+# (upstream CMakeLists.txt, EXPORT_NAME validator) — link that, not the bare
+# package name.
+find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 find_package(GTest CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)  # Used directly for HMAC-SHA256 (Auth) and SHA-256 (Idempotency)
@@ -155,6 +163,7 @@ set(COMMON_LIBS
     opentelemetry-cpp::ostream_span_exporter
     opentelemetry-cpp::otlp_http_exporter
     nlohmann_json::nlohmann_json
+    nlohmann_json_schema_validator::validator
     OpenSSL::Crypto
     PkgConfig::SODIUM
     pantor::inja     # alias from inja's CMakeLists (real target name: `inja`)
