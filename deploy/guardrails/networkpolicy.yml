@@ -1,0 +1,42 @@
+# Default-deny ingress for every pod in the guardrails namespace, then a
+# single narrow allow: TCP 8080 (the data plane) from pods in the
+# cyber-accountant namespace only.
+#
+# Metrics (9090) is intentionally NOT opened — nothing scrapes it yet. When
+# a Prometheus/ServiceMonitor setup exists for this namespace, add a second
+# allow rule scoped to the monitoring namespace's pod/namespace selector
+# rather than widening this one.
+#
+# The config API (9080) gets no allow rule at all here: it's also bound to
+# 127.0.0.1 in configmap.yml (defense in depth — see the comment there for
+# why the plain "empty disables it" env approach doesn't actually work).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: guardrails-default-deny-ingress
+  namespace: guardrails
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: guardrails-allow-cyber-accountant-8080
+  namespace: guardrails
+spec:
+  podSelector:
+    matchLabels:
+      app: guardrails-llm-filter
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cyber-accountant
+      ports:
+        - protocol: TCP
+          port: 8080

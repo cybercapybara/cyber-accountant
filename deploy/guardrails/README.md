@@ -33,9 +33,10 @@ tracker:
   That responsibility belongs to the `agent` module (P4 in the design spec)
   — the proxy masks, nothing else.
 - Config API / web console (`:9080`) is unauthenticated and mutating (rule
-  CRUD, enforce/shadow toggle). We don't operate it and have it disabled
-  (`GUARDRAILS_API_ADDR: ""` in `configmap.yml`) rather than rely solely on
-  network policy to keep it private.
+  CRUD, enforce/shadow toggle). We don't operate it and want it unreachable
+  — see "Security fix — 2026-08-14" below for how that's actually enforced
+  (an empty `GUARDRAILS_API_ADDR` does **not** work, despite what it looks
+  like it should do).
 
 ## Where it comes from
 
@@ -53,16 +54,85 @@ not part of the umbrella chart.
 - `namespace.yml` — `guardrails` namespace.
 - `configmap.yml` — env for the data plane: upstream is
   `https://api.anthropic.com`, `in_memory` store (single replica, nothing to
-  share), config API disabled.
+  share), config API bound to loopback only (see security fix below).
 - `deployment.yml` — single replica, image pinned by **tag + digest**
   (`0.1.2@sha256:...`), modest resources (25m/64Mi requests, 250m/256Mi
   limits), `/healthz` liveness + `/readyz` readiness on `:8080`.
 - `service.yml` — ClusterIP, ports `8080` (data plane) and `9090` (metrics).
   No ingress — cluster-internal only.
+- `networkpolicy.yml` — default-deny ingress for the `guardrails` namespace,
+  plus a single allow rule: TCP `8080` from pods in the `cyber-accountant`
+  namespace only. Port `9080` (config API) has no allow rule at all —
+  nothing outside the pod's own network namespace can reach it over the
+  network, full stop. Port `9090` (metrics) is also not opened; nothing
+  scrapes it today.
 
 No `secret.yml`: the upstream reference's secret is only needed for a
 Redis/Postgres store backend or at-rest encryption key, neither of which we
 use (`in_memory` store, single replica).
+
+## Security fix — 2026-08-14
+
+A push scanner + manual cluster check found the config API answering on
+`:9080` despite `configmap.yml` originally setting `GUARDRAILS_API_ADDR: ""`
+to disable it (per the upstream reference's own comment,
+`internal/config/config.go:207`: "empty disables the API server").
+
+**Root cause**: that comment describes `servers.go`'s check
+(`if e.cfg.API.Addr == "" { return nil }`), but the field is populated by
+`caarlos0/env v11.4.1`, and that library's `getOr()` (`env.go:648`) treats
+an environment variable that **exists but is empty** the same as **unset**
+whenever the field has an `envDefault` — it substitutes the default
+(`:9080`) instead of leaving the field as `""`. So
+`GUARDRAILS_API_ADDR: ""` never reaches the app as an empty string; it
+silently becomes `:9080`, and `servers.go`'s "empty disables it" branch
+never fires. There is no env-var value that reaches this field as a real
+empty string through this library — "disable via empty string" is not
+achievable here at all.
+
+**Fix applied**:
+
+1. `configmap.yml`: `GUARDRAILS_API_ADDR: "127.0.0.1:9080"` — binds the
+   config API to the pod's loopback interface. Reachable only from
+   processes sharing the pod's network namespace (i.e. `kubectl exec` into
+   the pod itself); not reachable via the pod's real IP, the Service, or
+   from any other pod.
+2. `networkpolicy.yml` (new): default-deny ingress for the namespace, plus
+   an allow rule scoped to `cyber-accountant` on port `8080` only. This is
+   the actual network-level control; the loopback bind is defense in depth
+   on top of it, not a replacement for it.
+
+**Tested, factual results** (this matters — don't assume from the fix
+description alone):
+
+- `kubectl -n guardrails port-forward pod/<pod> 9080` **still succeeds** and
+  a `curl` through it **still gets `HTTP 200`**, even though the app binds
+  only to `127.0.0.1:9080` inside the container. This is expected, not a
+  bug in the fix: `kubectl port-forward` connects to `localhost:<port>`
+  from *inside* the pod's network namespace (via the kubelet/runtime, not
+  over the pod's `eth0`), so a loopback-bound port is exactly as reachable
+  from port-forward as from a process actually running in the pod. **A
+  loopback bind does not, and cannot, block `kubectl port-forward`** — it
+  only blocks access arriving over the pod's real network interface (other
+  pods, Services, anything routed via the CNI). Don't rely on it as a
+  barrier against anyone with `pods/portforward` RBAC.
+- `/healthz` on `:8080` via port-forward: `HTTP 200` (unaffected, as
+  expected — the data plane isn't touched by this fix).
+- From a temporary pod in the `default` namespace:
+  `curl http://guardrails-llm-filter.guardrails:8080/healthz` — connection
+  **timed out** (NetworkPolicy default-deny, no allow rule for `default`).
+  From a temporary pod in the `cyber-accountant` namespace, the same
+  request returned `HTTP 200` (matches the allow rule). Port `9080` from
+  the `cyber-accountant` pod also timed out — no allow rule covers it,
+  matching intent.
+
+**Credential-exposure false positive**: a scanner flagged `configmap.yml`
+for strings like `API_KEYS`/`CREDENTIALS`. These are guardrails-llm-filter's
+built-in *data-type category names* (`GUARDRAILS_DATA_TYPES` — which
+categories of sensitive data to scan *for*), not actual credentials or key
+material. There is no secret value anywhere in `configmap.yml`; real
+credentials for this deployment don't exist yet (see "Auth headers pass
+through untouched" above) and would live in a `Secret`, not here.
 
 ## Note on version pinning
 
