@@ -309,7 +309,7 @@ components:
       type: object
       required: [access]
       properties:
-        access: { type: string, description: New HS256 access JWT carrying an `org` claim set to {id} }
+        access: { type: string, description: "New HS256 access JWT carrying an `org` claim set to {id}" }
 
 # -----------------------------------------------------------------------------
 paths:
