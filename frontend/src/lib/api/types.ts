@@ -27,6 +27,7 @@ export type JobCreate = Schemas['JobCreate'];
 export type Organization = Schemas['Organization'];
 export type OrganizationWithRole = Schemas['OrganizationWithRole'];
 export type OrgMember = Schemas['OrgMember'];
+export type MemberWithEmail = Schemas['MemberWithEmail'];
 export type Counterparty = Schemas['Counterparty'];
 export type CounterpartyWrite = Schemas['CounterpartyWrite'];
 export type Account = Schemas['Account'];
@@ -61,6 +62,8 @@ export type OrganizationDetailResponse = Schemas['OrganizationDetailResponse'];
 export type MineOrganizationsResponse = Schemas['MineOrganizationsResponse'];
 /** POST/PATCH /api/v1/orgs/{id}/members[/{user_id}] — { data: OrgMember }. */
 export type OrgMemberDetailResponse = Schemas['OrgMemberDetailResponse'];
+/** GET /api/v1/orgs/{id}/members — { data: MemberWithEmail[] }. */
+export type MembersListResponse = Schemas['MembersListResponse'];
 /** POST /api/v1/orgs/{id}/switch — { access }. Cookie-mode clients never
  * read this body (the __Host-access cookie is HttpOnly); it exists for
  * Bearer-mode clients, which this template does not use. */

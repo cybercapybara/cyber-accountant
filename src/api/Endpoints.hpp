@@ -62,6 +62,7 @@ inline const std::vector<EndpointInfo>& get_endpoints() {
         {"GET", "/api/v1/orgs", "Admin: list organizations"},
         {"GET", "/api/v1/orgs/mine", "List the caller's organizations with their role in each"},
         {"POST", "/api/v1/orgs/{id}/switch", "Mint an access token scoped to the given organization"},
+        {"GET", "/api/v1/orgs/{id}/members", "List an organization's members with email (admin or owner)"},
         {"POST", "/api/v1/orgs/{id}/members", "Add a member to an organization (admin or owner)"},
         {"PATCH", "/api/v1/orgs/{id}/members/{user_id}", "Change a member's role (admin or owner)"},
         {"DELETE", "/api/v1/orgs/{id}/members/{user_id}", "Remove a member from an organization (admin or owner)"},

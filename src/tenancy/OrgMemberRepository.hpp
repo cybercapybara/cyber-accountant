@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "database/Database.hpp"
 #include "repositories/RepoErrors.hpp"
 #include "repositories/SqlErrors.hpp"
@@ -30,6 +32,42 @@ struct DuplicateMembership : Repositories::ConflictError {
     DuplicateMembership()
         : Repositories::ConflictError("membership_exists", "This user is already a member of the organization") {}
 };
+
+/**
+ * @brief One roster row for `GET /orgs/{id}/members`: a member's user_id
+ *        joined with the user's email, plus role/created_at. Deliberately
+ *        NOT the full OrgMember shape (no membership `id`, `org_id`,
+ *        `updated_at`) — list_members() already returns the raw OrgMember
+ *        for the other member-management endpoints, but a bare user_id is
+ *        useless for a UI roster (there is nowhere in the product to look
+ *        up a UUID's email), so this is a purpose-built read model for the
+ *        list-with-email query below.
+ */
+struct MemberWithEmail {
+    std::string user_id;
+    std::string email;
+    std::string role;  // 'owner' | 'accountant' | 'viewer'
+    std::string created_at;
+
+    template <typename Row>
+    static MemberWithEmail from_row(const Row& row) {
+        MemberWithEmail m;
+        m.user_id = row["user_id"].template as<std::string>();
+        m.email = row["email"].template as<std::string>();
+        m.role = row["role"].template as<std::string>();
+        m.created_at = row["created_at"].template as<std::string>();
+        return m;
+    }
+};
+
+inline void to_json(nlohmann::json& j, const MemberWithEmail& m) {
+    j = nlohmann::json{
+        {"user_id", m.user_id},
+        {"email", m.email},
+        {"role", m.role},
+        {"created_at", m.created_at},
+    };
+}
 
 class OrgMemberRepository {
 public:
@@ -71,6 +109,31 @@ public:
             out.reserve(r.size());
             for (const auto& row : r)
                 out.push_back(OrgMember::from_row(row));
+            return out;
+        });
+    }
+
+    /**
+     * @brief Every member of an organization joined with the user's email —
+     *        the roster `GET /orgs/{id}/members` renders. Manual JOIN
+     *        against `users`, same idiom as Security::authenticate's
+     *        api_keys/users/roles join (src/security/ApiKeys.hpp) — this
+     *        repository has no CrudBase to hang a join off of. A hard JOIN
+     *        (not LEFT JOIN) is correct here: org_members.user_id is a
+     *        FK into users, so a membership row with no matching user
+     *        can't exist.
+     */
+    std::vector<MemberWithEmail> list_members_with_email(const std::string& org_id) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params(
+                "SELECT m.user_id, u.email, m.role, m.created_at "
+                "FROM org_members m JOIN users u ON u.id = m.user_id "
+                "WHERE m.org_id = $1 ORDER BY m.created_at",
+                org_id);
+            std::vector<MemberWithEmail> out;
+            out.reserve(r.size());
+            for (const auto& row : r)
+                out.push_back(MemberWithEmail::from_row(row));
             return out;
         });
     }

@@ -1731,9 +1731,58 @@ export interface paths {
             };
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List an organization's members, with email (admin, or owner of this organization)
+         * @description Roster for the "Manage members" UI — OrgMember alone only carries
+         *     user_id, which a caller has no way to act on; this joins each
+         *     membership row with the user's email
+         *     (OrgMemberRepository::list_members_with_email).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Every member of the organization, oldest membership first */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MembersListResponse"];
+                    };
+                };
+                /** @description Malformed organization id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not an admin or owner of this organization */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         put?: never;
-        /** Add a member to an organization (admin, or owner of this organization) */
+        /**
+         * Add a member to an organization, by user_id or by email (admin, or owner of this organization)
+         * @description Request body accepts EITHER `{user_id, role}` OR `{email, role}` —
+         *     never both (400 mutually_exclusive). The email variant resolves to
+         *     a user_id via Repositories::UserRepository::find_by_email first
+         *     (404 user_not_found if no such user has registered yet), then
+         *     continues through the same add path as the user_id variant.
+         */
         post: {
             parameters: {
                 query?: never;
@@ -1748,6 +1797,11 @@ export interface paths {
                     "application/json": {
                         /** Format: uuid */
                         user_id: string;
+                        /** @enum {string} */
+                        role: "owner" | "accountant" | "viewer";
+                    } | {
+                        /** Format: email */
+                        email: string;
                         /** @enum {string} */
                         role: "owner" | "accountant" | "viewer";
                     };
@@ -1772,6 +1826,13 @@ export interface paths {
                 };
                 /** @description Not an admin or owner of this organization */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description email variant: no user is registered with that email */
+                404: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -3444,6 +3505,18 @@ export interface components {
         };
         OrgMemberDetailResponse: {
             data: components["schemas"]["OrgMember"];
+        };
+        MemberWithEmail: {
+            /** Format: uuid */
+            user_id: string;
+            /** Format: email */
+            email: string;
+            /** @enum {string} */
+            role: "owner" | "accountant" | "viewer";
+            created_at: string;
+        };
+        MembersListResponse: {
+            data: components["schemas"]["MemberWithEmail"][];
         };
         SwitchResponse: {
             /** @description New HS256 access JWT carrying an `org` claim set to {id} */

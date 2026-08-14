@@ -303,6 +303,24 @@ components:
       properties:
         data: { $ref: '#/components/schemas/OrgMember' }
 
+    # Mirrors Tenancy::to_json(MemberWithEmail) in src/tenancy/OrgMemberRepository.hpp.
+    MemberWithEmail:
+      type: object
+      required: [user_id, email, role, created_at]
+      properties:
+        user_id:    { type: string, format: uuid }
+        email:      { type: string, format: email }
+        role:       { type: string, enum: [owner, accountant, viewer] }
+        created_at: { type: string }
+
+    MembersListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/MemberWithEmail' }
+
     # POST /api/v1/orgs/{id}/switch. Mirrors
     # OrganizationsController::switchOrg — Response::ok({{"access", access}}).
     SwitchResponse:
@@ -1198,8 +1216,31 @@ paths:
   /api/v1/orgs/{id}/members:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: List an organization's members, with email (admin, or owner of this organization)
+      description: |
+        Roster for the "Manage members" UI — OrgMember alone only carries
+        user_id, which a caller has no way to act on; this joins each
+        membership row with the user's email
+        (OrgMemberRepository::list_members_with_email).
+      tags: [orgs]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Every member of the organization, oldest membership first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MembersListResponse' }
+        '400': { description: Malformed organization id }
+        '403': { description: Not an admin or owner of this organization }
     post:
-      summary: Add a member to an organization (admin, or owner of this organization)
+      summary: Add a member to an organization, by user_id or by email (admin, or owner of this organization)
+      description: |
+        Request body accepts EITHER `{user_id, role}` OR `{email, role}` —
+        never both (400 mutually_exclusive). The email variant resolves to
+        a user_id via Repositories::UserRepository::find_by_email first
+        (404 user_not_found if no such user has registered yet), then
+        continues through the same add path as the user_id variant.
       tags: [orgs]
       security: [{ BearerAuth: [] }]
       requestBody:
@@ -1207,19 +1248,26 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [user_id, role]
-              properties:
-                user_id: { type: string, format: uuid }
-                role:    { type: string, enum: [owner, accountant, viewer] }
+              oneOf:
+                - type: object
+                  required: [user_id, role]
+                  properties:
+                    user_id: { type: string, format: uuid }
+                    role:    { type: string, enum: [owner, accountant, viewer] }
+                - type: object
+                  required: [email, role]
+                  properties:
+                    email: { type: string, format: email }
+                    role:  { type: string, enum: [owner, accountant, viewer] }
       responses:
         '201':
           description: Member added
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OrgMemberDetailResponse' }
-        '400': { description: Validation failed }
+        '400': { description: Validation failed, or both user_id and email were given }
         '403': { description: Not an admin or owner of this organization }
+        '404': { description: 'email variant: no user is registered with that email' }
         '409': { description: This user is already a member of the organization }
 
   /api/v1/orgs/{id}/members/{user_id}:
