@@ -54,13 +54,15 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        // Same idiom (and rationale) as test_accounts.cpp's SetUp: a plain
-        // "DELETE FROM organizations" cascade would also wipe the org_id IS
-        // NULL system chart-of-accounts seed rows if TRUNCATE CASCADE were
-        // used instead — clear tenant subaccounts explicitly first.
+        // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
+        // test_helpers.hpp) — see its Doxygen comment for why the plain
+        // "DELETE FROM organizations" it ends with is safe for the org_id IS
+        // NULL system chart-of-accounts seed rows without a separate
+        // "DELETE FROM accounts WHERE org_id IS NOT NULL" ahead of it. Users
+        // cleanup stays local to this fixture (untouched by the
+        // centralization).
+        TestHelpers::wipe_org_data();
         Database::get().execute_write([](auto& txn) {
-            txn.exec("DELETE FROM accounts WHERE org_id IS NOT NULL");
-            txn.exec("DELETE FROM organizations");
             txn.exec("TRUNCATE TABLE users CASCADE");
             return 0;
         });

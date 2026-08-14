@@ -67,9 +67,12 @@ protected:
         if (!fs::exists("templates/latex/invoice/v1/schema.json"))
             GTEST_SKIP() << "repo templates not reachable from this working directory";
 
+        // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
+        // test_helpers.hpp) — see its Doxygen comment for why the journal/
+        // document tables are TRUNCATEd before organizations is plain
+        // DELETEd. TRUNCATE users CASCADE stays local to this fixture.
+        TestHelpers::wipe_org_data();
         Database::get().execute_write([](auto& txn) {
-            txn.exec("TRUNCATE TABLE journal_lines, journal_entries CASCADE");
-            txn.exec("DELETE FROM organizations");
             txn.exec("TRUNCATE TABLE users CASCADE");
             return 0;
         });

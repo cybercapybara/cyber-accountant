@@ -34,18 +34,15 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        // journal_entries_immutability() (migration 009) forbids DELETEing a
-        // posted/reversed row — PostTransitions/ReverseCreatesMirror... below
-        // deliberately leave rows in exactly those statuses. A plain
-        // "DELETE FROM organizations" cascade (the idiom test_counterparties.cpp
-        // and test_accounts.cpp use) would fire that trigger once per
-        // cascaded journal_entries row and abort the whole SetUp from the
-        // second test onward. TRUNCATE bypasses row-level triggers entirely,
-        // so clear the journal tables that way FIRST — before anything else
-        // that would otherwise try to cascade into them.
+        // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
+        // test_helpers.hpp). journal_entries_immutability() (migration 009)
+        // forbids DELETEing a posted/reversed row — PostTransitions/
+        // ReverseCreatesMirror... below deliberately leave rows in exactly
+        // those statuses — so wipe_org_data() TRUNCATEs the journal tables
+        // (bypassing that row-level trigger entirely) before it DELETEs
+        // organizations. TRUNCATE users CASCADE stays local to this fixture.
+        TestHelpers::wipe_org_data();
         Database::get().execute_write([](auto& txn) {
-            txn.exec("TRUNCATE TABLE journal_lines, journal_entries CASCADE");
-            txn.exec("DELETE FROM organizations");
             txn.exec("TRUNCATE TABLE users CASCADE");
             return 0;
         });

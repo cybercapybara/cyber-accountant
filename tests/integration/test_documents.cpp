@@ -36,22 +36,15 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        // TRUNCATE journal_lines/journal_entries FIRST, same idiom (and same
-        // reason) as test_journal_service.cpp: journal_entries_immutability()
-        // (migration 009) forbids DELETEing a posted/reversed row, and a
-        // plain "DELETE FROM organizations" cascade would fire that trigger
-        // once per cascaded row left over from ANY suite sharing this
-        // Postgres (e.g. test_journal_service.cpp's own PostTransitions/
-        // ReverseCreatesMirror... tests deliberately leave posted/reversed
-        // entries behind) — aborting this SetUp from the second test onward.
-        // TRUNCATE bypasses row-level triggers entirely and also sweeps
-        // document_entries along via CASCADE (it FKs to journal_entries).
-        // `documents` itself carries no such trigger, so the plain DELETE
-        // below clears it (and any leftover document_entries not already
-        // swept) via its own org_id ON DELETE CASCADE.
+        // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
+        // test_helpers.hpp) — see its Doxygen comment for the full rationale
+        // (in short: journal_entries_immutability() forbids DELETEing a
+        // posted/reversed row, so the journal/document tables are TRUNCATEd,
+        // bypassing that row-level trigger, before organizations is plain
+        // DELETEd). TRUNCATE users CASCADE stays local to this fixture
+        // (untouched by the centralization).
+        TestHelpers::wipe_org_data();
         Database::get().execute_write([](auto& txn) {
-            txn.exec("TRUNCATE TABLE journal_lines, journal_entries CASCADE");
-            txn.exec("DELETE FROM organizations");
             txn.exec("TRUNCATE TABLE users CASCADE");
             return 0;
         });

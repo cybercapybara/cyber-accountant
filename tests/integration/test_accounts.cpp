@@ -24,23 +24,18 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        // Deliberately NOT "TRUNCATE TABLE organizations CASCADE" (the
-        // idiom test_counterparties.cpp uses): accounts.org_id references
-        // organizations too, and Postgres TRUNCATE ... CASCADE truncates the
-        // WHOLE referencing table — including the org_id IS NULL system
-        // seed rows from migration 008, not just the tenant rows that
-        // actually reference a deleted org. That would erase the standard
-        // chart for the rest of this binary's test run. Plain DELETEs
-        // respect the FK's per-row ON DELETE CASCADE instead: clear tenant
-        // subaccounts explicitly, then delete organizations (which cascades
-        // — correctly, row-by-row — into any org-scoped table, but leaves
-        // org_id IS NULL rows untouched because they don't reference any
-        // org row in the first place).
-        Database::get().execute_write([](auto& txn) {
-            txn.exec("DELETE FROM accounts WHERE org_id IS NOT NULL");
-            txn.exec("DELETE FROM organizations");
-            return 0;
-        });
+        // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
+        // test_helpers.hpp). It ends in a plain "DELETE FROM organizations"
+        // (never TRUNCATE ... CASCADE): accounts.org_id references
+        // organizations too, and TRUNCATE CASCADE truncates the WHOLE
+        // referencing table — including the org_id IS NULL system seed rows
+        // from migration 008, not just the tenant rows that actually
+        // reference a deleted org. Plain DELETE respects the FK's per-row
+        // ON DELETE CASCADE instead, clearing org-scoped subaccounts while
+        // leaving org_id IS NULL rows untouched (they reference no org row
+        // in the first place) — no separate "DELETE FROM accounts WHERE
+        // org_id IS NOT NULL" needed ahead of it.
+        TestHelpers::wipe_org_data();
     }
 
     /// Create a tenant and return its id. Fixed BINs below are only unique

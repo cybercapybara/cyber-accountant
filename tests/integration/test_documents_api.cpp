@@ -118,15 +118,16 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        // Same idiom (and rationale) as test_documents.cpp's SetUp: TRUNCATE
-        // journal_lines/journal_entries FIRST (bypasses the
+        // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
+        // test_helpers.hpp) — TRUNCATEs journal_lines/journal_entries/
+        // document_entries/documents FIRST (bypasses the
         // journal_entries_immutability trigger other suites sharing this
         // Postgres may have tripped), then a plain DELETE on organizations
-        // (whose row-level ON DELETE CASCADE clears documents/org_members
-        // without touching the org_id IS NULL system chart-of-accounts seed).
+        // (whose row-level ON DELETE CASCADE clears org_members without
+        // touching the org_id IS NULL system chart-of-accounts seed).
+        // TRUNCATE users CASCADE stays local to this fixture.
+        TestHelpers::wipe_org_data();
         Database::get().execute_write([](auto& txn) {
-            txn.exec("TRUNCATE TABLE journal_lines, journal_entries CASCADE");
-            txn.exec("DELETE FROM organizations");
             txn.exec("TRUNCATE TABLE users CASCADE");
             return 0;
         });

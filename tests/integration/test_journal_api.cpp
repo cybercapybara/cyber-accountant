@@ -54,13 +54,13 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        // Same idiom (and rationale) as test_journal_service.cpp's SetUp:
-        // TRUNCATE journal_lines/journal_entries FIRST (bypasses the
-        // journal_entries_immutability trigger a posted/reversed row would
-        // otherwise trip on a plain DELETE), then clear organizations/users.
+        // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
+        // test_helpers.hpp) — TRUNCATEs journal_lines/journal_entries FIRST
+        // (bypasses the journal_entries_immutability trigger a posted/
+        // reversed row would otherwise trip on a plain DELETE), then clears
+        // organizations. TRUNCATE users CASCADE stays local to this fixture.
+        TestHelpers::wipe_org_data();
         Database::get().execute_write([](auto& txn) {
-            txn.exec("TRUNCATE TABLE journal_lines, journal_entries CASCADE");
-            txn.exec("DELETE FROM organizations");
             txn.exec("TRUNCATE TABLE users CASCADE");
             return 0;
         });

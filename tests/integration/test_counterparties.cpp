@@ -22,15 +22,13 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        // DELETE FROM organizations, not TRUNCATE ... CASCADE: accounts.org_id
-        // references organizations too (migration 008), and TRUNCATE CASCADE
-        // blanket-wipes the WHOLE referencing table — including the org_id IS
-        // NULL system chart-of-accounts seed — not just rows of deleted orgs.
-        // Row-level ON DELETE CASCADE still clears counterparties (org_id FK).
-        Database::get().execute_write([](auto& txn) {
-            txn.exec("DELETE FROM organizations");
-            return 0;
-        });
+        // Centralized org-data wipe — see TestHelpers::wipe_org_data()'s
+        // Doxygen comment in test_helpers.hpp for why it TRUNCATEs the
+        // journal/document tables before a plain DELETE on organizations
+        // (accounts.org_id system-seed rows must survive; journal_entries'
+        // immutability trigger must not fire on a leftover posted row from
+        // another suite sharing this Postgres).
+        TestHelpers::wipe_org_data();
     }
 
     /// Create a tenant and return its id. Fixed BINs below are only unique

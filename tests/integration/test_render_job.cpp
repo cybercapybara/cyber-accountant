@@ -95,14 +95,12 @@ protected:
         if (!fs::exists("templates/latex/invoice/v1/template.tex"))
             GTEST_SKIP() << "repo templates not reachable from this working directory";
 
-        // Same idiom as test_documents.cpp's SetUp: clear organizations
-        // (documents cascades off it) so fixed test data doesn't collide
-        // with a previous run against a persistent local Postgres.
-        Database::get().execute_write([](auto& txn) {
-            txn.exec("TRUNCATE TABLE journal_lines, journal_entries CASCADE");
-            txn.exec("DELETE FROM organizations");
-            return 0;
-        });
+        // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
+        // test_helpers.hpp) — TRUNCATEs the journal/document tables (bypasses
+        // journal_entries_immutability()) before a plain DELETE on
+        // organizations, so fixed test data doesn't collide with a previous
+        // run against a persistent local Postgres.
+        TestHelpers::wipe_org_data();
     }
 
     void TearDown() override {

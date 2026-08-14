@@ -277,6 +277,62 @@ inline void truncate_users() {
 }
 
 /**
+ * @brief Wipe every tenant's org-scoped data between tests, in one write
+ *        transaction. Requires Database to be initialized. This is the ONE
+ *        place that knows the org-data cleanup order — every integration
+ *        fixture that used to hand-roll its own `DELETE FROM organizations`
+ *        (optionally preceded by its own `TRUNCATE ... journal_lines,
+ *        journal_entries ...`) should call this instead, so a new
+ *        row-trigger-guarded table only ever needs to be added here once.
+ *
+ *        Two different tools for two different reasons:
+ *
+ *        - `TRUNCATE TABLE journal_lines, journal_entries, document_entries,
+ *          documents CASCADE` runs FIRST. journal_entries/journal_lines
+ *          (migration 009) carry BEFORE UPDATE OR DELETE / BEFORE INSERT OR
+ *          UPDATE OR DELETE immutability triggers
+ *          (journal_entries_immutability(), journal_lines_frozen_after_post())
+ *          that are correct at the row level — a POSTED entry legitimately
+ *          refuses a row-by-row DELETE — but that correctness is exactly
+ *          what breaks a later `DELETE FROM organizations`: any test that
+ *          left a posted entry behind (test_journal_service.cpp,
+ *          test_journal_api.cpp, test_docgen_api.cpp, ...) turns the NEXT
+ *          fixture's org cleanup into a cascade that tries to DELETE that
+ *          posted row and gets RAISE EXCEPTION 'posted/reversed journal
+ *          entries are insert-only'. `TRUNCATE` does not fire row-level
+ *          triggers at all (only statement-level ones, and these tables have
+ *          none), so it sidesteps the immutability guard entirely — which is
+ *          fine here: this is test teardown wiping ALL tenants' data, not an
+ *          application code path that must respect the state machine.
+ *          document_entries/documents (migration 010) are included in the
+ *          same TRUNCATE for the same reason journal_lines' composite FK
+ *          exists: document_entries' FK targets journal_entries(id, org_id),
+ *          so it must be gone (or CASCADE-truncated) before/alongside
+ *          journal_entries; documents has no blocking trigger of its own but
+ *          is truncated alongside document_entries for symmetry, one
+ *          statement, no dangling rows to reconcile.
+ *        - `DELETE FROM organizations` runs SECOND, and stays a plain
+ *          `DELETE` (never `TRUNCATE ... CASCADE`): org_members, accounts,
+ *          counterparties have ordinary per-row `ON DELETE CASCADE` FKs and
+ *          NO blocking triggers, so a plain DELETE cascades them away
+ *          row-by-row with no trigger to fight — while accounts' migration
+ *          008 system seed (org_id IS NULL rows, the standard chart of
+ *          accounts) has no org_id to match any deleted organization, so a
+ *          row-scoped DELETE never touches it. `TRUNCATE organizations
+ *          CASCADE` would ALSO blanket-truncate the WHOLE accounts table,
+ *          seed included, wiping the chart of accounts for the rest of the
+ *          binary's test run — see test_accounts.cpp's fixture note for the
+ *          original incident this avoids.
+ */
+inline void wipe_org_data() {
+    Database::get().execute_write([](auto& txn) {
+        txn.exec("TRUNCATE TABLE journal_lines, journal_entries, document_entries, documents CASCADE");
+        txn.exec("DELETE FROM organizations");
+        return 0;
+    });
+}
+
+/**
  * @brief Drain job state for the given queue types: queued ids, their job
  *        blobs, the per-type queue/DLQ/index keys, and the ids' entries in
  *        the global jobs:index. Requires Cache to be initialized.

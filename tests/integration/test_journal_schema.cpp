@@ -35,14 +35,30 @@
  *        constraint level, not just in application code
  *        (CrossOrgLineRejectedByCompositeFk).
  *
- *        Fixture idiom follows tests/integration/test_accounts.cpp: DELETE
- *        FROM organizations (not TRUNCATE ... CASCADE) in SetUp. journal_*
- *        rows are all org_id NOT NULL, so a plain per-row ON DELETE CASCADE
- *        clears them along with the deleted organizations — but TRUNCATE
- *        organizations CASCADE would ALSO blanket-truncate the org_id IS
- *        NULL system chart-of-accounts seed from migration 008, which this
- *        suite's fixtures don't own and must not erase for the rest of the
- *        binary's test run.
+ *        Fix round 2 (CI 250/272 — a shared-Postgres cross-suite ordering
+ *        bug, not a trigger-semantics bug): SetUp() now calls the
+ *        centralized TestHelpers::wipe_org_data() (test_helpers.hpp)
+ *        instead of hand-rolling its own "DELETE FROM organizations". Any
+ *        suite in the same integration-test binary that leaves a
+ *        posted/reversed journal_entries row behind (this suite's own
+ *        PostedCanOnlyTransitionToReversed, or test_journal_service.cpp's
+ *        deliberately-posted fixtures) would otherwise turn the NEXT
+ *        fixture's plain DELETE-on-organizations cascade into a DELETE of
+ *        that posted row, which journal_entries_immutability() correctly
+ *        (and, for an actual application code path, desirably) rejects —
+ *        but rejects at exactly the wrong moment when it's test teardown,
+ *        not a real mutation. wipe_org_data() sidesteps this by TRUNCATing
+ *        the journal/document tables (no row triggers fire on TRUNCATE)
+ *        before its own DELETE on organizations; see its Doxygen comment
+ *        for the full rationale, including why organizations itself stays
+ *        a plain DELETE (must not blanket-truncate the org_id IS NULL
+ *        system chart-of-accounts seed from migration 008).
+ *
+ *        DeleteDraftWithLinesSucceeds' own inline "DELETE FROM
+ *        organizations" (case 2, testing the cascade path directly) is
+ *        deliberately UNCHANGED by this sweep — it exists specifically to
+ *        exercise the plain-DELETE cascade behavior being tested, not to
+ *        clean up after the test.
  */
 
 #include <string>
@@ -62,10 +78,15 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        Database::get().execute_write([](auto& txn) {
-            txn.exec("DELETE FROM organizations");
-            return 0;
-        });
+        // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
+        // test_helpers.hpp): TRUNCATEs journal_lines/journal_entries (and
+        // document_entries/documents) before a plain DELETE on organizations,
+        // so a posted/reversed entry left behind by THIS suite's own
+        // PostedCanOnlyTransitionToReversed (or by any other suite sharing
+        // this Postgres, e.g. test_journal_service.cpp) never trips
+        // journal_entries_immutability()'s "posted/reversed journal entries
+        // are insert-only" guard from inside SetUp().
+        TestHelpers::wipe_org_data();
     }
 
     /// Create a tenant and return its id. Fixed BINs below are only unique

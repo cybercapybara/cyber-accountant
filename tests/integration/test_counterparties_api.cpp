@@ -58,13 +58,13 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        // DELETE FROM organizations, not TRUNCATE ... CASCADE — accounts.org_id
-        // (migration 008) references organizations too, and TRUNCATE CASCADE
-        // would blanket-wipe the org_id IS NULL system chart-of-accounts seed
-        // along with it. Row-level ON DELETE CASCADE still clears org_members
-        // and counterparties. Same idiom as test_organizations_api.cpp.
+        // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
+        // test_helpers.hpp) — see its Doxygen comment for why it TRUNCATEs
+        // journal_lines/journal_entries/document_entries/documents before a
+        // plain DELETE on organizations. Users cleanup stays local to this
+        // fixture (untouched by the centralization).
+        TestHelpers::wipe_org_data();
         Database::get().execute_write([](auto& txn) {
-            txn.exec("DELETE FROM organizations");
             txn.exec("TRUNCATE TABLE users CASCADE");
             return 0;
         });
