@@ -21,7 +21,11 @@ jobs:
     # with sanitizers and links the test binary), then runs the full gtest
     # suite against ephemeral Postgres + Redis containers via the `test`
     # compose profile — the same thing `make test` does locally.
-    timeout-minutes: 60
+    # 90, not 60: a cache-cold builder image spends ~30 min compiling the vcpkg
+    # dependency world before a single test runs, and P2 grew the suite to 412
+    # integration tests at ~2 s each. The two together overran 60 min and the
+    # job was killed mid-suite with everything passing.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -340,7 +344,9 @@ jobs:
     permissions:
       contents: read
       pull-requests: read  # dorny/paths-filter needs this to list changed files via the API on pull_request events
-    timeout-minutes: 30
+    # 45, not 30: the worker-runtime image carries TeX Live, and a cache-cold
+    # build of it alone overran the old ceiling.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
