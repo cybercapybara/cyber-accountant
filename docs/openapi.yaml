@@ -578,9 +578,10 @@ components:
     # POST /api/v1/documents/generate response — 202, the render runs async.
     GenerateDocumentResponse:
       type: object
-      required: [document_id]
+      required: [document_id, render_queued]
       properties:
-        document_id: { type: string, format: uuid, description: 'Poll GET /api/v1/documents/{id} for the final rendered status' }
+        document_id:   { type: string, format: uuid, description: 'Poll GET /api/v1/documents/{id} for the final rendered status' }
+        render_queued: { type: boolean, description: 'false if the docgen.render job could not be enqueued (e.g. a transient Redis error) — the document row still exists as draft; an operator must re-enqueue it (Fix round 1: best-effort enqueue)' }
 
 # -----------------------------------------------------------------------------
 paths:

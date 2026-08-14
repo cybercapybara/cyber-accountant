@@ -61,6 +61,21 @@
  * controller pre-checks it anyway, for the same "don't create a document
  * and a render job for a request that's going to fail" reason, and for
  * symmetry with counterparty_id's field-level 422.
+ *
+ * Fix round 1 (best-effort enqueue): Jobs::get().submit() runs AFTER the
+ * document row already exists in the same way link_entry()'s own race note
+ * two paragraphs up does — one side effect already committed, only the
+ * enqueue itself can still fail. Wrapped in its own try/catch, the same
+ * idiom AccountEmails.hpp::dispatch() / Webhooks.hpp::send() already use
+ * for exactly this shape: a transient Redis blip must not turn an
+ * already-real document into a 500 with no document_id for the client to
+ * poll (a naive retry on 500 would just mint another orphaned draft). On
+ * failure this logs spdlog::error with the document_id (an operator needs
+ * to find and re-enqueue it — there is no automatic fallback path here,
+ * unlike AccountEmails' inline-send fallback, because there is no
+ * synchronous rendering path to fall back to) and still answers 202 with
+ * render_queued: false in the body, so the client can tell "the document
+ * exists but nothing is rendering it yet" apart from a real success.
  */
 
 #pragma once
@@ -203,6 +218,7 @@ public:
 
         with_repo_errors(callback, "documents generate", [&] {
             Ledger::DocumentRepository documents;
+            // TODO(P2): map doc_type explicitly when a template slug diverges from documents.doc_type CHECK
             auto created = documents.create(ctx.org_id,
                                             template_slug,  // doc_type == slug — see file header
                                             "generated",
@@ -222,11 +238,22 @@ public:
                              *link_entry_id);
             }
 
+            // Best-effort enqueue — see file header's "Fix round 1" note.
+            // The document already exists; a submit() failure must not turn
+            // it into a 500 the client would just retry into another
+            // orphaned draft.
             json payload = {
                 {"org_id", ctx.org_id}, {"document_id", created.id}, {"slug", template_slug}, {"input", input}};
-            auto job = Jobs::get().submit(kRenderJobType, payload);
-            spdlog::debug("documents generate: document {} enqueued as job {}", created.id, job.id);
-            callback(Response::accepted({{"document_id", created.id}}));
+            bool render_queued = false;
+            try {
+                auto job = Jobs::get().submit(kRenderJobType, payload);
+                spdlog::debug("documents generate: document {} enqueued as job {}", created.id, job.id);
+                render_queued = true;
+            } catch (const std::exception& e) {
+                spdlog::error(
+                    "documents generate: enqueue docgen.render for document {} failed: {}", created.id, e.what());
+            }
+            callback(Response::accepted({{"document_id", created.id}, {"render_queued", render_queued}}));
         });
     }
 };

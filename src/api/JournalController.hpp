@@ -290,22 +290,30 @@ public:
     }
 
 private:
-    /// `YYYY-MM-DD`, month 01-12, day 01-31 — a shape+range check, not a
-    /// full calendar validator (it does not know April has 30 days or
-    /// reject a Feb 30). Good enough to keep an obviously-garbage string
-    /// (wrong separator, letters, wrong field count) from ever reaching
-    /// Postgres's own `::date` cast; a rare calendar-invalid-but-shape-valid
-    /// value (e.g. "2026-02-30") still surfaces as a raw SQL error mapped to
-    /// 500 by with_repo_errors(), the same residual gap
-    /// DocumentRepository's CHECK-trusting posture leaves elsewhere.
+    /// `YYYY-MM-DD`, calendar-valid (Fix round 1: was shape+range only —
+    /// month 01-12/day 01-31 with no per-month length or leap-year check, so
+    /// "2026-02-30" passed this and only failed later as a raw
+    /// pqxx `::date`-cast error, mapped to 500 by with_repo_errors()/
+    /// Postgres — never the intended 422). Days-in-month table + the
+    /// standard Gregorian leap-year rule (divisible by 4, except centuries
+    /// not divisible by 400) below close that gap for BOTH callers of this
+    /// helper: entry_date on create() and from/to on list()'s filters.
     static bool is_valid_date(const std::string& s) {
         static const std::regex re(R"(^(\d{4})-(\d{2})-(\d{2})$)");
         std::smatch m;
         if (!std::regex_match(s, m, re))
             return false;
+        const int year = std::stoi(m[1].str());
         const int month = std::stoi(m[2].str());
         const int day = std::stoi(m[3].str());
-        return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+        if (month < 1 || month > 12 || day < 1)
+            return false;
+        static const int kDaysInMonth[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+        const bool leap_year = (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0);
+        int days_in_this_month = kDaysInMonth[month - 1];
+        if (month == 2 && leap_year)
+            days_in_this_month = 29;
+        return day <= days_in_this_month;
     }
 
     /**

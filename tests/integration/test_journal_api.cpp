@@ -332,4 +332,54 @@ TEST_F(JournalApiTest, ListInvalidDateFilterRejected) {
     EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "from");
 }
 
+// Fix round 1: is_valid_date() gained a real calendar check (days-in-month +
+// leap year) — a shape-valid but calendar-invalid date (Feb 30, or April
+// 31, which has only 30 days) used to slip past the old regex+range check
+// and only fail later as a raw Postgres `::date`-cast error (500). Exercised
+// through the SAME helper both callers share: the `from` filter here, and
+// entry_date on create() below.
+TEST_F(JournalApiTest, ListRejectsFeb30AsCalendarInvalid) {
+    auto org = seed_org("444250000010", "Feb30 Filter Org LLP");
+    auto viewer = member("viewer5@example.com", org.id, "viewer");
+
+    auto req = authed(viewer);
+    req->setParameter("from", "2026-02-30");
+    HttpResponsePtr resp;
+    ctrl.list(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "from");
+}
+
+TEST_F(JournalApiTest, ListRejectsApril31AsCalendarInvalid) {
+    auto org = seed_org("444250000011", "April31 Filter Org LLP");
+    auto viewer = member("viewer6@example.com", org.id, "viewer");
+
+    auto req = authed(viewer);
+    req->setParameter("to", "2026-04-31");
+    HttpResponsePtr resp;
+    ctrl.list(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "to");
+}
+
+TEST_F(JournalApiTest, CreateAcceptsLeapDayFeb29) {
+    auto org = seed_org("444250000012", "Leap Day Org LLP");
+    auto accountant = member("accountant7@example.com", org.id, "accountant");
+
+    // 2024 is a leap year (divisible by 4, not a non-leap century) — Feb 29
+    // is calendar-valid and must pass is_valid_date().
+    auto req = authed_json(
+        accountant, {{"entry_date", "2024-02-29"}, {"description", "Leap day sale"}, {"lines", balanced_lines_body()}});
+    HttpResponsePtr resp;
+    ctrl.create(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k201Created);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["data"]["entry_date"].get<std::string>(), "2024-02-29");
+}
+
 }  // namespace

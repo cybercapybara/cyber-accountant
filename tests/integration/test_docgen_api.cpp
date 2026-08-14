@@ -189,6 +189,9 @@ TEST_F(DocgenApiTest, GenerateValidInputAcceptedAndEnqueues) {
     auto body = json::parse(std::string(resp->body()));
     const std::string document_id = body["document_id"].get<std::string>();
     ASSERT_FALSE(document_id.empty());
+    // render_queued reflects the best-effort Jobs::submit() outcome (Fix
+    // round 1) — Redis is up in this fixture, so the enqueue must succeed.
+    EXPECT_TRUE(body["render_queued"].get<bool>());
 
     // The document exists, draft, with the exact input snapshotted.
     Ledger::DocumentRepository documents;
