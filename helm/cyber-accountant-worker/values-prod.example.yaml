@@ -43,8 +43,9 @@ pdb:
 worker:
   id: worker-1
   # MUST include account_email + email.send — a worker that only drains "default"
-  # silently leaves all transactional email undrained.
-  types: "account_email,email.send,webhook.deliver"
+  # silently leaves all transactional email undrained. "docgen.render" needs
+  # the worker-runtime image (TeX Live) — see docker/Dockerfile.
+  types: "account_email,email.send,webhook.deliver,docgen.render"
   concurrency: 2
   healthPort: 9091
   brpopTimeout: 5

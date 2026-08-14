@@ -148,6 +148,7 @@ handlers **plus** the worker, even when replicas absorb the bulk of reads.
 |---|---|---|---|---|
 | `REDIS_URL` | `cache.url` | string | `tcp://127.0.0.1:6379` | Standalone mode |
 | `REDIS_PASSWORD` | `cache.password` | string | — | |
+| `REDIS_DB` | `cache.db` | int | `0` | Logical Redis DB index (`SELECT n`, via `ConnectionOptions.db`). **Set this whenever the Redis instance is shared with another application** — job-queue (`jobs:queue:*`), rate-limit (`rl:*`), idempotency, and refresh-token-revocation (`auth:refresh:*`) keys aren't prefixed per app, so two apps on the same DB with the same key names collide (confirmed live: another app's worker dequeued and dropped this app's `account_email` job — see `helm/cpp-env/values-cybercapybara.yaml` `externalRedis` comment). Applies to standalone AND Sentinel connections, and to the worker's separate blocking-BRPOP client (`Jobs::init_blocking_client*`) — both must be set to the same value or the API and worker end up on different logical DBs. **Priority:** `REDIS_DB`/`cache.db` is authoritative; `parse_redis_url()` does NOT parse a trailing `/N` path segment out of `REDIS_URL` (this codebase never used redis-plus-plus's native `redis://host/N` URI form), so a `/N` accidentally appended to `REDIS_URL` is silently ignored — use `REDIS_DB`, not the URL, to select a non-default DB. |
 | `CACHE_POOL_SIZE` | `cache.pool_size` | int | `10` | |
 | `REDIS_USE_SENTINEL` | `cache.use_sentinel` | bool | `false` | |
 | `REDIS_MASTER_NAME` | `cache.sentinel.master_name` | string | `mymaster` | |
@@ -201,10 +202,16 @@ For URL components: `REDIS_HOST`, `REDIS_PORT`.
 | Env | JSON key | Type | Default |
 |---|---|---|---|
 | `WORKER_ID` | `worker.id` | string | `worker-1` |
-| `WORKER_TYPES` | `worker.types` | csv | `default` | Queues the worker pulls from. MUST include `account_email`, `email.send`, and `webhook.deliver` or those jobs pile up undrained. |
+| `WORKER_TYPES` | `worker.types` | csv | `default` | Queues the worker pulls from. MUST include `account_email`, `email.send`, `webhook.deliver`, and `docgen.render` (needs the worker-runtime image — TeX Live, see `docker/Dockerfile`) or those jobs pile up undrained. |
 | `WORKER_CONCURRENCY` | `worker.concurrency` | int | `2` |
 | `WORKER_HEALTH_PORT` | `worker.health_port` | int | `9091` |
 | `WORKER_BRPOP_TIMEOUT` | `worker.brpop_timeout` | int | `5` |
+
+## Docgen (`docgen.render` job — src/docgen/RenderJob.hpp)
+
+| Env | JSON key | Type | Default | Notes |
+|---|---|---|---|---|
+| `DOCGEN_LATEX_CMD` | `docgen.latex_cmd` | string | `xelatex` | The LaTeX compiler `RenderJob` shells out to (run twice, each under `/usr/bin/timeout 60`). Tests point this at a stub script that copies a canned PDF instead of invoking real XeLaTeX — see `tests/integration/test_render_job.cpp`. |
 
 ## Conventions
 

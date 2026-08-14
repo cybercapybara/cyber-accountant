@@ -21,6 +21,29 @@ data:
   # nothing silently breaks if some are added later via the config API.
   GUARDRAILS_DATA_TYPES: "1,2,3,4,5,6"
   # Config API / web console (:9080) is unauthenticated and mutating by
-  # design (rule CRUD, enforce/shadow toggle). We don't operate it — leave it
-  # disabled rather than rely on network policy alone to keep it private.
-  GUARDRAILS_API_ADDR: ""
+  # design (rule CRUD, enforce/shadow toggle). We don't operate it and want
+  # it unreachable — but empty string does NOT achieve that here.
+  #
+  # The comment in the upstream reference (internal/config/config.go:207,
+  # "empty disables the API server") describes servers.go's own check
+  # (`if e.cfg.API.Addr == "" { return nil }`), but that check is dead in
+  # practice: the env library is caarlos0/env v11.4.1, and its getOr()
+  # (env.go:648) treats an env var that EXISTS but is empty the same as
+  # unset whenever envDefault is present — it substitutes envDefault
+  # (":9080") instead of leaving the field "". So
+  # GUARDRAILS_API_ADDR: "" never reaches the app as "" at all; it silently
+  # becomes ":9080", and the API server starts. Confirmed in this cluster:
+  # port-forward to the pod on :9080 answered HTTP 200 despite this being
+  # set to "".
+  #
+  # There is no env-var value that reaches the app as a true empty string
+  # through this library, so we bind to loopback instead: reachable only
+  # from inside the pod's own network namespace (i.e. not from the
+  # Service, not from other pods, not from anything arriving over eth0).
+  # This does NOT stop `kubectl exec`+curl from inside the pod, and does
+  # NOT reliably stop `kubectl port-forward` either — see
+  # deploy/guardrails/README.md and the 2026-08-14 security-fix report for
+  # the actual tested behavior of both. The NetworkPolicy
+  # (networkpolicy.yml) is the real control against other pods/namespaces;
+  # this loopback bind is defense in depth on top of it.
+  GUARDRAILS_API_ADDR: "127.0.0.1:9080"

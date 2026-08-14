@@ -201,10 +201,43 @@ FROM runtime-base AS worker-runtime
 ARG WORKER_BINARY=cyber_accountant_worker
 ENV WORKER_BINARY=${WORKER_BINARY}
 
+# TeX Live for the "docgen.render" job (src/docgen/RenderJob.hpp): renders
+# templates/latex/<slug>/v<N>/template.tex to PDF via XeLaTeX. ONLY installed
+# here (never in runtime-base / the api `runtime` stage above) — TeX Live is
+# hundreds of MB and the API image never shells out to xelatex.
+#   texlive-xetex               the XeTeX engine RenderJob invokes
+#   texlive-latex-recommended    core LaTeX + polyglossia.sty (verified via
+#                                packages.ubuntu.com/noble contents search —
+#                                this is the package that ships it, not
+#                                texlive-lang-*), needed for the invoice
+#                                template's \usepackage{polyglossia}
+#   texlive-latex-extra          tabularx/booktabs/fancyhdr — the invoice
+#                                template's table + header packages
+#   texlive-lang-cyrillic        polyglossia/babel Cyrillic hyphenation
+#                                patterns (\setmainlanguage{russian})
+#   fonts-noto-core              ships NotoSans-Regular.ttf — the invoice
+#                                template's \setmainfont{Noto Sans}, with
+#                                Cyrillic AND Kazakh (ә ғ қ ң ө ұ ү һ і)
+#                                glyph coverage
+# texlive-lang-other was considered (polyglossia's language coverage) but
+# skipped: polyglossia/babel ship no Kazakh language file at all (no
+# gloss-kazakh.ldf, no babel-kazakh package) — Kazakh text renders as plain
+# Unicode via fontspec/Noto Sans, same as any other run of characters, not as
+# a polyglossia \setmainlanguage. Nothing in texlive-lang-other is needed.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    texlive-xetex \
+    texlive-latex-recommended \
+    texlive-latex-extra \
+    texlive-lang-cyrillic \
+    fonts-noto-core \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder --chown=appuser:appuser /app/build/${WORKER_BINARY} /app/
 COPY --from=builder --chown=appuser:appuser /app/config /app/config/
 COPY --from=builder --chown=appuser:appuser /app/migrations /app/migrations/
-# Worker jobs can send mail too — same templates as the API runtime.
+# Worker jobs can send mail too — same templates as the API runtime. Also
+# carries templates/latex (docgen) — the templates the worker actually
+# compiles PDFs from.
 COPY --from=builder --chown=appuser:appuser /app/templates /app/templates/
 
 USER appuser

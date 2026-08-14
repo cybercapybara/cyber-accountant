@@ -27,6 +27,19 @@ export type JobCreate = Schemas['JobCreate'];
 export type Organization = Schemas['Organization'];
 export type OrganizationWithRole = Schemas['OrganizationWithRole'];
 export type OrgMember = Schemas['OrgMember'];
+export type Counterparty = Schemas['Counterparty'];
+export type CounterpartyWrite = Schemas['CounterpartyWrite'];
+export type Account = Schemas['Account'];
+export type AccountCreate = Schemas['AccountCreate'];
+export type JournalLine = Schemas['JournalLine'];
+export type JournalLineWrite = Schemas['JournalLineWrite'];
+export type JournalEntry = Schemas['JournalEntry'];
+export type JournalEntryCreate = Schemas['JournalEntryCreate'];
+export type Document = Schemas['Document'];
+export type DocTemplate = Schemas['DocTemplate'];
+export type DocumentUploadCreate = Schemas['DocumentUploadCreate'];
+export type DocumentConfirmUpload = Schemas['DocumentConfirmUpload'];
+export type GenerateDocumentCreate = Schemas['GenerateDocumentCreate'];
 
 /** GET /api/auth/me, POST /api/auth/login, POST /api/auth/refresh — { user }. */
 export type MeResponse = Schemas['MeResponse'];
@@ -52,3 +65,27 @@ export type OrgMemberDetailResponse = Schemas['OrgMemberDetailResponse'];
  * read this body (the __Host-access cookie is HttpOnly); it exists for
  * Bearer-mode clients, which this template does not use. */
 export type SwitchResponse = Schemas['SwitchResponse'];
+/** GET/POST /api/v1/counterparties — { data: Counterparty[], total, limit, offset }. */
+export type CounterpartyListResponse = Schemas['CounterpartyListResponse'];
+/** GET/POST/PATCH /api/v1/counterparties[/{id}] — { data: Counterparty }. */
+export type CounterpartyDetailResponse = Schemas['CounterpartyDetailResponse'];
+/** GET /api/v1/accounts — { data: Account[] }, unpaginated. */
+export type AccountListResponse = Schemas['AccountListResponse'];
+/** POST /api/v1/accounts — { data: Account }. */
+export type AccountDetailResponse = Schemas['AccountDetailResponse'];
+/** GET/POST /api/v1/journal-entries — { data: JournalEntry[], total, limit, offset }. */
+export type JournalEntryListResponse = Schemas['JournalEntryListResponse'];
+/** GET/POST /api/v1/journal-entries[/{id}[/post|/reverse]] — { data: JournalEntry }. */
+export type JournalEntryDetailResponse = Schemas['JournalEntryDetailResponse'];
+/** GET /api/v1/documents — { data: Document[], total, limit, offset }. */
+export type DocumentListResponse = Schemas['DocumentListResponse'];
+/** GET /api/v1/documents/{id}, POST .../confirm-upload — { data: Document }. */
+export type DocumentDetailResponse = Schemas['DocumentDetailResponse'];
+/** POST /api/v1/documents/uploads — { data: Document, upload_url }. */
+export type DocumentUploadResponse = Schemas['DocumentUploadResponse'];
+/** POST /api/v1/documents/{id}/download-url — { url }. */
+export type DownloadUrlResponse = Schemas['DownloadUrlResponse'];
+/** GET /api/v1/doc-templates — { data: DocTemplate[] }. */
+export type DocTemplateListResponse = Schemas['DocTemplateListResponse'];
+/** POST /api/v1/documents/generate — 202 { document_id, render_queued }. */
+export type GenerateDocumentResponse = Schemas['GenerateDocumentResponse'];

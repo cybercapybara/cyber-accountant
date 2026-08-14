@@ -18,6 +18,7 @@
     "use_sentinel": false,
     "url": "tcp://${REDIS_HOST:-127.0.0.1}:${REDIS_PORT:-6379}",
     "password": "${REDIS_PASSWORD:-}",
+    "db": "${REDIS_DB:-0}",
     "pool_size": 10,
     "sentinel": {
       "password": "${REDIS_SENTINEL_PASSWORD:-}",
@@ -49,11 +50,15 @@
       "default",
       "account_email",
       "email.send",
-      "webhook.deliver"
+      "webhook.deliver",
+      "docgen.render"
     ],
     "concurrency": 2,
     "health_port": 9091,
     "brpop_timeout": 5
+  },
+  "docgen": {
+    "latex_cmd": "${DOCGEN_LATEX_CMD:-xelatex}"
   },
   "mail": {
     "enabled": "${MAIL_ENABLED:-false}",

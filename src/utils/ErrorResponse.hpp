@@ -130,6 +130,15 @@ inline drogon::HttpResponsePtr created(const json& body) {
     return resp;
 }
 
+/// 202 Accepted variant — the caller enqueued background work (Task 13's
+/// `POST /documents/generate` -> `docgen.render`) and the body only carries
+/// enough to poll for completion (e.g. {document_id}), not the final result.
+inline drogon::HttpResponsePtr accepted(const json& body) {
+    auto resp = ok(body);
+    resp->setStatusCode(drogon::k202Accepted);
+    return resp;
+}
+
 /**
  * @brief 200 with the standard paginated list envelope: one shape every list
  *        endpoint should emit so clients can rely on it. @p data must be a JSON

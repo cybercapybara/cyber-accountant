@@ -24,12 +24,17 @@ protected:
         if (::testing::Test::IsSkipped())
             return;
         // Fixed BINs and seed_user_id() emails below are only unique within a
-        // single run; truncating up front (same pattern as
-        // AdminFlowTest::SetUp) keeps the suite idempotent when re-run
-        // against a persistent local Postgres instead of a fresh container.
-        // CASCADE on either table also clears org_members.
+        // single run; clearing up front (same pattern as AdminFlowTest::SetUp)
+        // keeps the suite idempotent when re-run against a persistent local
+        // Postgres instead of a fresh container.
+        // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
+        // test_helpers.hpp) — see its Doxygen comment for why it TRUNCATEs
+        // the journal/document tables before a plain DELETE on organizations.
+        // TRUNCATE users CASCADE stays local to this fixture (unaffected by
+        // the centralization — no table on the accounts/organizations side
+        // references users).
+        TestHelpers::wipe_org_data();
         Database::get().execute_write([](auto& txn) {
-            txn.exec("TRUNCATE TABLE organizations CASCADE");
             txn.exec("TRUNCATE TABLE users CASCADE");
             return 0;
         });

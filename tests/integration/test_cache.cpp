@@ -274,3 +274,58 @@ TEST_F(CacheLifecycleTest, OperationBeforeInitThrows) {
     EXPECT_THROW(mgr.set("key", "val"), std::runtime_error);
     EXPECT_THROW(mgr.get("key"), std::runtime_error);
 }
+
+// --- Logical-DB isolation (T13b) ---
+//
+// Motivation: this app shares a single Redis instance with another app, and
+// their queue/rate-limit/session key names are identical (unprefixed). Without
+// a distinct logical DB, the other app's worker was confirmed live to dequeue
+// and drop this app's jobs. ConnectionOptions.db (REDIS_DB / cache.db) fixes
+// this by giving each app its own `SELECT`ed keyspace on the same instance.
+//
+// CacheManager is a plain class (not a hidden singleton — see
+// OperationBeforeInitThrows above), so two independent instances can each
+// hold an open connection on a different db for the duration of one test.
+
+TEST_F(CacheLifecycleTest, DbIsolationBetweenLogicalDatabases) {
+    auto key = tk("db_isolation");
+
+    Cache::CacheManager db0;
+    Cache::CacheManager db1;
+    db0.initialize(REDIS_URL, 2, "", std::chrono::milliseconds(500), std::chrono::milliseconds(500), /*db=*/0);
+    db1.initialize(REDIS_URL, 2, "", std::chrono::milliseconds(500), std::chrono::milliseconds(500), /*db=*/1);
+
+    // Write through the Cache facade on db1 only.
+    ASSERT_TRUE(db1.set(key, "db1-only"));
+
+    // Same key, same Redis instance, different logical DB: db0 must not see it.
+    EXPECT_FALSE(db0.get(key).has_value());
+
+    // db1 sees its own write — SELECT-semantics work through our facade.
+    auto v = db1.get(key);
+    ASSERT_TRUE(v.has_value());
+    EXPECT_EQ(*v, "db1-only");
+
+    // Direct redis-plus-plus verification, bypassing CacheManager entirely —
+    // confirms the isolation is a real Redis SELECT, not a CacheManager
+    // bookkeeping artifact. (sw::redis++ types come in transitively via
+    // cache/Cache.hpp, same as TestHelpers::is_redis_available.)
+    sw::redis::ConnectionOptions raw_opts;
+    raw_opts.host = TestHelpers::redis_host();
+    raw_opts.port = TestHelpers::redis_port();
+    raw_opts.db = 0;
+    raw_opts.socket_timeout = std::chrono::milliseconds(500);
+    sw::redis::Redis raw_db0(raw_opts);
+    auto raw_val = raw_db0.get(key);
+    EXPECT_FALSE(static_cast<bool>(raw_val)) << "key written on db1 leaked into db0";
+
+    raw_opts.db = 1;
+    sw::redis::Redis raw_db1(raw_opts);
+    auto raw_val_db1 = raw_db1.get(key);
+    ASSERT_TRUE(static_cast<bool>(raw_val_db1));
+    EXPECT_EQ(*raw_val_db1, "db1-only");
+
+    db1.del(key);
+    db0.shutdown();
+    db1.shutdown();
+}

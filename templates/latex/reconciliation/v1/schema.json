@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["period_from", "period_to", "party_a", "party_b", "rows", "closing"],
+  "properties": {
+    "period_from": {"type": "string", "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$"},
+    "period_to": {"type": "string", "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$"},
+    "party_a": {"$ref": "#/definitions/party"},
+    "party_b": {"$ref": "#/definitions/party"},
+    "opening_balance": {
+      "type": "object",
+      "required": ["a_debit", "a_credit"],
+      "properties": {
+        "a_debit": {"type": "string"}, "a_credit": {"type": "string"}
+      }},
+    "rows": {"type": "array", "minItems": 1, "items": {
+      "type": "object",
+      "required": ["date", "doc", "a_debit", "a_credit", "b_debit", "b_credit"],
+      "properties": {
+        "date": {"type": "string", "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$"},
+        "doc": {"type": "string"},
+        "a_debit": {"type": "string"}, "a_credit": {"type": "string"},
+        "b_debit": {"type": "string"}, "b_credit": {"type": "string"}
+      }}},
+    "closing": {
+      "type": "object",
+      "required": ["a_says", "b_says"],
+      "properties": {
+        "a_says": {"type": "string"}, "b_says": {"type": "string"}
+      }}
+  },
+  "definitions": {
+    "party": {
+      "type": "object",
+      "required": ["name", "identifier"],
+      "properties": {
+        "name": {"type": "string"}, "identifier": {"type": "string"},
+        "address": {"type": "string"}, "iik": {"type": "string"},
+        "bik": {"type": "string"}, "bank": {"type": "string"}, "kbe": {"type": "string"}
+      }}
+  }
+}

@@ -57,19 +57,32 @@
 #   KUBECONFIG=../cluster/kubeconfig helm upgrade --install cyber-accountant ./helm/cpp-env \
 #     -n cyber-accountant -f helm/cpp-env/values-cybercapybara.yaml
 # ═══════════════════════════════════════════════════════════════
+#
+# Update 2026-08-14 — owner decision: use the SHARED Postgres/Redis already
+# running in namespace `db`, instead of the umbrella's own bundled CNPG
+# Postgres + Redis/Sentinel. See "Shared db-namespace services" below.
+# ═══════════════════════════════════════════════════════════════
 
 env: cybercapybara
-# Placeholder — no real domain assigned in this phase (see cluster survey
-# above). Ingress objects still render (the chart has no top-level ingress
-# disable switch), pointing at *.cybercapybara.example.com, which nobody
-# owns; cert-manager's Certificate for them will sit Pending/failed. That is
-# expected and harmless — self-contained to this namespace. Smoke this phase
-# is via `kubectl port-forward`, not through ingress.
+# Placeholder — no real domain assigned to api.<env>/app.<env>. This release
+# has its own REAL public entrypoint instead:
+# deploy/ingress/buh-cybercapybara-kz.yaml (buh.cybercapybara.kz).
+#
+# Update 2026-08-14 — the umbrella's api/app placeholder Ingress pair used
+# to have NO enable guard at all (templates/ingress.yaml rendered them
+# unconditionally), so they kept reappearing as clutter after every `helm
+# upgrade` and needed manual `kubectl delete ingress api app` each time —
+# same class of gap as templates/postgres.yaml's Cluster CR, fixed the same
+# way: templates/ingress.yaml now wraps them in
+# `{{- if .Values.ingress.enabled }}` (matching the mailpit/jaeger idiom in
+# the same file). `ingress.enabled: false` below actually suppresses them
+# now — no more manual cleanup needed after this fix.
 baseDomain: example.com
 
 ingress:
+  enabled: false                       # api/app placeholders off — buh-cybercapybara-kz is standalone (deploy/ingress/), not templated through here
   className: nginx                     # ingress-nginx IS present in-cluster
-  clusterIssuer: letsencrypt-prod       # real cluster-wide issuer; harmless no-op against a domain we don't own
+  clusterIssuer: letsencrypt-prod       # real cluster-wide issuer; unused while enabled: false above
   wildcardTlsSecret: ""
   externalDnsTarget: ""                 # "" → no external-dns annotation, no real DNS record created
 
@@ -80,10 +93,39 @@ jaeger:
   enabled: false
 mailpit:
   enabled: false
+# ── Shared db-namespace services (owner decision, 2026-08-14) ──
+#
+# The umbrella normally bootstraps its OWN per-env CNPG Postgres cluster
+# ("pg") and its OWN Redis+Sentinel deployment (see helm/cpp-env/templates/
+# postgres.yaml, redis.yaml). The owner decided cyber-accountant should
+# instead reuse the Postgres/Redis ALREADY running cluster-wide in namespace
+# `db` — same rationale as the MinIO decision in docs/adr/0007-s3-backend.md:
+# keep data/cost inside services the cluster already runs instead of paying
+# for a duplicate stateful workload on an already-constrained 3-node
+# control-plane-only cluster.
+#
+# redis.enabled: false suppresses the umbrella's bundled redis+redis-sentinel
+# Deployments (templates/redis.yaml is guarded by
+# `{{- if .Values.redis.enabled }}`) — no leftover objects after `helm
+# upgrade`.
+#
+# postgres.enabled: false does the same for the bundled per-env CNPG
+# Cluster "pg" + its `pg-app` Secret (templates/postgres.yaml). This used
+# to have NO such guard — for a few upgrades it unconditionally re-rendered
+# the "pg" Cluster/pod/PVC every time regardless of any value here, and had
+# to be deleted by hand each time (`kubectl delete cluster.postgresql.cnpg.io/pg`
+# + its PVC). Fixed 2026-08-14 by wrapping the whole template in
+# `{{- if .Values.postgres.enabled }}` (matching the redis/kafka idiom) —
+# `postgres.instances`/`storageSize`/`storageClass` below are inert again
+# only in the sense that CNPG itself never runs; the flag actually suppresses
+# the template now, no more manual cleanup needed after this change.
 postgres:
-  instances: 1                          # single primary, no read replica (per brief's minimal profile)
+  enabled: false
+  instances: 1
   storageSize: 2Gi
-  storageClass: longhorn-single-replica # matches this cluster's existing stateful-workload convention (see survey above)
+  storageClass: longhorn-single-replica
+redis:
+  enabled: false   # suppresses templates/redis.yaml entirely (master + 3 Sentinels)
 
 cyber-accountant:
   image:
@@ -95,6 +137,137 @@ cyber-accountant:
     enabled: false
   tracing:
     enabled: false                      # no Jaeger to export to
+  # ── Shared Postgres (namespace `db`, CNPG cluster "postgresql") ──
+  # IMPORTANT: NOT the pre-existing `postgresql-cybercapybara` role/db the
+  # task brief pointed at — that role (comment: "cybercapybara.kz site db
+  # user") and its `cybercapybara` database are live production data for the
+  # unrelated cybercapybara.kz marketing site (namespace `www`, verified
+  # running and using that exact role+db+password today). Reusing it would
+  # have put this app's own schema/migrations in the SAME database as that
+  # site's — a real collision risk (this template's migrations create
+  # tables like `organizations`; a same-named or conflicting table in an
+  # unrelated app's schema is exactly the kind of thing that breaks in
+  # production). Instead, a NEW dedicated role+database was provisioned on
+  # the SAME shared CNPG cluster (still "the existing shared service", just
+  # with its own identity — the same pattern as the MinIO decision:
+  # shared infra, scoped-not-shared credentials):
+  #   - Role `cyber_accountant` added to the `postgresql` Cluster's
+  #     `spec.managed.roles` (namespace db), password in Secret
+  #     `postgresql-cyber-accountant` (namespace db, kubernetes.io/basic-auth).
+  #   - Database `cyber_accountant` created via a CNPG `Database` CR
+  #     (databases.postgresql.cnpg.io/cyber-accountant, namespace db),
+  #     owner `cyber_accountant`.
+  #   - Verified: connects, owns/creates tables in `cyber_accountant`; has
+  #     zero visible objects in the `cybercapybara` database (CONNECT alone
+  #     grants nothing without object-level grants — confirmed empirically).
+  # password is intentionally blank here — real value supplied via
+  # `--set cyber-accountant.externalDatabase.password=...` at `helm upgrade`
+  # time (see deploy notes at the top of this file), never committed.
+  externalDatabase:
+    host: postgresql-rw.db.svc.cluster.local
+    port: 5432
+    name: cyber_accountant
+    user: cyber_accountant
+    password: ""
+    poolSize: 5
+    replicaHost: postgresql-ro.db.svc.cluster.local
+    migrationsEnabled: false   # chart default; migrations run via the init container (migrations.runAsInitContainer, chart default true)
+  # ── Shared Redis + Sentinel (namespace `db`, Helm release "redis",
+  # bitnami-style: 3-node StatefulSet, each pod running redis+sentinel,
+  # master set "mymaster") ──
+  # Same single shared instance the `www` site already uses (same
+  # `redis-password` — Redis has one instance-wide AUTH password; there is
+  # no per-app credential the way CNPG/MinIO support, so this is the only
+  # way to connect at all, not a scoping choice).
+  #
+  # FIXED 2026-08-14 (T13b), was a KNOWN GAP: this template's Redis keys are
+  # NOT namespaced per app (src/jobs/Job.hpp: "jobs:queue:...",
+  # "jobs:dlq:...", src/security/RateLimit.hpp: "rl:sw:...", "rl:auth:...",
+  # auth cookie revocation: "auth:refresh:...") — confirmed live that this
+  # is a real collision, not a theoretical one: with mail.viaJobs=true, a
+  # reset-password-request enqueued into the shared Redis was immediately
+  # dequeued and dropped by `www`'s OWN worker, because both workers BRPOP
+  # the identical "jobs:queue:*" list key on DB 0. `db: 1` below (wired to
+  # REDIS_DB, applied via ConnectionOptions.db — see src/cache/Cache.hpp) is
+  # the fix: it gives this app its own logical keyspace on the SAME shared
+  # Redis instance, so `jobs:queue:mail` on DB 1 is a completely different
+  # key from `www`'s `jobs:queue:mail` on DB 0. This is now the mechanism
+  # that makes mail.viaJobs=false (see below) no longer strictly required
+  # for correctness — kept at false anyway pending a deliberate follow-up to
+  # re-enable it, since this task's charter was isolation, not re-enabling
+  # queued mail.
+  #
+  # DB-index choice verified non-conflicting, not assumed: `kubectl -n db
+  # exec redis-node-0 -c redis -- redis-cli -a <redis-password secret> INFO
+  # keyspace` shows only `db0:keys=18,...` — `www` (and everything else on
+  # this shared instance) uses DB 0 exclusively, nothing else is on DB 1+.
+  # DB 1 is picked for both api and worker below (they MUST match — the
+  # worker's BRPOP client has to poll the same DB the api LPUSHes into).
+  #
+  # password intentionally blank — supplied via
+  # `--set cyber-accountant.externalRedis.password=...` at upgrade time.
+  externalRedis:
+    url: "tcp://redis.db.svc.cluster.local:6379"
+    password: ""
+    useSentinel: true
+    masterName: mymaster
+    sentinelNodes: "redis-node-0.redis-headless.db.svc.cluster.local:26379,redis-node-1.redis-headless.db.svc.cluster.local:26379,redis-node-2.redis-headless.db.svc.cluster.local:26379"
+    poolSize: 5
+    db: 1   # REDIS_DB — isolates our keyspace from `www` (DB 0). See comment above.
+  # Real public URL now that buh.cybercapybara.kz exists
+  # (deploy/ingress/buh-cybercapybara-kz.yaml) — was the unused
+  # app.cybercapybara.example.com placeholder. Matters now that mail is on
+  # below: confirm/reset links in account emails are built from this.
+  app:
+    baseUrl: "https://buh.cybercapybara.kz"
+  # ── Outbound mail (owner decision, 2026-08-14): same Brevo SMTP relay
+  # account the cybercapybara.kz site (namespace www) already uses —
+  # verified via `kubectl -n www get deploy -o yaml` env (host/port/user/
+  # TLS) and the www secrets' key names (`api-cpp-api` /
+  # `worker-cpp-worker`, key `mail-smtp-password`). The password itself was
+  # copied cluster-side into a new Secret `smtp-credentials` (namespace
+  # cyber-accountant, keys named after this app's own MAIL_* env vars) —
+  # never written to a file or git.
+  #
+  # `from`/`fromName` deliberately differ from www's (`info@cybercapybara.kz`
+  # / "CyberCapybara"): the SMTP AUTH identity (`smtpUsername`) is a Brevo
+  # relay-account login, not a mailbox — Brevo lets any verified sender on
+  # the domain send through it, so this app gets its OWN sender identity
+  # rather than impersonating the marketing site's inbox. cybercapybara.kz
+  # is presumably domain-verified in Brevo (not per-mailbox), since www
+  # already sends as `info@` through the same login — `noreply@` should
+  # work the same way.
+  #
+  # smtpPassword intentionally blank — supplied via
+  # `--set cyber-accountant.mail.smtpPassword=...` at upgrade time, sourced
+  # from the `smtp-credentials` Secret above, never committed.
+  mail:
+    enabled: true
+    # false — NOT a "safe until jobs are on" default (an earlier version of
+    # this comment claimed jobs.enabled=false makes viaJobs=true harmless;
+    # that was wrong). The Job queue module initializes and enqueues into
+    # Redis regardless of the jobs.enabled REST-API-exposure flag. Verified
+    # live: with viaJobs=true, a reset-password-request enqueued a real
+    # "account_email" job into the SHARED Redis (namespace db) — and it was
+    # immediately dequeued and silently dropped by `www`'s OWN worker
+    # (`kubectl -n www logs deploy/worker-cpp-worker`: "AccountEmails: job
+    # for reset_password skipped — user ... no longer exists"), because
+    # job-queue keys aren't namespaced per app (see the externalRedis
+    # comment above) and both workers poll the identical Redis list key.
+    # The email was never sent. viaJobs=false makes both api and worker
+    # send inline (in-process, real blocking SMTP call), bypassing the
+    # shared queue entirely — safe under the current Redis-sharing
+    # constraint. Revisit once src/cache/Cache.hpp gets per-app key
+    # namespacing (tracked in the externalRedis comment above).
+    viaJobs: false
+    smtpHost: smtp-relay.brevo.com
+    smtpPort: 587
+    smtpUsername: michael@tarassov.me
+    smtpPassword: ""
+    smtpUseTls: true
+    from: noreply@cybercapybara.kz
+    fromName: "Cyber Accountant"
+    subjectPrefix: "[Cyber Accountant] "
 
 cyber-accountant-worker:
   image:
@@ -104,10 +277,49 @@ cyber-accountant-worker:
     - name: ghcr-pull
   tracing:
     enabled: false
-  # Placeholder — same "no real domain yet" note as baseDomain above. Only
-  # affects links inside outbound email bodies (mail is off this phase too).
+  # Real public URL now that buh.cybercapybara.kz exists — was the unused
+  # app.cybercapybara.example.com placeholder (see the api block above for
+  # why this matters now that mail is on).
   app:
-    baseUrl: "https://app.cybercapybara.example.com"
+    baseUrl: "https://buh.cybercapybara.kz"
+  # Same shared Postgres/Redis as the `cyber-accountant` block above — see
+  # those comments for the full rationale (dedicated role/db, not
+  # `postgresql-cybercapybara`; Redis key-namespacing — FIXED via db: 1, T13b).
+  # migrationsEnabled stays false here (chart default) — the api's init
+  # container owns schema migrations, not the worker.
+  externalDatabase:
+    host: postgresql-rw.db.svc.cluster.local
+    port: 5432
+    name: cyber_accountant
+    user: cyber_accountant
+    password: ""
+    poolSize: 5
+    replicaHost: postgresql-ro.db.svc.cluster.local
+  externalRedis:
+    url: "tcp://redis.db.svc.cluster.local:6379"
+    password: ""
+    useSentinel: true
+    masterName: mymaster
+    sentinelNodes: "redis-node-0.redis-headless.db.svc.cluster.local:26379,redis-node-1.redis-headless.db.svc.cluster.local:26379,redis-node-2.redis-headless.db.svc.cluster.local:26379"
+    poolSize: 5
+    db: 1   # REDIS_DB — MUST match the api block's db above (BRPOP must poll the same DB the api LPUSHes into).
+  # Same shared Brevo SMTP relay as the `cyber-accountant` block above —
+  # see those comments for the full rationale, including why viaJobs is
+  # false (confirmed live: the shared Redis job queue isn't namespaced per
+  # app, so `www`'s worker dequeues and drops this app's account_email
+  # jobs). smtpPassword supplied via
+  # `--set cyber-accountant-worker.mail.smtpPassword=...` at upgrade time.
+  mail:
+    enabled: true
+    viaJobs: false
+    smtpHost: smtp-relay.brevo.com
+    smtpPort: 587
+    smtpUsername: michael@tarassov.me
+    smtpPassword: ""
+    smtpUseTls: true
+    from: noreply@cybercapybara.kz
+    fromName: "Cyber Accountant"
+    subjectPrefix: "[Cyber Accountant] "
 
 cpp-frontend:
   image:

@@ -288,6 +288,47 @@ public:
         return cfg_.endpoint + "/" + cfg_.bucket + "/" + key;
     }
 
+    /// A time-limited, pre-authenticated URL a client can GET/PUT directly
+    /// against the bucket without a request ever touching this service —
+    /// SigV4 *query* signing (X-Amz-Algorithm/Credential/Date/Expires/
+    /// SignedHeaders/Signature), as opposed to request()'s header signing.
+    /// Payload hash is the literal string "UNSIGNED-PAYLOAD": the standard
+    /// placeholder for presigned URLs, since the body isn't known/read at
+    /// sign time. Shares the k_date→k_signing derivation with the
+    /// header-signed path via signing_key() — one HMAC chain, not two.
+    /// @param method   "GET" (download) or "PUT" (upload); passed through
+    ///                 verbatim into the canonical request.
+    /// @param ttl_sec  Seconds until the URL expires; non-positive falls
+    ///                 back to a 1-hour default rather than minting a URL
+    ///                 that is already expired or (with 0) rejected by S3.
+    std::string presign(const std::string& key, const std::string& method, long ttl_sec) {
+        if (!key_is_safe(key))
+            throw std::runtime_error("storage: unsafe key '" + key + "'");
+        if (ttl_sec <= 0)
+            ttl_sec = 3600;
+
+        std::string amzdate, datestamp;
+        amz_dates(amzdate, datestamp);
+        const std::string scope = datestamp + "/" + cfg_.region + "/s3/aws4_request";
+        const std::string canonical_uri = "/" + cfg_.bucket + "/" + uri_encode_path(key);
+
+        // Query keys are already in sorted order — SigV4 canonical query
+        // string must be '&'-joined ascending by key.
+        const std::string canonical_query = "X-Amz-Algorithm=AWS4-HMAC-SHA256" +
+                                            ("&X-Amz-Credential=" + uri_encode_query(cfg_.access_key + "/" + scope)) +
+                                            ("&X-Amz-Date=" + amzdate) + ("&X-Amz-Expires=" + std::to_string(ttl_sec)) +
+                                            "&X-Amz-SignedHeaders=host";
+
+        const std::string canonical_headers = "host:" + host_ + "\n";
+        const std::string canonical_request = method + "\n" + canonical_uri + "\n" + canonical_query + "\n" +
+                                              canonical_headers + "\n" + "host" + "\n" + "UNSIGNED-PAYLOAD";
+        const std::string string_to_sign =
+            "AWS4-HMAC-SHA256\n" + amzdate + "\n" + scope + "\n" + Utils::Crypto::sha256_hex(canonical_request);
+
+        const std::string signature = hmac_hex(signing_key(datestamp), string_to_sign);
+        return cfg_.endpoint + canonical_uri + "?" + canonical_query + "&X-Amz-Signature=" + signature;
+    }
+
 private:
     // Read callback feeding the request body to libcurl during a PUT upload.
     struct ReadCtx {
@@ -354,6 +395,23 @@ private:
         return out;
     }
 
+    // AWS4-HMAC-SHA256 signing-key derivation (k_date -> k_region -> k_service
+    // -> k_signing), shared by the header-signed request() path and the
+    // query-signed presign() path so the chain lives in exactly one place.
+    std::string signing_key(const std::string& datestamp) const {
+        const std::string k_date = Utils::Crypto::hmac_sha256("AWS4" + cfg_.secret_key, datestamp);
+        const std::string k_region = Utils::Crypto::hmac_sha256(k_date, cfg_.region);
+        const std::string k_service = Utils::Crypto::hmac_sha256(k_region, "s3");
+        return Utils::Crypto::hmac_sha256(k_service, "aws4_request");
+    }
+
+    // HMAC-SHA256(key, data), lowercase-hex encoded — the final signing step
+    // both signed_request() and presign() end with.
+    static std::string hmac_hex(const std::string& key, const std::string& data) {
+        const std::string mac = Utils::Crypto::hmac_sha256(key, data);
+        return Utils::Crypto::detail::bytes_to_hex(reinterpret_cast<const unsigned char*>(mac.data()), mac.size());
+    }
+
     static void amz_dates(std::string& amzdate, std::string& datestamp) {
         const std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         std::tm tm{};
@@ -401,13 +459,7 @@ private:
         const std::string string_to_sign =
             "AWS4-HMAC-SHA256\n" + amzdate + "\n" + scope + "\n" + Utils::Crypto::sha256_hex(canonical_request);
 
-        const std::string k_date = Utils::Crypto::hmac_sha256("AWS4" + cfg_.secret_key, datestamp);
-        const std::string k_region = Utils::Crypto::hmac_sha256(k_date, cfg_.region);
-        const std::string k_service = Utils::Crypto::hmac_sha256(k_region, "s3");
-        const std::string k_signing = Utils::Crypto::hmac_sha256(k_service, "aws4_request");
-        const std::string sig_bytes = Utils::Crypto::hmac_sha256(k_signing, string_to_sign);
-        const std::string signature = Utils::Crypto::detail::bytes_to_hex(
-            reinterpret_cast<const unsigned char*>(sig_bytes.data()), sig_bytes.size());
+        const std::string signature = hmac_hex(signing_key(datestamp), string_to_sign);
 
         const std::string authorization = "AWS4-HMAC-SHA256 Credential=" + cfg_.access_key + "/" + scope +
                                           ", SignedHeaders=" + signed_headers + ", Signature=" + signature;

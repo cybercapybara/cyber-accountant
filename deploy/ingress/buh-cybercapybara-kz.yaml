@@ -1,0 +1,48 @@
+# Public entrypoint for the cyber-accountant release: buh.cybercapybara.kz.
+#
+# Standalone manifest, not part of helm/cpp-env's umbrella ingress
+# (templates/ingress.yaml + _helpers.tpl `cpp-env.ingress`): that helper is
+# hardcoded to exactly two per-env hosts, "api.<env>.<baseDomain>" and
+# "app.<env>.<baseDomain>" (see helm/cpp-env/templates/_helpers.tpl). This
+# release's env/baseDomain ("cybercapybara" / "example.com") render those as
+# placeholders (api.cybercapybara.example.com, app.cybercapybara.example.com)
+# that nobody owns — see helm/cpp-env/values-cybercapybara.yaml. Bending
+# env/baseDomain to produce "buh.cybercapybara.kz" through that helper would
+# also rename/break the existing (harmless, already-placeholder) api/app
+# Ingress objects, for no benefit. A standalone manifest, matching how every
+# other real hostname in this cluster is already wired (www/frontend-cpp-frontend,
+# minio/minio, monitoring/kube-prometheus-stack-grafana — all standalone
+# Ingress objects using the same ingressClassName + ClusterIssuer), is the
+# lower-risk choice. See README.md in this directory for the full picture.
+#
+# DNS: *.cybercapybara.kz is an existing wildcard (owner-confirmed) proxied
+# through Cloudflare to this cluster's ingress-nginx LoadBalancer IP
+# (49.12.17.46) — no DNS change needed or made for this host.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: buh-cybercapybara-kz
+  namespace: cyber-accountant
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - buh.cybercapybara.kz
+      secretName: buh-cybercapybara-kz-tls
+  rules:
+    - host: buh.cybercapybara.kz
+      http:
+        paths:
+          # web's nginx (helm/cyber-accountant chart's cm/web) already
+          # proxies /api/ to the api Service itself (see configmap `web` in
+          # namespace cyber-accountant) — a single backend is enough, no
+          # separate /api path rule needed here.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 8080

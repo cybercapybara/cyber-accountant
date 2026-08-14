@@ -1,3 +1,4 @@
+{{- if .Values.postgres.enabled }}
 # Per-env CloudNativePG cluster → pg-rw (primary) + pg-ro (replicas). The app
 # role/password come from the pg-app secret below (mirrors credentials.dbPassword).
 apiVersion: v1
@@ -37,3 +38,4 @@ spec:
   affinity:
     nodeSelector:
       kubernetes.io/arch: amd64
+{{- end }}

@@ -19,6 +19,7 @@ baseDomain: example.com
 
 # ── Ingress (umbrella owns all ingress; subchart ingress is disabled) ──
 ingress:
+  enabled: true                          # renders the api.<env>/app.<env> placeholder Ingress pair; false → bring your own (e.g. a standalone deploy/ingress/*.yaml for a real domain)
   className: nginx
   clusterIssuer: letsencrypt-prod        # cert-manager ClusterIssuer (DNS-01 for wildcard)
   wildcardTlsSecret: ""                  # set to reuse a pre-issued *.<env> cert; "" → per-host certs
@@ -34,6 +35,7 @@ credentials:
 
 # ── Infra toggles + sizing ──
 postgres:
+  enabled: true         # bundled per-env CNPG Cluster "pg"; false → bring your own (see externalDatabase below) and set this false to avoid a duplicate
   instances: 2          # CNPG: 1 primary + (instances-1) replicas → pg-rw / pg-ro
   storageSize: 2Gi
   storageClass: ""      # "" → cluster default

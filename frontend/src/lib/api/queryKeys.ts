@@ -13,6 +13,45 @@ export const qk = {
       page === undefined ? (['orgs', 'all'] as const) : (['orgs', 'all', page] as const),
     mine: () => ['orgs', 'mine'] as const,
   },
+  counterparties: {
+    all: (page?: number) =>
+      page === undefined
+        ? (['counterparties', 'all'] as const)
+        : (['counterparties', 'all', page] as const),
+  },
+  accounts: {
+    all: () => ['accounts', 'all'] as const,
+  },
+  journal: {
+    /**
+     * `filters` (from/to) is serialised into the key so a changed filter is
+     * a fresh cache entry, while the bare prefix (['journal','entries'])
+     * still matches every variant for invalidation after post/reverse.
+     * usePagedQuery appends the page number on top.
+     */
+    entries: (filters?: Record<string, string>) =>
+      filters === undefined
+        ? (['journal', 'entries'] as const)
+        : (['journal', 'entries', JSON.stringify(filters)] as const),
+    entry: (id: string) => ['journal', 'entry', id] as const,
+  },
+  documents: {
+    /**
+     * `filters` (type/status) is serialised into the key, same pattern as
+     * journal.entries above — a changed filter is a fresh cache entry,
+     * while the bare prefix (['documents','all']) still matches every
+     * variant for invalidation after upload/confirm-upload/generate.
+     * usePagedQuery appends the page number on top.
+     */
+    all: (filters?: Record<string, string>) =>
+      filters === undefined
+        ? (['documents', 'all'] as const)
+        : (['documents', 'all', JSON.stringify(filters)] as const),
+    detail: (id: string) => ['documents', 'detail', id] as const,
+  },
+  docTemplates: {
+    all: () => ['docTemplates', 'all'] as const,
+  },
   admin: {
     users: (page?: number) =>
       page === undefined ? (['admin', 'users'] as const) : (['admin', 'users', page] as const),

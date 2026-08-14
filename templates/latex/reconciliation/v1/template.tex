@@ -1,0 +1,37 @@
+\documentclass[a4paper,10pt]{article}
+\usepackage[margin=16mm]{geometry}
+\usepackage{fontspec}
+\setmainfont[Scale=0.92]{Noto Sans}
+\usepackage{polyglossia}\setmainlanguage{russian}
+\usepackage{tabularx,booktabs,array}
+\newcommand{\field}[1]{\textbf{#1}}
+\pagestyle{empty}
+\begin{document}
+\begin{center}\Large\bfseries Акт сверки взаиморасчётов за период с {{ period_from }} по {{ period_to }}\end{center}
+\vspace{4mm}
+\noindent\field{Сторона А:} {{ party_a.name }}, БИН/ИИН {{ party_a.identifier }}\\
+{% if party_a.address != "" %}\hphantom{\field{Сторона А:} }{{ party_a.address }}\\{% endif %}
+\vspace{2mm}
+\noindent\field{Сторона Б:} {{ party_b.name }}, БИН/ИИН {{ party_b.identifier }}\\
+{% if party_b.address != "" %}\hphantom{\field{Сторона Б:} }{{ party_b.address }}\\{% endif %}
+\vspace{4mm}
+\noindent\begin{tabularx}{\textwidth}{@{}l X r r r r@{}}
+\toprule
+ & & \multicolumn{2}{c}{По данным {{ party_a.name }}} & \multicolumn{2}{c}{По данным {{ party_b.name }}} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+Дата & Документ & Дебет, ₸ & Кредит, ₸ & Дебет, ₸ & Кредит, ₸ \\
+\midrule
+{% if opening_balance.a_debit != "" or opening_balance.a_credit != "" %}\multicolumn{2}{l}{Сальдо на начало периода} & {{ opening_balance.a_debit }} & {{ opening_balance.a_credit }} & & \\
+{% endif %}{% for row in rows %}{{ row.date }} & {{ row.doc }} & {{ row.a_debit }} & {{ row.a_credit }} & {{ row.b_debit }} & {{ row.b_credit }} \\
+{% endfor %}
+\bottomrule
+\end{tabularx}
+\vspace{4mm}
+\noindent {{ closing.a_says }}\\
+{{ closing.b_says }}
+\vspace{12mm}
+\noindent
+\begin{tabular}{@{}p{0.45\textwidth}p{0.45\textwidth}@{}}
+От {{ party_a.name }}: \hrulefill & От {{ party_b.name }}: \hrulefill \\
+\end{tabular}
+\end{document}

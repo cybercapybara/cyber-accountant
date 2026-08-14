@@ -1,5 +1,5 @@
 import { lazy, type ReactElement } from 'react';
-import { Shield, ScrollText, Building2 } from 'lucide-react';
+import { Shield, ScrollText, Building2, Users, BookOpenText, FileText } from 'lucide-react';
 
 import { Permission } from '@/lib/auth/permissions';
 
@@ -18,6 +18,10 @@ import { RequestResetPage } from '@/pages/RequestReset';
 import { ResetPasswordPage } from '@/pages/ResetPassword';
 import { JoinFromInvitePage } from '@/pages/JoinFromInvite';
 import { OrganizationsPage } from '@/pages/Organizations';
+import { CounterpartiesPage } from '@/pages/Counterparties';
+import { JournalPage } from '@/pages/Journal';
+import { DocumentsPage } from '@/pages/Documents';
+import { GenerateDocumentPage } from '@/pages/GenerateDocument';
 
 // Admin pages are code-split: a logged-out visitor on /login should not pull
 // the whole admin bundle. React.lazy needs a module with a `default` export,
@@ -152,6 +156,30 @@ export const routes: RouteEntry[] = [
     navLabel: 'Organizations',
     navIcon: Building2,
   },
+  {
+    path: '/counterparties',
+    element: <CounterpartiesPage />,
+    guard: 'confirmed',
+    navLabel: 'Counterparties',
+    navIcon: Users,
+  },
+  {
+    path: '/journal',
+    element: <JournalPage />,
+    guard: 'confirmed',
+    navLabel: 'Journal',
+    navIcon: BookOpenText,
+  },
+  {
+    path: '/documents',
+    element: <DocumentsPage />,
+    guard: 'confirmed',
+    navLabel: 'Documents',
+    navIcon: FileText,
+  },
+  // No navLabel: reached from DocumentsPage's "Создать документ" button,
+  // not a top-level nav destination.
+  { path: '/documents/generate', element: <GenerateDocumentPage />, guard: 'confirmed' },
 ];
 
 /** The permission a guard implies, for nav-link filtering in Nav.tsx. */

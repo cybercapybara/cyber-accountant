@@ -311,6 +311,278 @@ components:
       properties:
         access: { type: string, description: "New HS256 access JWT carrying an `org` claim set to {id}" }
 
+    # Mirrors Ledger::to_json(Counterparty) in src/ledger/Counterparty.hpp.
+    Counterparty:
+      type: object
+      required: [id, org_id, identifier, name, address, iik, bik, kbe, is_resident, vat_payer, contact_email, created_at, updated_at]
+      properties:
+        id:             { type: string, format: uuid }
+        org_id:         { type: string, format: uuid }
+        identifier:     { type: string, pattern: '^[0-9]{12}$', description: БИН/ИИН — check-digit validated (Ledger::is_valid_bin_iin) }
+        name:           { type: string }
+        address:        { type: string }
+        iik:            { type: string, description: 'IBAN KZ.. — format not validated in P1' }
+        bik:            { type: string }
+        kbe:            { type: string }
+        is_resident:    { type: boolean }
+        vat_payer:      { type: boolean }
+        contact_email:  { type: string }
+        created_at:     { type: string }
+        updated_at:     { type: string }
+
+    # Shared POST/PATCH request body — CounterpartiesController::validate_and_fill.
+    CounterpartyWrite:
+      type: object
+      required: [identifier, name]
+      properties:
+        identifier:    { type: string, pattern: '^[0-9]{12}$', description: 'БИН/ИИН, 12 digits + valid check digit' }
+        name:          { type: string }
+        address:       { type: string, default: '' }
+        iik:           { type: string, default: '' }
+        bik:           { type: string, default: '' }
+        kbe:           { type: string, default: '' }
+        is_resident:   { type: boolean, default: true }
+        vat_payer:     { type: boolean, default: false }
+        contact_email: { type: string, default: '' }
+
+    CounterpartyListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Counterparty' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    CounterpartyDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Counterparty' }
+
+    # Mirrors Ledger::to_json(Account) in src/ledger/Account.hpp.
+    Account:
+      type: object
+      required: [id, org_id, code, name_ru, name_kk, type, parent_code, currency_tracked, created_at, updated_at]
+      properties:
+        id:               { type: string, format: uuid }
+        org_id:           { type: ['string', 'null'], format: uuid, description: 'null = system row from the standard chart, visible to every org' }
+        code:             { type: string }
+        name_ru:          { type: string }
+        name_kk:          { type: string, description: 'Filled in P2 (bilingual ФНО forms); empty in P1' }
+        type:             { type: string, enum: [asset, liability, equity, income, expense] }
+        parent_code:      { type: ['string', 'null'] }
+        currency_tracked: { type: boolean }
+        created_at:       { type: string }
+        updated_at:       { type: string }
+
+    AccountListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Account' }
+
+    # POST /api/v1/accounts request body — AccountsController::create.
+    AccountCreate:
+      type: object
+      required: [code, name_ru, parent_code]
+      properties:
+        code:        { type: string, description: 'Must start with parent_code (subaccount-numbering convention)' }
+        name_ru:     { type: string }
+        name_kk:     { type: string, default: '' }
+        parent_code: { type: string, description: 'Code of a system or this org''s own visible parent account' }
+
+    AccountDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Account' }
+
+    # Mirrors Ledger::to_json(Document) in src/ledger/Document.hpp.
+    Document:
+      type: object
+      required: [id, org_id, doc_type, source, status, counterparty_id, s3_key, checksum_sha256, mime, size_bytes, template_slug, template_version, input_snapshot, created_at, updated_at]
+      properties:
+        id:               { type: string, format: uuid }
+        org_id:           { type: string, format: uuid }
+        doc_type:
+          type: string
+          enum: [invoice, avr, waybill, tax_invoice, reconciliation, power_of_attorney, incoming, bank_statement, hr, fno, other]
+        source:           { type: string, enum: [generated, uploaded, email] }
+        status:           { type: string, enum: [inbox, recognized, linked, archived, draft, final, sent] }
+        counterparty_id:  { type: ['string', 'null'], format: uuid }
+        s3_key:           { type: ['string', 'null'] }
+        checksum_sha256:  { type: ['string', 'null'], pattern: '^[0-9a-f]{64}$' }
+        mime:             { type: ['string', 'null'] }
+        size_bytes:       { type: ['integer', 'null'], format: int64 }
+        template_slug:    { type: ['string', 'null'] }
+        template_version: { type: ['string', 'null'] }
+        input_snapshot:   { type: ['object', 'null'], additionalProperties: true, description: 'Docgen input snapshot for source=generated rows; for source=uploaded rows via POST /documents/uploads it instead holds {"original_filename": "..."} — see Document.hpp' }
+        created_at:       { type: string }
+        updated_at:       { type: string }
+
+    DocumentListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Document' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    DocumentDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Document' }
+
+    # POST /api/v1/documents/uploads request body.
+    DocumentUploadCreate:
+      type: object
+      required: [filename, mime, doc_type]
+      properties:
+        filename: { type: string, maxLength: 255, description: 'Plain file name — no path separators, "..", leading dot, or control characters (422 invalid_filename otherwise); non-ASCII/spaces/parentheses are fine' }
+        mime:     { type: string }
+        doc_type:
+          type: string
+          enum: [invoice, avr, waybill, tax_invoice, reconciliation, power_of_attorney, incoming, bank_statement, hr, fno, other]
+
+    # POST /api/v1/documents/uploads response — the new draft document plus
+    # the presigned PUT URL the client uploads bytes to directly.
+    DocumentUploadResponse:
+      type: object
+      required: [data, upload_url]
+      properties:
+        data:       { $ref: '#/components/schemas/Document' }
+        upload_url: { type: string, description: 'Presigned S3 PUT URL, TTL 600s' }
+
+    # POST /api/v1/documents/{id}/confirm-upload request body.
+    DocumentConfirmUpload:
+      type: object
+      required: [size_bytes, checksum_sha256]
+      properties:
+        size_bytes:      { type: integer, format: int64, minimum: 0 }
+        checksum_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+
+    # POST /api/v1/documents/{id}/download-url response.
+    DownloadUrlResponse:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, description: 'Presigned S3 GET URL, TTL 300s' }
+
+    # Mirrors Ledger::to_json(JournalLine) in src/ledger/JournalEntry.hpp.
+    JournalLine:
+      type: object
+      required: [id, entry_id, account_code, side, amount, counterparty_id, vat_amount]
+      properties:
+        id:              { type: string, format: uuid }
+        entry_id:        { type: string, format: uuid }
+        account_code:    { type: string }
+        side:            { type: string, enum: [debit, credit] }
+        amount:          { type: string, description: 'NUMERIC(18,2) as text, e.g. "1234.56" — always > 0' }
+        counterparty_id: { type: ['string', 'null'], format: uuid }
+        vat_amount:      { type: ['string', 'null'], description: 'NUMERIC(18,2) as text, >= 0 when present' }
+
+    # POST /api/v1/journal-entries request body line — JournalController::parse_lines.
+    JournalLineWrite:
+      type: object
+      required: [account_code, side, amount]
+      properties:
+        account_code:    { type: string }
+        side:             { type: string, enum: [debit, credit] }
+        amount:           { type: string, description: 'Decimal string, e.g. "1234.56"' }
+        counterparty_id:  { type: string, format: uuid }
+        vat_amount:       { type: string }
+
+    # Mirrors Ledger::to_json(JournalEntry) in src/ledger/JournalEntry.hpp.
+    # `lines` is always present but only populated by GET .../{id} — the list
+    # endpoint returns header rows only (see JournalRepository's header).
+    JournalEntry:
+      type: object
+      required: [id, org_id, entry_date, description, status, reverses_entry_id, created_by_user_id, lines]
+      properties:
+        id:                 { type: string, format: uuid }
+        org_id:             { type: string, format: uuid }
+        entry_date:         { type: string, format: date }
+        description:        { type: string }
+        status:             { type: string, enum: [draft, posted, reversed] }
+        reverses_entry_id:  { type: ['string', 'null'], format: uuid }
+        created_by_user_id: { type: ['string', 'null'], format: uuid }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/JournalLine' }
+
+    # POST /api/v1/journal-entries request body — JournalController::create.
+    JournalEntryCreate:
+      type: object
+      required: [entry_date, description, lines]
+      properties:
+        entry_date:  { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        description: { type: string }
+        lines:
+          type: array
+          minItems: 2
+          items: { $ref: '#/components/schemas/JournalLineWrite' }
+
+    JournalEntryListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/JournalEntry' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    JournalEntryDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/JournalEntry' }
+
+    # GET /api/v1/doc-templates item — Docgen::TemplateInfo (slug/version/schema).
+    DocTemplate:
+      type: object
+      required: [slug, version, schema]
+      properties:
+        slug:    { type: string }
+        version: { type: string, description: "On-disk vN label, e.g. 'v1'" }
+        schema:  { type: object, additionalProperties: true, description: 'JSON Schema (draft-07) the template''s input must satisfy' }
+
+    DocTemplateListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/DocTemplate' }
+
+    # POST /api/v1/documents/generate request body.
+    GenerateDocumentCreate:
+      type: object
+      required: [template_slug]
+      properties:
+        template_slug:   { type: string, enum: [invoice, avr, waybill, tax_invoice, reconciliation], description: 'Also the resulting document''s doc_type — the mapping is the identity function' }
+        input:            { type: object, additionalProperties: true, description: 'Validated against the template''s JSON Schema' }
+        counterparty_id:  { type: string, format: uuid, description: 'Must belong to the caller''s organization (422 foreign_counterparty otherwise)' }
+        link_entry_id:    { type: string, format: uuid, description: 'Journal entry to link this document to (document_entries); must belong to the caller''s organization (422 foreign_journal_entry otherwise)' }
+
+    # POST /api/v1/documents/generate response — 202, the render runs async.
+    GenerateDocumentResponse:
+      type: object
+      required: [document_id, render_queued]
+      properties:
+        document_id:   { type: string, format: uuid, description: 'Poll GET /api/v1/documents/{id} for the final rendered status' }
+        render_queued: { type: boolean, description: 'false if the docgen.render job could not be enqueued (e.g. a transient Redis error) — the document row still exists as draft; an operator must re-enqueue it (Fix round 1: best-effort enqueue)' }
+
 # -----------------------------------------------------------------------------
 paths:
   /:
@@ -990,6 +1262,372 @@ paths:
         '403': { description: Not an admin or owner of this organization }
         '404': { description: Member not found }
         '409': { description: Cannot remove the last owner of an organization }
+
+  /api/v1/counterparties:
+    get:
+      summary: List counterparties for the caller's organization (paginated)
+      tags: [counterparties]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Counterparty page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyListResponse' }
+        '403': { description: No org context }
+    post:
+      summary: Create a counterparty (accountant/owner only)
+      tags: [counterparties]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CounterpartyWrite' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: No org context, or caller's role is viewer }
+        '409': { description: A counterparty with that identifier already exists in this organization }
+        '422': { description: identifier is the right shape (12 digits) but fails the BIN/IIN check digit }
+
+  /api/v1/counterparties/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Get a counterparty
+      tags: [counterparties]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Counterparty
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyDetailResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including a counterparty belonging to another organization) }
+    patch:
+      summary: Replace a counterparty (accountant/owner only) — every editable field is patched in one call
+      tags: [counterparties]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CounterpartyWrite' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: No org context, or caller's role is viewer }
+        '404': { description: Not found (including a counterparty belonging to another organization) }
+        '409': { description: The patched identifier collides with another counterparty in this organization }
+        '422': { description: identifier is the right shape (12 digits) but fails the BIN/IIN check digit }
+
+  /api/v1/accounts:
+    get:
+      summary: List accounts visible to the caller's organization (standard chart + this org's own subaccounts), unpaginated
+      tags: [accounts]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Visible accounts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountListResponse' }
+        '403': { description: No org context }
+    post:
+      summary: Create a subaccount under a visible parent (accountant/owner only)
+      tags: [accounts]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: No org context, or caller's role is viewer }
+        '409': { description: An account with that code already exists for this organization (or is a reserved system code) }
+        '422': { description: 'Parent not found/not visible, or code does not extend the parent''s code' }
+
+  /api/v1/documents:
+    get:
+      summary: List documents for the caller's organization (paginated, optional type/status filters)
+      tags: [documents]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: type, in: query, description: Filter by doc_type — must be one of the CHECK-listed values, schema: { type: string } }
+        - { name: status, in: query, description: Filter by status — must be one of the CHECK-listed values, schema: { type: string } }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Document page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentListResponse' }
+        '403': { description: No org context }
+        '422': { description: type or status is not one of the registered values }
+
+  /api/v1/documents/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Get a document
+      tags: [documents]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentDetailResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including a document belonging to another organization) }
+
+  /api/v1/documents/{id}/download-url:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Mint a presigned download URL for this document's stored file
+      description: |
+        Read-only — mints a time-limited S3 GET URL (TTL 300s) and writes
+        nothing, so this route does NOT reject viewers the way the mutating
+        ledger routes do.
+      tags: [documents]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Presigned URL
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadUrlResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including a document belonging to another organization) }
+        '409': { description: This document has no stored file yet (empty s3_key) }
+        '503': { description: Presigning requires the S3 storage backend }
+
+  /api/v1/documents/uploads:
+    post:
+      summary: Start a client-driven upload (accountant/owner only)
+      description: |
+        Creates a draft document (source=uploaded, status=draft) and mints a
+        presigned S3 PUT URL (TTL 600s) the client uploads the file bytes to
+        directly. The document's s3_key is persisted immediately
+        (DocumentRepository::set_pending_upload) so a retried
+        confirm-upload reads back the SAME key. Call
+        POST /api/v1/documents/{id}/confirm-upload once the PUT completes.
+      tags: [documents]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DocumentUploadCreate' }
+      responses:
+        '201':
+          description: Draft document + presigned upload URL
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentUploadResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: No org context, or caller's role is viewer }
+        '422': { description: 'doc_type is not one of the registered values, or filename is not a plain file name' }
+        '503': { description: Presigning requires the S3 storage backend }
+
+  /api/v1/documents/{id}/confirm-upload:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Verify an uploaded object and finalize the document (accountant/owner only)
+      description: |
+        Only valid for a document with source='uploaded' and status='draft'
+        (i.e. one POST /documents/uploads started) — calling it on a
+        source='generated' or already-'final' document is rejected before
+        any storage check, so a client can never overwrite a document's
+        real, reproducible checksum/mime/size with unverified values.
+        Checks Storage::exists(s3_key) before trusting the client's
+        reported size/checksum; on success calls
+        DocumentRepository::set_file() and flips status to 'final'.
+      tags: [documents]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DocumentConfirmUpload' }
+      responses:
+        '200':
+          description: Finalized document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: No org context, or caller's role is viewer }
+        '404': { description: Not found (including a document belonging to another organization) }
+        '409':
+          description: >-
+            object_missing (no upload was started for this document, or the
+            object was not found in storage) | invalid_state (document is not
+            a draft, uploaded document — e.g. source='generated', or already
+            confirmed to 'final')
+        '422': { description: 'size_bytes out of range, or checksum_sha256 is not 64 lowercase hex characters' }
+        '503': { description: Object storage is not configured }
+
+  /api/v1/journal-entries:
+    get:
+      summary: List journal entries for the caller's organization (paginated, optional from/to entry_date filters)
+      description: Header rows only — `lines` is always `[]` here; use GET /journal-entries/{id} for lines.
+      tags: [journal]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: from, in: query, description: 'Inclusive lower bound on entry_date, YYYY-MM-DD', schema: { type: string } }
+        - { name: to, in: query, description: 'Inclusive upper bound on entry_date, YYYY-MM-DD', schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Journal entry page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JournalEntryListResponse' }
+        '403': { description: No org context }
+        '422': { description: from or to is not in YYYY-MM-DD format }
+    post:
+      summary: Create a draft journal entry (accountant/owner only)
+      tags: [journal]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JournalEntryCreate' }
+      responses:
+        '201':
+          description: Created draft entry, with lines
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JournalEntryDetailResponse' }
+        '400': { description: 'Validation failed (missing/wrong-type field, or a line missing account_code/side/amount, or a malformed counterparty_id)' }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '422': { description: 'entry_date is not YYYY-MM-DD, or the entry is unbalanced/unknown_account/foreign_counterparty/invalid_line (Ledger::JournalService typed errors)' }
+
+  /api/v1/journal-entries/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Get a journal entry with its lines
+      tags: [journal]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Journal entry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JournalEntryDetailResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including an entry belonging to another organization) }
+
+  /api/v1/journal-entries/{id}/post:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Post a draft journal entry (accountant/owner only)
+      tags: [journal]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Posted entry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JournalEntryDetailResponse' }
+        '400': { description: Malformed id }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found (including an entry belonging to another organization) }
+        '409': { description: The entry is not in status 'draft' }
+
+  /api/v1/journal-entries/{id}/reverse:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Reverse (storno) a posted journal entry (accountant/owner only)
+      description: |
+        Marks the original entry 'reversed' and returns a NEW, already-posted
+        entry whose lines mirror the original with sides flipped
+        (`reverses_entry_id` points back at the original).
+      tags: [journal]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: The new storno entry, posted, with lines
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JournalEntryDetailResponse' }
+        '400': { description: Malformed id }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found (including an entry belonging to another organization) }
+        '409': { description: The entry is not in status 'posted' }
+
+  /api/v1/doc-templates:
+    get:
+      summary: List registered docgen templates (slug, version, schema)
+      description: Scans templates/latex/ (Docgen::TemplateRegistry::list()) — read-only, no viewer gate.
+      tags: [docgen]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Registered templates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocTemplateListResponse' }
+        '403': { description: No org context }
+
+  /api/v1/documents/generate:
+    post:
+      summary: Generate a document from a template (accountant/owner only)
+      description: |
+        Validates `input` against the template's JSON Schema, creates a
+        `draft` document (source=generated), optionally links it to a
+        journal entry, and enqueues a `docgen.render` job. The render never
+        runs on the request thread — poll GET /api/v1/documents/{id} for the
+        final ('final') status and its download URL.
+      tags: [docgen]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerateDocumentCreate' }
+      responses:
+        '202':
+          description: Accepted — render enqueued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerateDocumentResponse' }
+        '400': { description: 'Validation failed (missing/wrong-type field, or a malformed counterparty_id/link_entry_id)' }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '422': { description: 'template_slug is not a registered template, input fails the template''s JSON Schema, or counterparty_id/link_entry_id does not belong to this organization' }
+        '503': { description: Job queue not enabled }
 
   /api/v1/jobs:
     get:

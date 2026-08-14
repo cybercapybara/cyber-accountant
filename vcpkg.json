@@ -15,6 +15,7 @@
       "features": ["otlp-http"]
     },
     "nlohmann-json",
+    "json-schema-validator",
     "gtest"
   ],
   "$comment": "libsodium and libcurl come from the OS (apt: libsodium-dev, libcurl4-openssl-dev) — vcpkg's libsodium port fails to build on arm64-linux. inja is fetched header-only via CMake FetchContent (see CMakeLists.txt). Both choices keep the docker build green on x86_64 and arm64.",

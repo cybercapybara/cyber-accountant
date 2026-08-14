@@ -325,3 +325,66 @@ jobs:
                   ./build-tsan/cyber_accountant_tests_unit \
                       --gtest_color=yes
               "
+
+  template-render:
+    runs-on: ubuntu-latest
+    # Actually compiles every templates/latex/*/v*/fixtures/*.json through
+    # XeLaTeX on the worker image — the only stage with TeX Live installed
+    # (docker/Dockerfile's worker-runtime stage). The unit/integration
+    # buckets stub DOCGEN_LATEX_CMD (tests/integration/test_render_job.cpp),
+    # so this is the ONLY gate that would catch a template that passes
+    # schema validation and inja rendering but doesn't actually compile.
+    # Path-scoped via dorny/paths-filter (a workflow-level `on.paths` would
+    # gate every OTHER job in this file too) — only runs the (slow) docker
+    # build + render when something docgen-relevant changed.
+    permissions:
+      contents: read
+      pull-requests: read  # dorny/paths-filter needs this to list changed files via the API on pull_request events
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Detect docgen-relevant changes
+        id: changes
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        with:
+          filters: |
+            docgen:
+              - 'templates/**'
+              - 'src/docgen/**'
+              - 'docker/Dockerfile'
+
+      - name: Set up Docker Buildx
+        if: steps.changes.outputs.docgen == 'true'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
+
+      - name: Build worker image (worker-runtime target — has TeX Live)
+        if: steps.changes.outputs.docgen == 'true'
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: worker-runtime
+          push: false
+          load: true
+          tags: cyber-accountant-template:worker-render
+          build-args: ENABLE_WERROR=ON
+          # The builder stage's registry cache (populated by
+          # builder-cache.yml) lets the vcpkg/compile layers this stage
+          # depends on (COPY --from=builder) hit cache instead of a cold
+          # ~30-minute rebuild — same cache-from set the builder/sanitizer/
+          # clang-tidy jobs above use for that stage.
+          cache-from: |
+            type=gha
+            type=registry,ref=ghcr.io/${{ github.repository }}/builder:cache
+          cache-to: type=gha,mode=max
+
+      - name: Render every template fixture through XeLaTeX
+        if: steps.changes.outputs.docgen == 'true'
+        run: |
+          docker run --rm \
+            -v "$PWD/scripts:/scripts:ro" \
+            -w /app \
+            --entrypoint /bin/bash \
+            cyber-accountant-template:worker-render \
+            /scripts/render-templates.sh

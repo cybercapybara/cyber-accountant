@@ -375,14 +375,20 @@ private:
         int pool_wait_ms = cfg.get<int>("cache.pool_wait_timeout_ms", "REDIS_POOL_WAIT_TIMEOUT_MS", 500);
         auto sock_to = std::chrono::milliseconds(std::max(1, socket_timeout_ms));
         auto pool_to = std::chrono::milliseconds(std::max(1, pool_wait_ms));
+        // Logical Redis DB index (T13b) — REQUIRED whenever this Redis
+        // instance is shared with another app (see docs/CONFIG.md and
+        // Cache.hpp's file-level note): without it, queue/rate-limit/
+        // idempotency/session keys collide with the other app's identically
+        // named keys. Authoritative over any "/N" in cache.url.
+        int redis_db = cfg.get<int>("cache.db", "REDIS_DB", 0);
 
         if (use_sentinel) {
             auto master = cfg.get<std::string>("cache.sentinel.master_name", "REDIS_MASTER_NAME", "mymaster");
             Cache::initialize_with_sentinel(
-                master, read_sentinels_(cfg), pool_size, password, sentinel_password, sock_to, pool_to);
+                master, read_sentinels_(cfg), pool_size, password, sentinel_password, sock_to, pool_to, redis_db);
         } else {
             auto url = cfg.get<std::string>("cache.url", "REDIS_URL", "tcp://127.0.0.1:6379");
-            Cache::initialize(url, pool_size, password, sock_to, pool_to);
+            Cache::initialize(url, pool_size, password, sock_to, pool_to, redis_db);
         }
     }
 
