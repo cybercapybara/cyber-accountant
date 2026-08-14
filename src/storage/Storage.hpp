@@ -183,6 +183,23 @@ public:
         std::string access_key;
         std::string secret_key;
         std::string public_base;  // public URL prefix for url(); empty → endpoint/bucket
+        // Scheme+host presign() must sign against and return links pointed at —
+        // the browser-reachable ingress in front of the (often cluster-internal
+        // only) `endpoint` above, e.g. https://s3.example.com. SigV4 signs the
+        // `Host` header as part of the canonical request, so a presigned URL
+        // can't be minted against `endpoint` and then have its host swapped
+        // afterwards — that invalidates the signature. presign() therefore
+        // signs and builds its URL against this field instead of `endpoint`;
+        // every other operation (put/get/remove/exists/list, and the
+        // header-signed request()/signed_request() they go through) keeps
+        // using the internal `endpoint`, since those calls originate from
+        // this service, not a browser.
+        // Not the same knob as `public_base` above: `public_base` only
+        // changes the plain, unsigned url() locator string (e.g. to point at
+        // a CDN) and is never consulted by presign(). Empty → falls back to
+        // `endpoint`, i.e. today's behavior (presigned links point at the
+        // same host server-side calls use).
+        std::string public_endpoint;
         // Whole-request and TCP-connect budgets. Every S3 call runs inline on a
         // Drogon IO thread, so these bound how long one blackholed object store
         // can pin 1 of N event loops — keep them well under the readiness probe.
@@ -193,6 +210,7 @@ public:
     explicit S3Storage(Config cfg) : cfg_(std::move(cfg)) {
         curl_global_init(CURL_GLOBAL_DEFAULT);  // idempotent; Mailer may have run it
         host_ = host_from_endpoint(cfg_.endpoint);
+        public_host_ = host_from_endpoint(cfg_.public_endpoint.empty() ? cfg_.endpoint : cfg_.public_endpoint);
         if (cfg_.region.empty())
             cfg_.region = "us-east-1";
         // curl reads 0 as "no limit" — never let a misconfigured value disable
@@ -296,6 +314,13 @@ public:
     /// placeholder for presigned URLs, since the body isn't known/read at
     /// sign time. Shares the k_date→k_signing derivation with the
     /// header-signed path via signing_key() — one HMAC chain, not two.
+    ///
+    /// Signed and built against `cfg_.public_endpoint`/`public_host_`
+    /// (falling back to `cfg_.endpoint`/`host_` when unset), NOT the internal
+    /// endpoint every other method here uses: SigV4 signs the `Host` header,
+    /// so the canonical request has to be computed against whatever host the
+    /// caller (a browser) will actually send the request to, or the
+    /// signature the object store re-derives on receipt won't match.
     /// @param method   "GET" (download) or "PUT" (upload); passed through
     ///                 verbatim into the canonical request.
     /// @param ttl_sec  Seconds until the URL expires; non-positive falls
@@ -319,14 +344,17 @@ public:
                                             ("&X-Amz-Date=" + amzdate) + ("&X-Amz-Expires=" + std::to_string(ttl_sec)) +
                                             "&X-Amz-SignedHeaders=host";
 
-        const std::string canonical_headers = "host:" + host_ + "\n";
+        // public_host_ (derived in the constructor) — the host a browser will
+        // actually send this request to — not host_, which is the internal
+        // endpoint's host used by every other request() this class makes.
+        const std::string canonical_headers = "host:" + public_host_ + "\n";
         const std::string canonical_request = method + "\n" + canonical_uri + "\n" + canonical_query + "\n" +
                                               canonical_headers + "\n" + "host" + "\n" + "UNSIGNED-PAYLOAD";
         const std::string string_to_sign =
             "AWS4-HMAC-SHA256\n" + amzdate + "\n" + scope + "\n" + Utils::Crypto::sha256_hex(canonical_request);
 
         const std::string signature = hmac_hex(signing_key(datestamp), string_to_sign);
-        return cfg_.endpoint + canonical_uri + "?" + canonical_query + "&X-Amz-Signature=" + signature;
+        return effective_public_endpoint() + canonical_uri + "?" + canonical_query + "&X-Amz-Signature=" + signature;
     }
 
 private:
@@ -355,9 +383,25 @@ private:
 
     static std::string host_from_endpoint(const std::string& ep) {
         auto pos = ep.find("://");
+        const std::string scheme = pos == std::string::npos ? std::string() : ep.substr(0, pos);
         std::string rest = pos == std::string::npos ? ep : ep.substr(pos + 3);
         const auto slash = rest.find('/');
-        return slash == std::string::npos ? rest : rest.substr(0, slash);
+        std::string host = slash == std::string::npos ? rest : rest.substr(0, slash);
+        // SigV4's canonical `Host` header omits the port when it's the
+        // scheme's default (80 for http, 443 for https) — that's what a
+        // client actually sends on the wire for a URL that doesn't spell the
+        // port out, so an endpoint written as "https://host:443" has to sign
+        // (and match) the portless form or the object store's own
+        // recomputed signature won't agree.
+        const auto colon = host.rfind(':');
+        if (colon != std::string::npos) {
+            const std::string port = host.substr(colon + 1);
+            const bool default_http = scheme == "http" && port == "80";
+            const bool default_https = scheme == "https" && port == "443";
+            if (default_http || default_https)
+                host = host.substr(0, colon);
+        }
+        return host;
     }
 
     // RFC 3986 encode a path, leaving unreserved chars and '/' (segment seps).
@@ -425,6 +469,13 @@ private:
         amzdate = d;
         std::strftime(d, sizeof(d), "%Y%m%d", &tm);
         datestamp = d;
+    }
+
+    // The scheme+host presign() signs against and builds URLs on — the
+    // configured public_endpoint, or the internal endpoint when none was set
+    // (today's behavior, preserved as the fallback).
+    std::string effective_public_endpoint() const {
+        return cfg_.public_endpoint.empty() ? cfg_.endpoint : cfg_.public_endpoint;
     }
 
     long request(const std::string& method,
@@ -519,6 +570,7 @@ private:
 
     Config cfg_;
     std::string host_;
+    std::string public_host_;
 };
 
 // ── Global accessor (mirrors Cache/Email) ────────────────────────────────────
@@ -550,6 +602,12 @@ inline void initialize(Config::AppConfig& cfg) {
         s3.access_key = cfg.get<std::string>("storage.s3.access_key", "S3_ACCESS_KEY", "");
         s3.secret_key = cfg.get<std::string>("storage.s3.secret_key", "S3_SECRET_KEY", "");
         s3.public_base = cfg.get<std::string>("storage.public_base_url", "STORAGE_PUBLIC_BASE_URL", "");
+        // Browser-reachable scheme+host presign() signs against and mints
+        // links for (e.g. the public ingress in front of a cluster-internal
+        // MinIO) — empty falls back to s3.endpoint, i.e. presigned links
+        // point at whatever server-side calls use, same as before this knob
+        // existed.
+        s3.public_endpoint = cfg.get<std::string>("storage.s3.public_endpoint", "S3_PUBLIC_ENDPOINT", "");
         // Was a dead knob: the struct default applied no matter what was
         // configured, and the connect budget did not exist at all.
         s3.timeout_sec = static_cast<long>(cfg.get<int>("storage.s3.timeout_sec", "S3_TIMEOUT_SEC", 10));

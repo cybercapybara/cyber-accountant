@@ -75,6 +75,11 @@ public:
     // spec §5: tenants are provisioned by a system admin. BIN validation in
     // v1 is format-only (exactly 12 digits); the check-digit algorithm is
     // P1 work shared with ledger/counterparties.
+    //
+    // The caller (when authenticated) is bound into org_members as "owner"
+    // right after create — best-effort, see the comment inline below —
+    // so the admin who provisions a tenant isn't left outside it, unable
+    // to reach the owner-gated member-management routes for their own org.
     // ---------------------------------------------------------------------
     void createOrganization(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ADMIN(req, callback);
@@ -120,6 +125,46 @@ public:
             Tenancy::OrganizationRepository orgs;
             auto created = orgs.create(bin, body["name"].get<std::string>(), tax_regime, vat_payer);
             Security::Audit::record(actor_of(req), "org.create", "organization", created.id, {{"bin", created.bin}});
+
+            // Bind the creator as owner — without this, an admin who
+            // provisions a tenant through this endpoint is left a member of
+            // NO organization, unable to reach any of the owner-gated
+            // member-management routes for the org they just made (see bug
+            // report: "created ТОО, stuck outside it"). principal_of() is
+            // nullopt under AUTH_MODE=none (no caller identity to bind, and
+            // no membership table row is meaningful without one) — the org
+            // is still created, just unowned, same as before this fix.
+            //
+            // Best-effort, same idiom as DocgenController::generate's
+            // enqueue: org.create already committed, so a failure here
+            // (e.g. a concurrent add() race, or a transient DB error) must
+            // not turn an already-real organization into a 500 the client
+            // would just retry into a duplicate-BIN 409. Logged via
+            // spdlog::error so an operator can backfill the missing
+            // membership by hand; the 201 still carries the organization
+            // either way. The response body is deliberately NOT annotated
+            // with a "role" field for this — best-effort means the owner
+            // binding isn't guaranteed to have landed (or to exist at all,
+            // under AUTH_MODE=none), and role is membership information
+            // best sourced from GET /orgs/mine or GET /orgs/{id}/members,
+            // not asserted speculatively on the organization resource.
+            if (auto principal = Security::Auth::principal_of(req)) {
+                try {
+                    Tenancy::OrgMemberRepository members;
+                    auto membership = members.add(created.id, principal->subject, "owner");
+                    Security::Audit::record(actor_of(req),
+                                            "org.member.add",
+                                            "organization",
+                                            created.id,
+                                            {{"user_id", membership.user_id}, {"role", membership.role}});
+                } catch (const std::exception& e) {
+                    spdlog::error("orgs createOrganization: failed to bind creator {} as owner of org {}: {}",
+                                  principal->subject,
+                                  created.id,
+                                  e.what());
+                }
+            }
+
             callback(Response::created({{"data", json(created)}}));
         });
     }

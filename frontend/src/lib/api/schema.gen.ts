@@ -1529,7 +1529,17 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create an organization (admin) — tenants are provisioned by a system admin, not self-service */
+        /**
+         * Create an organization (admin) — tenants are provisioned by a system admin, not self-service
+         * @description The caller is bound into the new organization's membership as
+         *     "owner" immediately after creation, best-effort (a membership-bind
+         *     failure is logged but does not fail the request — the organization
+         *     is still returned). Under AUTH_MODE=none there is no caller
+         *     identity to bind, so the organization is created unowned, same as
+         *     before this behavior was added. The response body is unchanged
+         *     (no `role` field) — the resulting membership is best queried via
+         *     GET /orgs/mine or GET /orgs/{id}/members.
+         */
         post: {
             parameters: {
                 query?: never;
