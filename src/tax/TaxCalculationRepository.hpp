@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <optional>
 #include <pqxx/pqxx>
 #include <string>
 #include <vector>
@@ -77,6 +78,70 @@ public:
                 result_snapshot.dump(),
                 total_tiyn);
             return Calculation::from_row(r[0]);
+        });
+    }
+
+    /**
+     * @brief Calculations for @p org_id, newest period first (kOrderBy),
+     *        optionally narrowed to one @p kind and/or one calendar @p year
+     *        (matched against the year of `period_from`).
+     *
+     * Task 12 addition, mirroring Ledger::DocumentRepository::list_filtered:
+     * `GET /api/v1/tax/calculations?kind=&year=` needs both filters applied
+     * IN SQL so the paginated `total` (count_filtered below) describes the
+     * same rows the page contains. @p year is an optional decimal STRING cast
+     * in SQL (`$3::int`), the same "optional text parameter + cast" idiom the
+     * `$2::text IS NULL` kind guard uses; the controller has already rejected
+     * anything that isn't a plain integer, and allowlisted @p kind against
+     * migrations/014_tax_calculations.sql's CHECK list.
+     *
+     * A period that straddles a year boundary is filtered by its START year
+     * — every period this system produces (a half-year for СНР, a quarter for
+     * НДС) lies wholly inside one calendar year, so the distinction is
+     * currently unobservable; picking `period_from` explicitly (rather than
+     * an OVERLAPS-style range test) keeps the semantics stated rather than
+     * accidental if that ever stops holding.
+     */
+    std::vector<Calculation> list_filtered(const std::string& org_id,
+                                           const std::optional<std::string>& kind,
+                                           const std::optional<std::string>& year,
+                                           int limit,
+                                           int offset) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params("SELECT " + std::string(kColumns) +
+                                         " FROM tax_calculations WHERE org_id = $1 "
+                                         "AND ($2::text IS NULL OR kind = $2) "
+                                         "AND ($3::text IS NULL OR EXTRACT(YEAR FROM period_from)::int = $3::int) "
+                                         "ORDER BY " +
+                                         std::string(kOrderBy) + " LIMIT $4 OFFSET $5",
+                                     org_id,
+                                     kind,
+                                     year,
+                                     limit,
+                                     offset);
+            std::vector<Calculation> out;
+            out.reserve(r.size());
+            for (const auto& row : r)
+                out.push_back(Calculation::from_row(row));
+            return out;
+        });
+    }
+
+    /// Total row count for the same (@p kind, @p year) filter list_filtered()
+    /// applies — kept as a matching pair so the list endpoint's `total` never
+    /// disagrees with its page.
+    long count_filtered(const std::string& org_id,
+                        const std::optional<std::string>& kind,
+                        const std::optional<std::string>& year) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params(
+                "SELECT COUNT(*) FROM tax_calculations WHERE org_id = $1 "
+                "AND ($2::text IS NULL OR kind = $2) "
+                "AND ($3::text IS NULL OR EXTRACT(YEAR FROM period_from)::int = $3::int)",
+                org_id,
+                kind,
+                year);
+            return r.at(0).at(0).template as<long>();
         });
     }
 

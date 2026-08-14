@@ -35,6 +35,8 @@
 #include "api/LedgerDocumentsController.hpp"
 #include "api/Middleware.hpp"
 #include "api/OrganizationsController.hpp"
+#include "api/PayrollController.hpp"
+#include "api/TaxController.hpp"
 
 namespace Api {
 

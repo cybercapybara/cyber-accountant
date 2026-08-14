@@ -79,6 +79,54 @@ public:
     }
 
     /**
+     * @brief Run headers for @p org_id, newest period first (kOrderBy),
+     *        optionally narrowed to a single calendar @p year.
+     *
+     * Task 12 addition, mirroring Ledger::DocumentRepository::list_filtered:
+     * `GET /api/v1/payroll-runs?year=` needs the filter applied IN SQL so the
+     * paginated `total` (count_filtered below) describes the same rows the
+     * page contains — an in-memory filter-after-fetch would desync the two.
+     * @p year is passed as an optional decimal STRING and cast in SQL
+     * (`$2::int`), the same "optional text parameter + cast" idiom
+     * list_filtered's `$2::text IS NULL` guard uses next door; the controller
+     * has already rejected anything that isn't a plain integer.
+     */
+    std::vector<PayrollRun> list_filtered(const std::string& org_id,
+                                          const std::optional<std::string>& year,
+                                          int limit,
+                                          int offset) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params("SELECT " + std::string(kColumns) +
+                                         " FROM payroll_runs WHERE org_id = $1 "
+                                         "AND ($2::text IS NULL OR period_year = $2::int) "
+                                         "ORDER BY " +
+                                         std::string(kOrderBy) + " LIMIT $3 OFFSET $4",
+                                     org_id,
+                                     year,
+                                     limit,
+                                     offset);
+            std::vector<PayrollRun> out;
+            out.reserve(r.size());
+            for (const auto& row : r)
+                out.push_back(PayrollRun::from_row(row));
+            return out;
+        });
+    }
+
+    /// Total row count for the same @p year filter list_filtered() applies —
+    /// kept as a matching pair so the list endpoint's `total` never disagrees
+    /// with its page.
+    long count_filtered(const std::string& org_id, const std::optional<std::string>& year) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params(
+                "SELECT COUNT(*) FROM payroll_runs WHERE org_id = $1 AND ($2::text IS NULL OR period_year = $2::int)",
+                org_id,
+                year);
+            return r.at(0).at(0).template as<long>();
+        });
+    }
+
+    /**
      * @brief Payslips of @p run, in insertion order (oldest first). A
      *        standalone read — for the payslips rows written moments earlier
      *        inside a still-open write transaction, PayrollService reads
