@@ -212,7 +212,12 @@ TEST(PayrollCalculator, SoBaseFloorApplies) {
 TEST(PayrollCalculator, CeilingsApply) {
     const auto rates = make_rates();
     Payroll::Input in;
-    in.gross_tiyn = 100000000;  // 1 000 000 tg, well above every ceiling
+    // 5 000 000 tg — above ALL four ceilings: OPV/OPVR cap at 50 MZP =
+    // 4 250 000 tg, OSMS caps at 40 MZP = 3 400 000 tg, and gross - OPV
+    // (well past those two) still exceeds the SO cap of 7 MZP = 595 000 tg.
+    // (1 000 000 tg, used previously, is BELOW the OPV/OPVR/OSMS ceilings —
+    // only the SO ceiling would be exercised there; see fix round 1.)
+    in.gross_tiyn = 500000000;
 
     const auto out = Payroll::calculate(in, rates);
 
