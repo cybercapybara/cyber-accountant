@@ -27,6 +27,14 @@ export type JobCreate = Schemas['JobCreate'];
 export type Organization = Schemas['Organization'];
 export type OrganizationWithRole = Schemas['OrganizationWithRole'];
 export type OrgMember = Schemas['OrgMember'];
+export type Counterparty = Schemas['Counterparty'];
+export type CounterpartyWrite = Schemas['CounterpartyWrite'];
+export type Account = Schemas['Account'];
+export type AccountCreate = Schemas['AccountCreate'];
+export type JournalLine = Schemas['JournalLine'];
+export type JournalLineWrite = Schemas['JournalLineWrite'];
+export type JournalEntry = Schemas['JournalEntry'];
+export type JournalEntryCreate = Schemas['JournalEntryCreate'];
 
 /** GET /api/auth/me, POST /api/auth/login, POST /api/auth/refresh — { user }. */
 export type MeResponse = Schemas['MeResponse'];
@@ -52,3 +60,15 @@ export type OrgMemberDetailResponse = Schemas['OrgMemberDetailResponse'];
  * read this body (the __Host-access cookie is HttpOnly); it exists for
  * Bearer-mode clients, which this template does not use. */
 export type SwitchResponse = Schemas['SwitchResponse'];
+/** GET/POST /api/v1/counterparties — { data: Counterparty[], total, limit, offset }. */
+export type CounterpartyListResponse = Schemas['CounterpartyListResponse'];
+/** GET/POST/PATCH /api/v1/counterparties[/{id}] — { data: Counterparty }. */
+export type CounterpartyDetailResponse = Schemas['CounterpartyDetailResponse'];
+/** GET /api/v1/accounts — { data: Account[] }, unpaginated. */
+export type AccountListResponse = Schemas['AccountListResponse'];
+/** POST /api/v1/accounts — { data: Account }. */
+export type AccountDetailResponse = Schemas['AccountDetailResponse'];
+/** GET/POST /api/v1/journal-entries — { data: JournalEntry[], total, limit, offset }. */
+export type JournalEntryListResponse = Schemas['JournalEntryListResponse'];
+/** GET/POST /api/v1/journal-entries[/{id}[/post|/reverse]] — { data: JournalEntry }. */
+export type JournalEntryDetailResponse = Schemas['JournalEntryDetailResponse'];

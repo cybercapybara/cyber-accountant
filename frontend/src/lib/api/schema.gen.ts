@@ -1913,6 +1913,1114 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/counterparties": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List counterparties for the caller's organization (paginated) */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Counterparty page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CounterpartyListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a counterparty (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CounterpartyWrite"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CounterpartyDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A counterparty with that identifier already exists in this organization */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description identifier is the right shape (12 digits) but fails the BIN/IIN check digit */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/counterparties/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get a counterparty */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Counterparty */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CounterpartyDetailResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a counterparty belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Replace a counterparty (accountant/owner only) — every editable field is patched in one call */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CounterpartyWrite"];
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CounterpartyDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a counterparty belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The patched identifier collides with another counterparty in this organization */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description identifier is the right shape (12 digits) but fails the BIN/IIN check digit */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List accounts visible to the caller's organization (standard chart + this org's own subaccounts), unpaginated */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Visible accounts */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AccountListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a subaccount under a visible parent (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AccountCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AccountDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description An account with that code already exists for this organization (or is a reserved system code) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Parent not found/not visible, or code does not extend the parent's code */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List documents for the caller's organization (paginated, optional type/status filters) */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Filter by doc_type — must be one of the CHECK-listed values */
+                    type?: string;
+                    /** @description Filter by status — must be one of the CHECK-listed values */
+                    status?: string;
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Document page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description type or status is not one of the registered values */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get a document */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Document */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentDetailResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a document belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/download-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a presigned download URL for this document's stored file
+         * @description Read-only — mints a time-limited S3 GET URL (TTL 300s) and writes
+         *     nothing, so this route does NOT reject viewers the way the mutating
+         *     ledger routes do.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Presigned URL */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DownloadUrlResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a document belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description This document has no stored file yet (empty s3_key) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Presigning requires the S3 storage backend */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a client-driven upload (accountant/owner only)
+         * @description Creates a draft document (source=uploaded, status=draft) and mints a
+         *     presigned S3 PUT URL (TTL 600s) the client uploads the file bytes to
+         *     directly. The document's s3_key is persisted immediately
+         *     (DocumentRepository::set_pending_upload) so a retried
+         *     confirm-upload reads back the SAME key. Call
+         *     POST /api/v1/documents/{id}/confirm-upload once the PUT completes.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DocumentUploadCreate"];
+                };
+            };
+            responses: {
+                /** @description Draft document + presigned upload URL */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentUploadResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description doc_type is not one of the registered values, or filename is not a plain file name */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Presigning requires the S3 storage backend */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/confirm-upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify an uploaded object and finalize the document (accountant/owner only)
+         * @description Checks Storage::exists(s3_key) before trusting the client's
+         *     reported size/checksum; on success calls
+         *     DocumentRepository::set_file() and flips status to 'final'.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DocumentConfirmUpload"];
+                };
+            };
+            responses: {
+                /** @description Finalized document */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a document belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No upload was started for this document */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description size_bytes out of range, or checksum_sha256 is not 64 lowercase hex characters */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Object storage is not configured */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/journal-entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List journal entries for the caller's organization (paginated, optional from/to entry_date filters)
+         * @description Header rows only — `lines` is always `[]` here; use GET /journal-entries/{id} for lines.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Inclusive lower bound on entry_date, YYYY-MM-DD */
+                    from?: string;
+                    /** @description Inclusive upper bound on entry_date, YYYY-MM-DD */
+                    to?: string;
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Journal entry page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JournalEntryListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description from or to is not in YYYY-MM-DD format */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a draft journal entry (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["JournalEntryCreate"];
+                };
+            };
+            responses: {
+                /** @description Created draft entry, with lines */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JournalEntryDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field, or a line missing account_code/side/amount, or a malformed counterparty_id) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description entry_date is not YYYY-MM-DD, or the entry is unbalanced/unknown_account/foreign_counterparty/invalid_line (Ledger::JournalService typed errors) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/journal-entries/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get a journal entry with its lines */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Journal entry */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JournalEntryDetailResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including an entry belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/journal-entries/{id}/post": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post a draft journal entry (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Posted entry */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JournalEntryDetailResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including an entry belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The entry is not in status 'draft' */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/journal-entries/{id}/reverse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reverse (storno) a posted journal entry (accountant/owner only)
+         * @description Marks the original entry 'reversed' and returns a NEW, already-posted
+         *     entry whose lines mirror the original with sides flipped
+         *     (`reverses_entry_id` points back at the original).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new storno entry, posted, with lines */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JournalEntryDetailResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including an entry belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The entry is not in status 'posted' */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/doc-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List registered docgen templates (slug, version, schema)
+         * @description Scans templates/latex/ (Docgen::TemplateRegistry::list()) — read-only, no viewer gate.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Registered templates */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocTemplateListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate a document from a template (accountant/owner only)
+         * @description Validates `input` against the template's JSON Schema, creates a
+         *     `draft` document (source=generated), optionally links it to a
+         *     journal entry, and enqueues a `docgen.render` job. The render never
+         *     runs on the request thread — poll GET /api/v1/documents/{id} for the
+         *     final ('final') status and its download URL.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["GenerateDocumentCreate"];
+                };
+            };
+            responses: {
+                /** @description Accepted — render enqueued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GenerateDocumentResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field, or a malformed counterparty_id/link_entry_id) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description template_slug is not a registered template, input fails the template's JSON Schema, or counterparty_id/link_entry_id does not belong to this organization */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Job queue not enabled */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs": {
         parameters: {
             query?: never;
@@ -2335,6 +3443,241 @@ export interface components {
         SwitchResponse: {
             /** @description New HS256 access JWT carrying an `org` claim set to {id} */
             access: string;
+        };
+        Counterparty: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** @description БИН/ИИН — check-digit validated (Ledger::is_valid_bin_iin) */
+            identifier: string;
+            name: string;
+            address: string;
+            /** @description IBAN KZ.. — format not validated in P1 */
+            iik: string;
+            bik: string;
+            kbe: string;
+            is_resident: boolean;
+            vat_payer: boolean;
+            contact_email: string;
+            created_at: string;
+            updated_at: string;
+        };
+        CounterpartyWrite: {
+            /** @description БИН/ИИН, 12 digits + valid check digit */
+            identifier: string;
+            name: string;
+            /** @default  */
+            address: string;
+            /** @default  */
+            iik: string;
+            /** @default  */
+            bik: string;
+            /** @default  */
+            kbe: string;
+            /** @default true */
+            is_resident: boolean;
+            /** @default false */
+            vat_payer: boolean;
+            /** @default  */
+            contact_email: string;
+        };
+        CounterpartyListResponse: {
+            data: components["schemas"]["Counterparty"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        CounterpartyDetailResponse: {
+            data: components["schemas"]["Counterparty"];
+        };
+        Account: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description null = system row from the standard chart, visible to every org
+             */
+            org_id: string | null;
+            code: string;
+            name_ru: string;
+            /** @description Filled in P2 (bilingual ФНО forms); empty in P1 */
+            name_kk: string;
+            /** @enum {string} */
+            type: "asset" | "liability" | "equity" | "income" | "expense";
+            parent_code: string | null;
+            currency_tracked: boolean;
+            created_at: string;
+            updated_at: string;
+        };
+        AccountListResponse: {
+            data: components["schemas"]["Account"][];
+        };
+        AccountCreate: {
+            /** @description Must start with parent_code (subaccount-numbering convention) */
+            code: string;
+            name_ru: string;
+            /** @default  */
+            name_kk: string;
+            /** @description Code of a system or this org's own visible parent account */
+            parent_code: string;
+        };
+        AccountDetailResponse: {
+            data: components["schemas"]["Account"];
+        };
+        Document: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** @enum {string} */
+            doc_type: "invoice" | "avr" | "waybill" | "tax_invoice" | "reconciliation" | "power_of_attorney" | "incoming" | "bank_statement" | "hr" | "fno" | "other";
+            /** @enum {string} */
+            source: "generated" | "uploaded" | "email";
+            /** @enum {string} */
+            status: "inbox" | "recognized" | "linked" | "archived" | "draft" | "final" | "sent";
+            /** Format: uuid */
+            counterparty_id: string | null;
+            s3_key: string | null;
+            checksum_sha256: string | null;
+            mime: string | null;
+            /** Format: int64 */
+            size_bytes: number | null;
+            template_slug: string | null;
+            template_version: string | null;
+            /** @description Docgen input snapshot for source=generated rows; for source=uploaded rows via POST /documents/uploads it instead holds {"original_filename": "..."} — see Document.hpp */
+            input_snapshot: {
+                [key: string]: unknown;
+            } | null;
+            created_at: string;
+            updated_at: string;
+        };
+        DocumentListResponse: {
+            data: components["schemas"]["Document"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        DocumentDetailResponse: {
+            data: components["schemas"]["Document"];
+        };
+        DocumentUploadCreate: {
+            /** @description Plain file name — no path separators, "..", leading dot, or control characters (422 invalid_filename otherwise); non-ASCII/spaces/parentheses are fine */
+            filename: string;
+            mime: string;
+            /** @enum {string} */
+            doc_type: "invoice" | "avr" | "waybill" | "tax_invoice" | "reconciliation" | "power_of_attorney" | "incoming" | "bank_statement" | "hr" | "fno" | "other";
+        };
+        DocumentUploadResponse: {
+            data: components["schemas"]["Document"];
+            /** @description Presigned S3 PUT URL, TTL 600s */
+            upload_url: string;
+        };
+        DocumentConfirmUpload: {
+            /** Format: int64 */
+            size_bytes: number;
+            checksum_sha256: string;
+        };
+        DownloadUrlResponse: {
+            /** @description Presigned S3 GET URL, TTL 300s */
+            url: string;
+        };
+        JournalLine: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            entry_id: string;
+            account_code: string;
+            /** @enum {string} */
+            side: "debit" | "credit";
+            /** @description NUMERIC(18,2) as text, e.g. "1234.56" — always > 0 */
+            amount: string;
+            /** Format: uuid */
+            counterparty_id: string | null;
+            /** @description NUMERIC(18,2) as text, >= 0 when present */
+            vat_amount: string | null;
+        };
+        JournalLineWrite: {
+            account_code: string;
+            /** @enum {string} */
+            side: "debit" | "credit";
+            /** @description Decimal string, e.g. "1234.56" */
+            amount: string;
+            /** Format: uuid */
+            counterparty_id?: string;
+            vat_amount?: string;
+        };
+        JournalEntry: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** Format: date */
+            entry_date: string;
+            description: string;
+            /** @enum {string} */
+            status: "draft" | "posted" | "reversed";
+            /** Format: uuid */
+            reverses_entry_id: string | null;
+            /** Format: uuid */
+            created_by_user_id: string | null;
+            lines: components["schemas"]["JournalLine"][];
+        };
+        JournalEntryCreate: {
+            entry_date: string;
+            description: string;
+            lines: components["schemas"]["JournalLineWrite"][];
+        };
+        JournalEntryListResponse: {
+            data: components["schemas"]["JournalEntry"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        JournalEntryDetailResponse: {
+            data: components["schemas"]["JournalEntry"];
+        };
+        DocTemplate: {
+            slug: string;
+            /** @description On-disk vN label, e.g. 'v1' */
+            version: string;
+            /** @description JSON Schema (draft-07) the template's input must satisfy */
+            schema: {
+                [key: string]: unknown;
+            };
+        };
+        DocTemplateListResponse: {
+            data: components["schemas"]["DocTemplate"][];
+        };
+        GenerateDocumentCreate: {
+            /**
+             * @description Also the resulting document's doc_type — the mapping is the identity function
+             * @enum {string}
+             */
+            template_slug: "invoice" | "avr" | "waybill" | "tax_invoice" | "reconciliation";
+            /** @description Validated against the template's JSON Schema */
+            input?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format: uuid
+             * @description Must belong to the caller's organization (422 foreign_counterparty otherwise)
+             */
+            counterparty_id?: string;
+            /**
+             * Format: uuid
+             * @description Journal entry to link this document to (document_entries); must belong to the caller's organization (422 foreign_journal_entry otherwise)
+             */
+            link_entry_id?: string;
+        };
+        GenerateDocumentResponse: {
+            /**
+             * Format: uuid
+             * @description Poll GET /api/v1/documents/{id} for the final rendered status
+             */
+            document_id: string;
+            /** @description false if the docgen.render job could not be enqueued (e.g. a transient Redis error) — the document row still exists as draft; an operator must re-enqueue it (Fix round 1: best-effort enqueue) */
+            render_queued: boolean;
         };
     };
     responses: never;
