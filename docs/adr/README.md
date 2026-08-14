@@ -19,3 +19,6 @@ record that supersedes the old one (and link both ways).
 - [0002 — nlohmann::json over jsoncpp](0002-nlohmann-json.md)
 - [0003 — Header-only module layout](0003-header-only-modules.md)
 - [0004 — Global singletons for subsystems](0004-global-singletons.md)
+- [0005 — SPA split](0005-spa-split.md)
+- [0006 — API versioning](0006-api-versioning.md)
+- [0007 — S3 backend: Hetzner Object Storage](0007-s3-backend.md)
