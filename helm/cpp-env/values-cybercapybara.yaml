@@ -122,22 +122,23 @@ mailpit:
 # for a duplicate stateful workload on an already-constrained 3-node
 # control-plane-only cluster.
 #
-# redis.enabled: false actually suppresses the umbrella's bundled
-# redis+redis-sentinel Deployments (templates/redis.yaml is guarded by
-# `{{- if .Values.redis.enabled }}`) — no leftover objects expected after
-# `helm upgrade`.
+# redis.enabled: false suppresses the umbrella's bundled redis+redis-sentinel
+# Deployments (templates/redis.yaml is guarded by
+# `{{- if .Values.redis.enabled }}`) — no leftover objects after `helm
+# upgrade`.
 #
-# postgres.* has NO such guard: helm/cpp-env/templates/postgres.yaml
-# unconditionally renders a CNPG `Cluster` (name "pg") + `pg-app` Secret,
-# regardless of any value here. There is no values-only way to suppress it
-# (a template fix is out of scope for this change — this file only). The
-# leftover `pg` Cluster CR (and its PVC) is deleted by hand after
-# `helm upgrade`; it will reappear on the NEXT `helm upgrade` unless/until
-# the template itself gets an `enabled` guard — flagged as a follow-up.
-# `postgres.instances` etc. below are therefore inert (nothing reads them
-# once the CR is deleted) but left in place rather than removed, since they
-# do no harm and document the chart's own default shape.
+# postgres.enabled: false does the same for the bundled per-env CNPG
+# Cluster "pg" + its `pg-app` Secret (templates/postgres.yaml). This used
+# to have NO such guard — for a few upgrades it unconditionally re-rendered
+# the "pg" Cluster/pod/PVC every time regardless of any value here, and had
+# to be deleted by hand each time (`kubectl delete cluster.postgresql.cnpg.io/pg`
+# + its PVC). Fixed 2026-08-14 by wrapping the whole template in
+# `{{- if .Values.postgres.enabled }}` (matching the redis/kafka idiom) —
+# `postgres.instances`/`storageSize`/`storageClass` below are inert again
+# only in the sense that CNPG itself never runs; the flag actually suppresses
+# the template now, no more manual cleanup needed after this change.
 postgres:
+  enabled: false
   instances: 1
   storageSize: 2Gi
   storageClass: longhorn-single-replica
@@ -221,6 +222,44 @@ cyber-accountant:
     masterName: mymaster
     sentinelNodes: "redis-node-0.redis-headless.db.svc.cluster.local:26379,redis-node-1.redis-headless.db.svc.cluster.local:26379,redis-node-2.redis-headless.db.svc.cluster.local:26379"
     poolSize: 5
+  # Real public URL now that buh.cybercapybara.kz exists
+  # (deploy/ingress/buh-cybercapybara-kz.yaml) — was the unused
+  # app.cybercapybara.example.com placeholder. Matters now that mail is on
+  # below: confirm/reset links in account emails are built from this.
+  app:
+    baseUrl: "https://buh.cybercapybara.kz"
+  # ── Outbound mail (owner decision, 2026-08-14): same Brevo SMTP relay
+  # account the cybercapybara.kz site (namespace www) already uses —
+  # verified via `kubectl -n www get deploy -o yaml` env (host/port/user/
+  # TLS) and the www secrets' key names (`api-cpp-api` /
+  # `worker-cpp-worker`, key `mail-smtp-password`). The password itself was
+  # copied cluster-side into a new Secret `smtp-credentials` (namespace
+  # cyber-accountant, keys named after this app's own MAIL_* env vars) —
+  # never written to a file or git.
+  #
+  # `from`/`fromName` deliberately differ from www's (`info@cybercapybara.kz`
+  # / "CyberCapybara"): the SMTP AUTH identity (`smtpUsername`) is a Brevo
+  # relay-account login, not a mailbox — Brevo lets any verified sender on
+  # the domain send through it, so this app gets its OWN sender identity
+  # rather than impersonating the marketing site's inbox. cybercapybara.kz
+  # is presumably domain-verified in Brevo (not per-mailbox), since www
+  # already sends as `info@` through the same login — `noreply@` should
+  # work the same way.
+  #
+  # smtpPassword intentionally blank — supplied via
+  # `--set cyber-accountant.mail.smtpPassword=...` at upgrade time, sourced
+  # from the `smtp-credentials` Secret above, never committed.
+  mail:
+    enabled: true
+    viaJobs: true            # jobs.enabled is false in this profile, so this safely falls back to inline send (see docs/CONFIG.md MAIL_VIA_JOBS) until jobs are turned on
+    smtpHost: smtp-relay.brevo.com
+    smtpPort: 587
+    smtpUsername: michael@tarassov.me
+    smtpPassword: ""
+    smtpUseTls: true
+    from: noreply@cybercapybara.kz
+    fromName: "Cyber Accountant"
+    subjectPrefix: "[Cyber Accountant] "
 
 cyber-accountant-worker:
   image:
@@ -230,10 +269,11 @@ cyber-accountant-worker:
     - name: ghcr-pull
   tracing:
     enabled: false
-  # Placeholder — same "no real domain yet" note as baseDomain above. Only
-  # affects links inside outbound email bodies (mail is off this phase too).
+  # Real public URL now that buh.cybercapybara.kz exists — was the unused
+  # app.cybercapybara.example.com placeholder (see the api block above for
+  # why this matters now that mail is on).
   app:
-    baseUrl: "https://app.cybercapybara.example.com"
+    baseUrl: "https://buh.cybercapybara.kz"
   # Same shared Postgres/Redis as the `cyber-accountant` block above — see
   # those comments for the full rationale (dedicated role/db, not
   # `postgresql-cybercapybara`; Redis key-namespacing gap). migrationsEnabled
@@ -254,6 +294,20 @@ cyber-accountant-worker:
     masterName: mymaster
     sentinelNodes: "redis-node-0.redis-headless.db.svc.cluster.local:26379,redis-node-1.redis-headless.db.svc.cluster.local:26379,redis-node-2.redis-headless.db.svc.cluster.local:26379"
     poolSize: 5
+  # Same shared Brevo SMTP relay as the `cyber-accountant` block above —
+  # see those comments for the full rationale. smtpPassword supplied via
+  # `--set cyber-accountant-worker.mail.smtpPassword=...` at upgrade time.
+  mail:
+    enabled: true
+    viaJobs: true
+    smtpHost: smtp-relay.brevo.com
+    smtpPort: 587
+    smtpUsername: michael@tarassov.me
+    smtpPassword: ""
+    smtpUseTls: true
+    from: noreply@cybercapybara.kz
+    fromName: "Cyber Accountant"
+    subjectPrefix: "[Cyber Accountant] "
 
 cpp-frontend:
   image:

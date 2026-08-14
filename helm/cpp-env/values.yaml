@@ -34,6 +34,7 @@ credentials:
 
 # ── Infra toggles + sizing ──
 postgres:
+  enabled: true         # bundled per-env CNPG Cluster "pg"; false → bring your own (see externalDatabase below) and set this false to avoid a duplicate
   instances: 2          # CNPG: 1 primary + (instances-1) replicas → pg-rw / pg-ro
   storageSize: 2Gi
   storageClass: ""      # "" → cluster default
