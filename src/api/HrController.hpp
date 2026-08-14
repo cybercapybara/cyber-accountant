@@ -6,7 +6,8 @@
  *
  * Routes (all under /api/v1, every handler starts with
  * API_REQUIRE_ORG(req, callback, ctx)):
- *   GET  /api/v1/hr-orders                         list (optional ?employee_id)
+ *   GET  /api/v1/hr-orders                         list, paginated (optional
+ *                                                     ?employee_id)
  *   POST /api/v1/hr-orders                          create (accountant/owner)
  *   POST /api/v1/hr-orders/{id}/generate-document    -> hr_order docgen, 202
  *   GET  /api/v1/labor-contracts                    list (?employee_id REQUIRED
@@ -14,10 +15,14 @@
  *                                                     list_contracts takes no
  *                                                     "every employee" mode,
  *                                                     unlike list_orders/
- *                                                     list_vacations)
+ *                                                     list_vacations). Bounded
+ *                                                     by one employee's own
+ *                                                     contract history, so it
+ *                                                     stays unpaginated.
  *   POST /api/v1/labor-contracts                    create (accountant/owner)
  *   POST /api/v1/labor-contracts/{id}/generate-document -> labor_contract docgen, 202
- *   GET  /api/v1/vacations                          list (optional ?employee_id)
+ *   GET  /api/v1/vacations                          list, paginated (optional
+ *                                                     ?employee_id)
  *   POST /api/v1/vacations                          create (accountant/owner)
  *
  * RBAC: every mutating route (create and generate-document) additionally
@@ -66,8 +71,10 @@
  * document. Any body key that is not on the allowlist (checked at its own
  * leaf via dotted paths, e.g. "employer.director" vs "employer.name") is
  * now rejected with a 422 naming that field — never silently dropped,
- * never silently merged — via merge_allowed_extra()/
- * validate_extra_allowlist() below.
+ * never silently merged — via Api::Validation::merge_allowed_extra()/
+ * validate_extra_allowlist(), which live in api/Validation.hpp because
+ * TaxController's ФНО filings and PayrollController's payslips need the
+ * identical discipline (final fix round).
  *
  * `doc_type` for both generated documents is `"hr"` — migrations/
  * 010_documents.sql's CHECK list has one generic HR bucket, not
@@ -145,23 +152,28 @@ public:
     // ===================================================================
 
     // -------------------------------------------------------------------
-    // GET /api/v1/hr-orders — unpaginated (HrRepository::list_orders has no
-    // limit/offset — same "bespoke non-CrudBase query" shape as
-    // DocgenController::listTemplates), optional ?employee_id filter.
+    // GET /api/v1/hr-orders — PAGINATED (?limit/?offset, same 50/200
+    // convention as every other list route in this branch), optional
+    // ?employee_id filter. `hr_orders` grows for the life of an
+    // organization, so this route used to be an unbounded org-wide SELECT
+    // (final fix round): the envelope is now {data, total, limit, offset},
+    // not the bare {data} it answered before.
     // -------------------------------------------------------------------
     void listOrders(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
         std::optional<std::string> employee_id_filter;
         if (!filter_employee_id(req, employee_id_filter, callback))
             return;
+        const auto page = parse_page_params(req, /*default_limit=*/50, /*max_limit=*/200);
 
         with_repo_errors(callback, "hr orders list", [&] {
             Hr::HrRepository repo;
-            auto rows = repo.list_orders(ctx.org_id, employee_id_filter);
+            auto rows = repo.list_orders(ctx.org_id, employee_id_filter, page.limit, page.offset);
+            long total = repo.count_orders(ctx.org_id, employee_id_filter);
             json data = json::array();
             for (const auto& o : rows)
                 data.push_back(o);
-            callback(Response::list(data));
+            callback(Response::paginated(data, total, page.limit, page.offset));
         });
     }
 
@@ -298,7 +310,7 @@ public:
         if (order->effective_to)
             input["effective_to"] = iso_to_ddmmyyyy(*order->effective_to);
 
-        if (!merge_allowed_extra(input, extra, hr_order_allowed_extra_fields(), callback))
+        if (!Validation::merge_allowed_extra(input, extra, hr_order_allowed_extra_fields(), callback))
             return;
 
         finish_generate_document(callback, ctx.org_id, "hr_order", input, [&](const std::string& document_id) {
@@ -470,7 +482,7 @@ public:
         if (found_contract->ends_on)
             input["ends_on"] = iso_to_ddmmyyyy(*found_contract->ends_on);
 
-        if (!merge_allowed_extra(input, extra, labor_contract_allowed_extra_fields(), callback))
+        if (!Validation::merge_allowed_extra(input, extra, labor_contract_allowed_extra_fields(), callback))
             return;
 
         // labor_contracts has no document_id column (see file header) — no
@@ -483,21 +495,25 @@ public:
     // ===================================================================
 
     // -------------------------------------------------------------------
-    // GET /api/v1/vacations — unpaginated, optional ?employee_id filter.
+    // GET /api/v1/vacations — PAGINATED, optional ?employee_id filter. Same
+    // reasoning and same envelope change as listOrders() above (final fix
+    // round): `vacations` also grows without bound.
     // -------------------------------------------------------------------
     void listVacations(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
         std::optional<std::string> employee_id_filter;
         if (!filter_employee_id(req, employee_id_filter, callback))
             return;
+        const auto page = parse_page_params(req, /*default_limit=*/50, /*max_limit=*/200);
 
         with_repo_errors(callback, "vacations list", [&] {
             Hr::HrRepository repo;
-            auto rows = repo.list_vacations(ctx.org_id, employee_id_filter);
+            auto rows = repo.list_vacations(ctx.org_id, employee_id_filter, page.limit, page.offset);
+            long total = repo.count_vacations(ctx.org_id, employee_id_filter);
             json data = json::array();
             for (const auto& v : rows)
                 data.push_back(v);
-            callback(Response::list(data));
+            callback(Response::paginated(data, total, page.limit, page.offset));
         });
     }
 
@@ -631,7 +647,8 @@ private:
     /// (templates/latex/hr_order/v1/schema.json) needs that have no backing
     /// column anywhere in this codebase — see file header. This IS the
     /// allowlist: every other key in a caller-supplied generate-document
-    /// body is rejected by merge_allowed_extra() below, specifically so a
+    /// body is rejected by Api::Validation::merge_allowed_extra(),
+    /// specifically so a
     /// caller can never override an authoritative, database-derived value
     /// (kind, number, issued_on, effective_from, any employer.* or employee.* field) that
     /// ends up in a generated legal HR document (Fix round 1).
@@ -655,53 +672,11 @@ private:
         return kAllowed;
     }
 
-    /// Recursively check every leaf key path in @p extra against @p allowed
-    /// (dot-separated paths, e.g. "employer.director") — an object value is
-    /// walked one level deeper with its key appended to @p prefix, so a
-    /// nested override is checked at its own leaf, not permitted merely
-    /// because its PARENT key (e.g. "employer") is mentioned in @p allowed.
-    /// @return false (already replied with a 422 naming the offending
-    /// field) on the first disallowed key; true if every key in @p extra is
-    /// on the allowlist (an empty/absent body trivially passes).
-    static bool validate_extra_allowlist(const json& extra,
-                                         const std::vector<std::string>& allowed,
-                                         const std::function<void(const HttpResponsePtr&)>& callback,
-                                         const std::string& prefix = "") {
-        for (auto it = extra.begin(); it != extra.end(); ++it) {
-            const std::string path = prefix.empty() ? it.key() : prefix + "." + it.key();
-            if (it.value().is_object()) {
-                if (!validate_extra_allowlist(it.value(), allowed, callback, path))
-                    return false;
-                continue;
-            }
-            if (std::find(allowed.begin(), allowed.end(), path) == allowed.end()) {
-                callback(Validation::response_422(
-                    path, "not_allowed_override", "this field is derived from stored data and cannot be overridden"));
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /// Validate @p extra against @p allowed (see validate_extra_allowlist())
-    /// and, only if every key passes, deep-merge it onto @p input via
-    /// nlohmann::json::merge_patch (RFC 7396). @return false (already
-    /// replied) if @p extra contains any field outside @p allowed — @p
-    /// input is left unmodified in that case.
-    static bool merge_allowed_extra(json& input,
-                                    const json& extra,
-                                    const std::vector<std::string>& allowed,
-                                    const std::function<void(const HttpResponsePtr&)>& callback) {
-        if (!validate_extra_allowlist(extra, allowed, callback))
-            return false;
-        input.merge_patch(extra);
-        return true;
-    }
-
     /// Shared tail for both generate-document handlers, factored out after
     /// Fix round 1 (the two handlers used to duplicate ~80 lines of this).
     /// @p input must already have its allowlisted extras merged in (see
-    /// merge_allowed_extra()) — this only validates against @p slug's
+    /// Api::Validation::merge_allowed_extra()) — this only validates against
+    /// @p slug's
     /// template schema, creates a draft document (doc_type="hr" — see file
     /// header for why this is NOT simply @p slug), best-effort enqueues
     /// docgen.render, and responds 202 — the same async contract as

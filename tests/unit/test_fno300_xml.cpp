@@ -48,6 +48,9 @@ Calculation make_calculation(long long accrued_tiyn, long long deductible_tiyn) 
 
 OrgInfo make_org(std::string name = "Test Org") {
     OrgInfo org;
+    // Must match make_calculation()'s org_id — build_xml refuses a pair
+    // that crosses tenants (multi-tenancy guard, final fix round).
+    org.org_id = "22222222-2222-2222-2222-222222222222";
     org.bin = "987654321098";
     org.name = std::move(name);
     org.tax_period_year = "2026";

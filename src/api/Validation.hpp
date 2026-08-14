@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <optional>
@@ -326,6 +327,75 @@ inline bool parse_optional_body(const drogon::HttpRequestPtr& req,
         cb(ErrorResponse::bad_request("invalid_json", "body must be a JSON object"));
         return false;
     }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// generate-document override allowlist
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Recursively check every LEAF key path in @p extra against @p allowed
+ *        (dot-separated paths, e.g. "employer.director") — an object value is
+ *        walked one level deeper with its key appended to @p prefix, so a
+ *        nested override is checked at its own leaf, not permitted merely
+ *        because its PARENT key (e.g. "employer") is mentioned in @p allowed.
+ *
+ * The companion to parse_optional_body() above, and load-bearing for exactly
+ * the same endpoints: the `.../generate-document` bodies are deep-merged
+ * (RFC 7396 `merge_patch`) over an input the server derived from stored
+ * records, so without an allowlist a caller can overwrite an AUTHORITATIVE
+ * figure — an employee's iin, a payslip's net, a ФНО's balance — in what
+ * becomes a legal document or a tax filing, while the XML/journal for the
+ * same row keeps saying something else.
+ *
+ * @return false (already replied with a 422 naming the offending field) on
+ *         the first disallowed key; true if every key in @p extra is on the
+ *         allowlist (an empty/absent body trivially passes).
+ */
+inline bool validate_extra_allowlist(const json& extra,
+                                     const std::vector<std::string>& allowed,
+                                     const std::function<void(const drogon::HttpResponsePtr&)>& callback,
+                                     const std::string& prefix = "") {
+    for (auto it = extra.begin(); it != extra.end(); ++it) {
+        const std::string path = prefix.empty() ? it.key() : prefix + "." + it.key();
+        if (it.value().is_object()) {
+            if (!validate_extra_allowlist(it.value(), allowed, callback, path))
+                return false;
+            continue;
+        }
+        if (std::find(allowed.begin(), allowed.end(), path) == allowed.end()) {
+            callback(response_422(
+                path, "not_allowed_override", "this field is derived from stored data and cannot be overridden"));
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief Validate @p extra against @p allowed (see validate_extra_allowlist())
+ *        and, only if EVERY key passes, deep-merge it onto @p input via
+ *        nlohmann::json::merge_patch (RFC 7396).
+ *
+ * @return false (already replied) if @p extra contains any field outside
+ *         @p allowed — @p input is left unmodified in that case, so nothing
+ *         downstream ever sees a partially-merged input.
+ *
+ * Lives here (final fix round) rather than in a controller: HrController
+ * grew it first, then TaxController's ФНО filings and PayrollController's
+ * payslips needed the identical discipline — the same consolidation
+ * is_valid_date and parse_optional_body already got. The per-template
+ * allowlists themselves stay in their controllers, next to the base input
+ * they guard.
+ */
+inline bool merge_allowed_extra(json& input,
+                                const json& extra,
+                                const std::vector<std::string>& allowed,
+                                const std::function<void(const drogon::HttpResponsePtr&)>& callback) {
+    if (!validate_extra_allowlist(extra, allowed, callback))
+        return false;
+    input.merge_patch(extra);
     return true;
 }
 

@@ -58,22 +58,35 @@
  *     lookup came back empty, so only the exception TYPE changed; rates and
  *     thresholds still come exclusively from `tax_rates`/`tax_constants`.
  *
- * generate-document: same base-input + optional-body-merge design
+ * generate-document: same base-input + ALLOWLISTED-body-merge design
  * HrController documents at length — templates/latex/payslip/v1/schema.json
  * requires `net_words` (the net amount spelled out in Russian), and this
  * codebase has no money-to-words converter anywhere, so that field CANNOT be
- * derived. The handler builds every field it can from the payslip + employee
- * + organization, deep-merges an OPTIONAL request body on top (RFC 7396
- * `merge_patch`), then validates against the template's JSON Schema exactly
- * like POST /documents/generate — a caller that omits `net_words` gets the
- * same `422 schema_validation_failed`, never a broken PDF.
+ * derived. The handler builds every OTHER field the schema requires from the
+ * payslip + employee + organization, validates an OPTIONAL request body
+ * against payslip_allowed_extra_fields() — which holds exactly `net_words`,
+ * the one field with no authoritative source — and only then deep-merges it
+ * on top (RFC 7396 `merge_patch`) and validates against the template's JSON
+ * Schema exactly like POST /documents/generate. A caller that omits
+ * `net_words` gets the same `422 schema_validation_failed`, never a broken
+ * PDF.
+ *
+ * Final fix round (security): that allowlist is load-bearing, not cosmetic.
+ * This handler used to merge_patch the raw request body with no allowlist at
+ * all, so a caller could rewrite `gross_tenge`, `net`, or `employee.iin` in
+ * the PDF while the payroll run, the payslip row and the journal entry for
+ * the same period kept saying something else — the identical hole already
+ * found and fixed in HrController. Any body key outside the allowlist is now
+ * rejected with a 422 `not_allowed_override` naming that field, BEFORE any
+ * merge touches the input.
  *
  * Money in that input is rendered with Ledger::format_tiyn ("300000.00"),
  * the canonical form everywhere in this codebase. The template's own
  * fixtures use a prettier locale form ("300 000,00"); that is a presentation
- * choice, and a caller who wants it can override any amount through the same
- * merge body rather than having this controller grow a second money
- * formatter.
+ * difference only, and it is NOT something a caller may fix by overriding
+ * the amount through the merge body (every amount here is derived from the
+ * stored payslip and is therefore off the allowlist) — a second money
+ * formatter, or a template-side change, is the honest way to get it.
  *
  * `doc_type` for the generated payslip is `"hr"` — migrations/010_documents.sql's
  * CHECK list has one generic HR bucket and no `payslip` entry ("payslip"
@@ -141,6 +154,20 @@ public:
 
     /// Docgen template slug for a payslip (templates/latex/payslip/v1/).
     static constexpr const char* kPayslipSlug = "payslip";
+
+    /// The ONLY field templates/latex/payslip/v1/schema.json requires that
+    /// this codebase cannot derive: the net amount spelled out in Russian
+    /// (there is no money-to-words converter anywhere here). Every other
+    /// field in that schema — period_label, employer.name/bin,
+    /// employee.full_name/iin/position, and all nine money figures — comes
+    /// from the payroll run, the employee record or the organization, so
+    /// none of them may be overridden by the caller: this IS the allowlist
+    /// Api::Validation::merge_allowed_extra() enforces, and anything else in
+    /// the body is a 422 `not_allowed_override` (see file header).
+    static const std::vector<std::string>& payslip_allowed_extra_fields() {
+        static const std::vector<std::string> kAllowed = {"net_words"};
+        return kAllowed;
+    }
 
     /// Accepted `period_year` bounds. Not a tax value (those come only from
     /// `tax_rates`/`tax_constants`) — purely a sanity window that keeps a
@@ -430,8 +457,13 @@ public:
             {"osms", Ledger::format_tiyn(payslip->osms)},
             {"social_tax", Ledger::format_tiyn(payslip->social_tax)},
         };
-        // `net_words` is deliberately absent from the base — see file header.
-        input.merge_patch(extra);
+        // `net_words` is deliberately absent from the base — see file header
+        // — and is the only key the caller may supply. Everything above is
+        // authoritative (payslip/employee/organization columns), so an
+        // attempt to override any of it is rejected here with a 422 naming
+        // the field, BEFORE the merge mutates `input`.
+        if (!Validation::merge_allowed_extra(input, extra, payslip_allowed_extra_fields(), callback))
+            return;
 
         Docgen::TemplateRegistry registry;
         auto info = registry.latest(kPayslipSlug);

@@ -48,6 +48,9 @@ Calculation make_calculation(long long income_tiyn, long long rate_bp, long long
 
 OrgInfo make_org(std::string name = "Test Org") {
     OrgInfo org;
+    // Must match make_calculation()'s org_id — build_xml refuses a pair that
+    // crosses tenants (the multi-tenancy guard added in the final fix round).
+    org.org_id = "22222222-2222-2222-2222-222222222222";
     org.bin = "123456789012";
     org.name = std::move(name);
     org.tax_period_year = "2026";

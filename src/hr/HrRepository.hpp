@@ -97,21 +97,46 @@ public:
     /// @p employee_id_opt — nullopt means "every employee", same
     /// allowlisted-filter idiom as
     /// Ledger::DocumentRepository::list_filtered's doc_type/status.
+    ///
+    /// LIMIT/OFFSET are mandatory in the SQL, defaulted in the signature to
+    /// the same 100/0 OrgCrudBase::list_in_org uses: `hr_orders` grows for
+    /// the life of an organization, so an unbounded org-wide SELECT here
+    /// would eventually pull the whole table into one HTTP response (final
+    /// fix round). Pairs with count_orders() for the paginated envelope.
     std::vector<HrOrder> list_orders(const std::string& org_id,
-                                     const std::optional<std::string>& employee_id_opt = std::nullopt) {
+                                     const std::optional<std::string>& employee_id_opt = std::nullopt,
+                                     int limit = 100,
+                                     int offset = 0) {
         return Database::get().execute_read([&](auto& txn) {
             auto r = txn.exec_params("SELECT " + std::string(kColumns) +
                                          " FROM hr_orders WHERE org_id = $1 "
                                          "AND ($2::uuid IS NULL OR employee_id = $2::uuid) "
                                          "ORDER BY " +
-                                         std::string(kOrderBy),
+                                         std::string(kOrderBy) + " LIMIT $3 OFFSET $4",
                                      org_id,
-                                     employee_id_opt);
+                                     employee_id_opt,
+                                     limit,
+                                     offset);
             std::vector<HrOrder> out;
             out.reserve(r.size());
             for (const auto& row : r)
                 out.push_back(HrOrder::from_row(row));
             return out;
+        });
+    }
+
+    /// Total HR orders matching the same (org, employee) filter list_orders()
+    /// applies — the `total` of the paginated envelope. Deliberately NOT
+    /// OrgCrudBase::count_in_org: that one cannot express the optional
+    /// employee_id predicate, and a total that ignored the active filter
+    /// would page the client through the wrong number of rows.
+    long count_orders(const std::string& org_id, const std::optional<std::string>& employee_id_opt = std::nullopt) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params(
+                "SELECT COUNT(*) FROM hr_orders WHERE org_id = $1 AND ($2::uuid IS NULL OR employee_id = $2::uuid)",
+                org_id,
+                employee_id_opt);
+            return r.at(0).at(0).template as<long>();
         });
     }
 
@@ -204,22 +229,38 @@ public:
     }
 
     /// Vacations for @p org_id, optionally narrowed to one
-    /// @p employee_id_opt — nullopt means "every employee", same idiom as
-    /// list_orders() above.
+    /// @p employee_id_opt — nullopt means "every employee", same idiom
+    /// (including the mandatory LIMIT/OFFSET) as list_orders() above.
     std::vector<Vacation> list_vacations(const std::string& org_id,
-                                         const std::optional<std::string>& employee_id_opt = std::nullopt) {
+                                         const std::optional<std::string>& employee_id_opt = std::nullopt,
+                                         int limit = 100,
+                                         int offset = 0) {
         return Database::get().execute_read([&](auto& txn) {
             auto r = txn.exec_params("SELECT " + std::string(kVacationColumns) +
                                          " FROM vacations WHERE org_id = $1 "
                                          "AND ($2::uuid IS NULL OR employee_id = $2::uuid) "
-                                         "ORDER BY starts_on DESC, created_at DESC",
+                                         "ORDER BY starts_on DESC, created_at DESC LIMIT $3 OFFSET $4",
                                      org_id,
-                                     employee_id_opt);
+                                     employee_id_opt,
+                                     limit,
+                                     offset);
             std::vector<Vacation> out;
             out.reserve(r.size());
             for (const auto& row : r)
                 out.push_back(Vacation::from_row(row));
             return out;
+        });
+    }
+
+    /// Total vacations matching the same (org, employee) filter
+    /// list_vacations() applies — see count_orders() above.
+    long count_vacations(const std::string& org_id, const std::optional<std::string>& employee_id_opt = std::nullopt) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params(
+                "SELECT COUNT(*) FROM vacations WHERE org_id = $1 AND ($2::uuid IS NULL OR employee_id = $2::uuid)",
+                org_id,
+                employee_id_opt);
+            return r.at(0).at(0).template as<long>();
         });
     }
 };

@@ -34,6 +34,7 @@
 #include "hr/Employee.hpp"
 #include "hr/EmployeeRepository.hpp"
 #include "jobs/Jobs.hpp"
+#include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalEntry.hpp"
 #include "ledger/JournalRepository.hpp"
 #include "ledger/JournalService.hpp"
@@ -607,6 +608,77 @@ TEST_F(PayrollApiTest, GeneratePayslipDocumentWithoutWordsUnprocessable) {
     ASSERT_TRUE(errors.is_array());
     ASSERT_FALSE(errors.empty());
     EXPECT_EQ(errors[0]["code"].get<std::string>(), "schema_validation_failed");
+}
+
+// Final fix round (security): the body merged onto a payslip's auto-derived
+// input is allowlisted (PayrollController::payslip_allowed_extra_fields()),
+// and `net_words` is the entire allowlist. An attempt to rewrite the money
+// or the employee's identity in a document that sits next to the payroll run
+// and the journal entry for the same period must be rejected outright — and
+// a subsequent LEGITIMATE request must still store the REAL figures.
+//
+// This test bites: with the allowlist removed, the first request answers 202
+// and the stored input carries "1.00" as the net.
+TEST_F(PayrollApiTest, GeneratePayslipRejectsAuthoritativeOverrideAndKeepsTheTrueFigures) {
+    auto org = seed_org("777160000030", "Payroll Override Org LLP");
+    auto accountant = member("payroll-acc30@example.com", org.id, "accountant");
+    auto employee = seed_employee(org.id, "156312191013");
+    auto run = seeded_run(org.id, 2026, 11, /*approve=*/false);
+
+    // The figures actually on file, for the comparison at the end.
+    Payroll::PayrollRepository payroll_repo;
+    auto payslips = payroll_repo.list_payslips(run, /*from_primary=*/true);
+    ASSERT_EQ(payslips.size(), 1U);
+    const std::string true_net = Ledger::format_tiyn(payslips[0].net);
+    const std::string true_gross = Ledger::format_tiyn(payslips[0].gross_tiyn);
+    ASSERT_NE(true_net, "1.00");
+
+    const long before = queue_depth();
+    json malicious = {{"net_words", "Один тенге 00 тиын"}, {"net", "1.00"}};
+    auto bad_req = authed_json(accountant, malicious);
+    HttpResponsePtr bad_resp;
+    ctrl.generatePayslip(
+        bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; }, run.id, employee.id);
+    ASSERT_NE(bad_resp, nullptr);
+    ASSERT_EQ(bad_resp->statusCode(), k422UnprocessableEntity) << bad_resp->body();
+    auto bad_body = body_of(bad_resp);
+    EXPECT_EQ(bad_body["errors"][0]["field"].get<std::string>(), "net");
+    EXPECT_EQ(bad_body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    // Rejected BEFORE any side effect.
+    EXPECT_EQ(queue_depth(), before);
+
+    // A nested authoritative field is caught at its own leaf, not waved
+    // through because its parent object is not itself an allowlisted key.
+    json malicious_iin = {{"net_words", "x"}, {"employee", {{"iin", "999999999999"}}}};
+    auto iin_req = authed_json(accountant, malicious_iin);
+    HttpResponsePtr iin_resp;
+    ctrl.generatePayslip(
+        iin_req, [&](const HttpResponsePtr& r) { iin_resp = r; }, run.id, employee.id);
+    ASSERT_NE(iin_resp, nullptr);
+    EXPECT_EQ(iin_resp->statusCode(), k422UnprocessableEntity);
+    EXPECT_EQ(body_of(iin_resp)["errors"][0]["field"].get<std::string>(), "employee.iin");
+    EXPECT_EQ(queue_depth(), before);
+
+    // The allowlisted free-text field alone still works, and the document
+    // that lands carries the figures the payroll run actually computed.
+    json legit = {{"net_words", "Сорок тысяч тенге 00 тиын"}};
+    auto good_req = authed_json(accountant, legit);
+    HttpResponsePtr good_resp;
+    ctrl.generatePayslip(
+        good_req, [&](const HttpResponsePtr& r) { good_resp = r; }, run.id, employee.id);
+    ASSERT_NE(good_resp, nullptr);
+    ASSERT_EQ(good_resp->statusCode(), k202Accepted) << good_resp->body();
+    const std::string document_id = body_of(good_resp)["document_id"].get<std::string>();
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.find_in_org(document_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(doc.has_value());
+    ASSERT_TRUE(doc->input_snapshot.has_value());
+    const json& stored = *doc->input_snapshot;
+    EXPECT_EQ(stored["net"].get<std::string>(), true_net);
+    EXPECT_EQ(stored["gross_tenge"].get<std::string>(), true_gross);
+    EXPECT_EQ(stored["employee"]["iin"].get<std::string>(), "156312191013");
+    EXPECT_EQ(stored["net_words"].get<std::string>(), "Сорок тысяч тенге 00 тиын");
 }
 
 TEST_F(PayrollApiTest, GeneratePayslipDocumentViewerForbidden) {

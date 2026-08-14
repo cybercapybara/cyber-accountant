@@ -45,7 +45,16 @@ namespace Tax {
 /// think about int parsing before calling a `build_xml`. `tax_period_half`
 /// is "1" or "2"; `tax_period_year` is e.g. "2026". Defined here rather than
 /// in Fno910.hpp because Task 8's ФНО generator reuses this exact struct.
+///
+/// `org_id` carries the tenant this identity belongs to. It is NOT emitted
+/// into any XML — it exists solely so every `build_xml` can CHECK it against
+/// the Calculation's own `org_id` and refuse a pair that crosses tenants
+/// (see Fno910::build_xml). Multi-tenancy is enforced by construction
+/// everywhere else in this codebase; a generator that trusted its caller to
+/// pair the two correctly would be the one place a filing could silently mix
+/// two organizations' data.
 struct OrgInfo {
+    std::string org_id;
     std::string bin;
     std::string name;
     std::string tax_period_year;
@@ -54,6 +63,7 @@ struct OrgInfo {
 
 inline void to_json(nlohmann::json& j, const OrgInfo& o) {
     j = nlohmann::json{
+        {"org_id", o.org_id},
         {"bin", o.bin},
         {"name", o.name},
         {"tax_period_year", o.tax_period_year},
@@ -106,10 +116,25 @@ inline std::string escape(const std::string& text) {
 /// Tax::TaxService::calculate_vat's refund-position doc comment). 100 tiyn =
 /// 1 tenge. Pure integer arithmetic — no floating point, so there is no
 /// double-rounding risk between tiyn and tenge.
+///
+/// Written as quotient + remainder rather than the more obvious
+/// `sign * ((|tiyn| + 50) / 100)`: that form negates its argument, and
+/// negating LLONG_MIN is undefined behaviour (its magnitude is not
+/// representable), while `|tiyn| + 50` overflows near LLONG_MAX. Neither
+/// value is reachable from any current caller — every amount here comes from
+/// a BIGINT tiyn column — but "unreachable today" is not a guard, and UB in
+/// a money path is not something to leave standing. `/` and `%` truncate
+/// toward zero in C++, so `q` is the magnitude-floor and `r` carries the
+/// sign; the results are identical to the previous form for every other
+/// input.
 inline long long round_half_up_to_tenge(long long tiyn) {
-    const long long sign = tiyn < 0 ? -1 : 1;
-    const long long abs_tiyn = tiyn < 0 ? -tiyn : tiyn;
-    return sign * ((abs_tiyn + 50) / 100);
+    const long long q = tiyn / 100;
+    const long long r = tiyn % 100;
+    if (r >= 50)
+        return q + 1;
+    if (r <= -50)
+        return q - 1;
+    return q;
 }
 
 /// `round_half_up_to_tenge` rendered as a decimal string — every amount a

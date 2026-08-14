@@ -273,6 +273,44 @@ TEST_F(HrApiTest, ListOrdersFilteredByEmployee) {
     EXPECT_EQ(body["data"][0]["employee_id"].get<std::string>(), employee1.id);
 }
 
+// Final fix round: GET /hr-orders is paginated — `hr_orders` grows for the
+// life of an organization, so the route used to be an unbounded org-wide
+// SELECT. The envelope is now {data, total, limit, offset}, and ?limit
+// really bounds the page while `total` still reports the full count.
+TEST_F(HrApiTest, ListOrdersIsPaginated) {
+    auto org = seed_org("777150000040", "Order Page Org LLP");
+    auto accountant = member("accountant40@example.com", org.id, "accountant");
+    auto employee = seed_employee(org.id, "156312191013");
+
+    Hr::HrRepository repo;
+    repo.create_order(org.id, employee.id, "hire", "1", "2026-01-10", "2026-01-15");
+    repo.create_order(org.id, employee.id, "vacation", "2", "2026-01-11", "2026-01-16");
+    repo.create_order(org.id, employee.id, "vacation", "3", "2026-01-12", "2026-01-17");
+
+    auto first_req = TestHelpers::authed(accountant, Get);
+    first_req->setParameter("limit", "2");
+    HttpResponsePtr first;
+    ctrl.listOrders(first_req, [&](const HttpResponsePtr& r) { first = r; });
+    ASSERT_NE(first, nullptr);
+    ASSERT_EQ(first->statusCode(), k200OK);
+    auto page1 = json::parse(std::string(first->body()));
+    EXPECT_EQ(page1["data"].size(), 2U);
+    EXPECT_EQ(page1["total"].get<long>(), 3);
+    EXPECT_EQ(page1["limit"].get<int>(), 2);
+    EXPECT_EQ(page1["offset"].get<int>(), 0);
+
+    auto second_req = TestHelpers::authed(accountant, Get);
+    second_req->setParameter("limit", "2");
+    second_req->setParameter("offset", "2");
+    HttpResponsePtr second;
+    ctrl.listOrders(second_req, [&](const HttpResponsePtr& r) { second = r; });
+    ASSERT_NE(second, nullptr);
+    auto page2 = json::parse(std::string(second->body()));
+    EXPECT_EQ(page2["data"].size(), 1U);
+    EXPECT_EQ(page2["total"].get<long>(), 3);
+    EXPECT_EQ(page2["offset"].get<int>(), 2);
+}
+
 // ── POST /api/v1/hr-orders/{id}/generate-document ───────────────────────────
 
 TEST_F(HrApiTest, GenerateOrderDocumentAcceptedAndEnqueues) {
@@ -674,6 +712,40 @@ TEST_F(HrApiTest, GenerateOrderDocumentOverrideIinRejectedAndValueUnchanged) {
     ASSERT_TRUE(doc.has_value());
     ASSERT_TRUE(doc->input_snapshot.has_value());
     EXPECT_EQ((*doc->input_snapshot)["employee"]["iin"].get<std::string>(), "988916681773");
+}
+
+// Same pagination guarantee as ListOrdersIsPaginated, for GET /vacations —
+// and the `total` reported alongside a page reflects the ?employee_id filter
+// in force, not the whole organization.
+TEST_F(HrApiTest, ListVacationsIsPaginatedAndCountsTheFilteredSet) {
+    auto org = seed_org("777150000041", "Vacation Page Org LLP");
+    auto accountant = member("accountant41@example.com", org.id, "accountant");
+    auto employee1 = seed_employee(org.id, "156312191013");
+    auto employee2 = seed_employee(org.id, "988916681773");
+
+    Hr::HrRepository repo;
+    repo.create_vacation(org.id, employee1.id, "2026-07-01", "2026-07-14", 14, "annual");
+    repo.create_vacation(org.id, employee1.id, "2026-08-01", "2026-08-10", 10, "unpaid");
+    repo.create_vacation(org.id, employee2.id, "2026-09-01", "2026-09-05", 5, "sick");
+
+    auto req = TestHelpers::authed(accountant, Get);
+    req->setParameter("limit", "1");
+    HttpResponsePtr resp;
+    ctrl.listVacations(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k200OK);
+    auto page = json::parse(std::string(resp->body()));
+    EXPECT_EQ(page["data"].size(), 1U);
+    EXPECT_EQ(page["total"].get<long>(), 3);
+    EXPECT_EQ(page["limit"].get<int>(), 1);
+
+    auto filtered_req = authed_with_query(accountant, employee1.id);
+    HttpResponsePtr filtered;
+    ctrl.listVacations(filtered_req, [&](const HttpResponsePtr& r) { filtered = r; });
+    ASSERT_NE(filtered, nullptr);
+    auto filtered_page = json::parse(std::string(filtered->body()));
+    EXPECT_EQ(filtered_page["data"].size(), 2U);
+    EXPECT_EQ(filtered_page["total"].get<long>(), 2);
 }
 
 // ── POST /api/v1/vacations ───────────────────────────────────────────────────

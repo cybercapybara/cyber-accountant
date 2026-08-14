@@ -3400,11 +3400,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List HR orders for the caller's organization (unpaginated, optional ?employee_id filter) */
+        /** List HR orders for the caller's organization (paginated, optional ?employee_id filter) */
         get: {
             parameters: {
                 query?: {
                     employee_id?: string;
+                    limit?: number;
+                    offset?: number;
                 };
                 header?: never;
                 path?: never;
@@ -3412,7 +3414,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description HR orders */
+                /** @description HR-order page */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -3556,7 +3558,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description The merged input fails the hr_order template's JSON Schema (e.g. a required free-text field was not supplied) */
+                /** @description The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the hr_order template's JSON Schema (e.g. a required free-text field was not supplied) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -3737,7 +3739,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description The merged input fails the labor_contract template's JSON Schema (e.g. a required free-text field was not supplied) */
+                /** @description The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the labor_contract template's JSON Schema (e.g. a required free-text field was not supplied) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -3766,11 +3768,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List vacations for the caller's organization (unpaginated, optional ?employee_id filter) */
+        /** List vacations for the caller's organization (paginated, optional ?employee_id filter) */
         get: {
             parameters: {
                 query?: {
                     employee_id?: string;
+                    limit?: number;
+                    offset?: number;
                 };
                 header?: never;
                 path?: never;
@@ -3778,7 +3782,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Vacations */
+                /** @description Vacation page */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -4190,11 +4194,14 @@ export interface paths {
          * Generate the payslip document for one employee of a run (accountant/owner only)
          * @description Builds the `payslip` template input from the payslip + employee +
          *     organization, deep-merges an optional request body on top for the
-         *     fields not on file (`net_words`), creates a draft document
+         *     one field not on file (`net_words`), creates a draft document
          *     (doc_type='hr', source='generated') and enqueues a docgen.render job
-         *     — same async contract as POST /documents/generate. Amounts are
-         *     rendered with Ledger::format_tiyn ("300000.00"); override any of them
-         *     through the merge body if a different presentation is wanted.
+         *     — same async contract as POST /documents/generate. Every other field
+         *     is authoritative (the payslip's own amounts, the employee's iin/name,
+         *     the organization's bin/name) and CANNOT be overridden: any other body
+         *     key is a 422 `not_allowed_override` naming that field, checked before
+         *     the merge. Amounts are rendered with Ledger::format_tiyn
+         *     ("300000.00").
          */
         post: {
             parameters: {
@@ -4242,7 +4249,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description The merged input fails the payslip template's JSON Schema (e.g. net_words was not supplied) */
+                /** @description The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the payslip template's JSON Schema (e.g. net_words was not supplied) */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -4597,11 +4604,11 @@ export interface paths {
         put?: never;
         /**
          * Generate a ФНО filing — XML into object storage plus a printable form (accountant/owner only)
-         * @description Everything that can reject the request runs first (allowlists, the
-         *     calculation lookup, the form/calculation kind pairing, the print
-         *     template's JSON Schema over the merged `document_input`), so a
-         *     rejected request leaves no object in storage and no document row
-         *     behind. Only then is the XML written, the document created, the
+         * @description Everything that can reject the request runs first (allowlists —
+         *     including the `document_input` override allowlist — the calculation
+         *     lookup, the form/calculation kind pairing, the print template's JSON
+         *     Schema over the merged `document_input`), so a rejected request
+         *     leaves no object in storage and no document row behind. Only then is the XML written, the document created, the
          *     filing row inserted and the render job enqueued.
          *
          *     `xml_ready` and `render_queued` are both best-effort flags and may be
@@ -4645,7 +4652,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description kind is not a registered form code, calculation_id does not belong to this organization, the form does not match the calculation's kind, the stored calculation cannot be rendered as this form, or the merged document_input fails the template's JSON Schema */
+                /** @description kind is not a registered form code, calculation_id does not belong to this organization, the form does not match the calculation's kind, the stored calculation cannot be rendered as this form (including a result_snapshot missing a figure the form needs), document_input tries to override a field derived from stored data (not_allowed_override), or the merged document_input fails the template's JSON Schema */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -5586,6 +5593,9 @@ export interface components {
         };
         HrOrderListResponse: {
             data: components["schemas"]["HrOrder"][];
+            total: number;
+            limit: number;
+            offset: number;
         };
         HrOrderDetailResponse: {
             data: components["schemas"]["HrOrder"];
@@ -5606,7 +5616,7 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid */
+        /** @description Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid. ALLOWLISTED — hr_order accepts director/reason/details; labor_contract accepts salary_words/work_schedule/probation_months/employer.director/employer.address/employee.address. Anything else is rejected 422 not_allowed_override naming that field */
         GenerateHrDocumentExtra: {
             [key: string]: unknown;
         };
@@ -5669,6 +5679,9 @@ export interface components {
         };
         VacationListResponse: {
             data: components["schemas"]["Vacation"][];
+            total: number;
+            limit: number;
+            offset: number;
         };
         VacationDetailResponse: {
             data: components["schemas"]["Vacation"];
@@ -5790,7 +5803,7 @@ export interface components {
              */
             entry_id: string;
         };
-        /** @description Merged on top of the auto-derived base input before template-schema validation; `net_words` must be supplied here */
+        /** @description Merged on top of the auto-derived base input before template-schema validation. ALLOWLISTED — `net_words` is the only accepted key; anything else is rejected 422 not_allowed_override naming that field */
         PayslipDocumentExtra: {
             [key: string]: unknown;
         };
@@ -5966,7 +5979,7 @@ export interface components {
              * @description 910.00 needs a snr_simplified calculation, 300.00 a vat one (422 kind_mismatch otherwise); must belong to the caller's organization
              */
             calculation_id: string;
-            /** @description Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. Must supply what the DB cannot hold: director, accountant, tax_words (910.00) / balance_words and sales_tenge (300.00) */
+            /** @description Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. ALLOWLISTED — only the fields the database cannot hold may appear: director, accountant, tax_words (910.00); director, accountant, balance_words, sales_tenge (300.00). Any other key (the org identity, the period, or any amount taken from the calculation) is rejected 422 not_allowed_override naming that field, before the merge happens. Left open here (additionalProperties) because the accepted set depends on `kind`; the server is the authority */
             document_input?: {
                 [key: string]: unknown;
             };

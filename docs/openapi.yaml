@@ -699,13 +699,19 @@ components:
         created_at:      { type: string }
         updated_at:      { type: string }
 
+    # GET /api/v1/hr-orders is paginated (`hr_orders` grows for the life of an
+    # organization), so this is the {data, total, limit, offset} envelope every
+    # other list route in this API uses — not the bare {data} it once was.
     HrOrderListResponse:
       type: object
-      required: [data]
+      required: [data, total, limit, offset]
       properties:
         data:
           type: array
           items: { $ref: '#/components/schemas/HrOrder' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
 
     HrOrderDetailResponse:
       type: object
@@ -736,7 +742,7 @@ components:
     GenerateHrDocumentExtra:
       type: object
       additionalProperties: true
-      description: 'Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid'
+      description: 'Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid. ALLOWLISTED — hr_order accepts director/reason/details; labor_contract accepts salary_words/work_schedule/probation_months/employer.director/employer.address/employee.address. Anything else is rejected 422 not_allowed_override naming that field'
 
     # Mirrors Hr::to_json(LaborContract) in src/hr/HrDocuments.hpp.
     LaborContract:
@@ -795,13 +801,17 @@ components:
         created_at:  { type: string }
         updated_at:  { type: string }
 
+    # Paginated for the same reason as HrOrderListResponse above.
     VacationListResponse:
       type: object
-      required: [data]
+      required: [data, total, limit, offset]
       properties:
         data:
           type: array
           items: { $ref: '#/components/schemas/Vacation' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
 
     VacationDetailResponse:
       type: object
@@ -907,14 +917,16 @@ components:
         entry_id: { type: string, format: uuid, description: 'The single balanced journal entry this run was posted as' }
 
     # POST /api/v1/payroll-runs/{id}/payslips/{employee_id}/generate-document
-    # request body — every field OPTIONAL and deep-merged (RFC 7396) over the
-    # base input derived from the payslip/employee/organization. The payslip
-    # template requires `net_words` (the net amount in Russian words), which
-    # this codebase cannot derive — supply it here or the request is a 422.
+    # request body — deep-merged (RFC 7396) over the base input derived from
+    # the payslip/employee/organization. The payslip template requires
+    # `net_words` (the net amount in Russian words), which this codebase
+    # cannot derive — supply it here or the request is a 422. It is also the
+    # ONLY accepted key: every other field of that template comes from stored
+    # data, so any other key is a 422 not_allowed_override.
     PayslipDocumentExtra:
       type: object
       additionalProperties: true
-      description: 'Merged on top of the auto-derived base input before template-schema validation; `net_words` must be supplied here'
+      description: 'Merged on top of the auto-derived base input before template-schema validation. ALLOWLISTED — `net_words` is the only accepted key; anything else is rejected 422 not_allowed_override naming that field'
 
     # ── Tax (Task 12) ─────────────────────────────────────────────────────
     # Mirrors Tax::to_json(Rate) in src/tax/TaxRate.hpp.
@@ -1082,7 +1094,7 @@ components:
         document_input:
           type: object
           additionalProperties: true
-          description: 'Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. Must supply what the DB cannot hold: director, accountant, tax_words (910.00) / balance_words and sales_tenge (300.00)'
+          description: 'Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. ALLOWLISTED — only the fields the database cannot hold may appear: director, accountant, tax_words (910.00); director, accountant, balance_words, sales_tenge (300.00). Any other key (the org identity, the period, or any amount taken from the calculation) is rejected 422 not_allowed_override naming that field, before the merge happens. Left open here (additionalProperties) because the accepted set depends on `kind`; the server is the authority'
 
     # POST /api/v1/tax/filings response — both flags are best-effort.
     TaxFilingCreateResponse:
@@ -2287,14 +2299,16 @@ paths:
 
   /api/v1/hr-orders:
     get:
-      summary: List HR orders for the caller's organization (unpaginated, optional ?employee_id filter)
+      summary: List HR orders for the caller's organization (paginated, optional ?employee_id filter)
       tags: [hr]
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: employee_id, in: query, schema: { type: string, format: uuid } }
+        - { name: limit,       in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset,      in: query, schema: { type: integer, minimum: 0, default: 0 } }
       responses:
         '200':
-          description: HR orders
+          description: HR-order page
           content:
             application/json:
               schema: { $ref: '#/components/schemas/HrOrderListResponse' }
@@ -2348,7 +2362,7 @@ paths:
         '400': { description: Malformed id, or body is not a JSON object }
         '403': { description: 'No org context, or caller''s role is viewer' }
         '404': { description: Not found (including an HR order belonging to another organization) }
-        '422': { description: The merged input fails the hr_order template's JSON Schema (e.g. a required free-text field was not supplied) }
+        '422': { description: 'The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the hr_order template''s JSON Schema (e.g. a required free-text field was not supplied)' }
         '503': { description: Job queue not enabled }
 
   /api/v1/labor-contracts:
@@ -2410,19 +2424,21 @@ paths:
         '400': { description: Malformed id, or body is not a JSON object }
         '403': { description: 'No org context, or caller''s role is viewer' }
         '404': { description: Not found (including a labor contract belonging to another organization) }
-        '422': { description: The merged input fails the labor_contract template's JSON Schema (e.g. a required free-text field was not supplied) }
+        '422': { description: 'The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the labor_contract template''s JSON Schema (e.g. a required free-text field was not supplied)' }
         '503': { description: Job queue not enabled }
 
   /api/v1/vacations:
     get:
-      summary: List vacations for the caller's organization (unpaginated, optional ?employee_id filter)
+      summary: List vacations for the caller's organization (paginated, optional ?employee_id filter)
       tags: [hr]
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: employee_id, in: query, schema: { type: string, format: uuid } }
+        - { name: limit,       in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset,      in: query, schema: { type: integer, minimum: 0, default: 0 } }
       responses:
         '200':
-          description: Vacations
+          description: Vacation page
           content:
             application/json:
               schema: { $ref: '#/components/schemas/VacationListResponse' }
@@ -2560,11 +2576,14 @@ paths:
       description: |
         Builds the `payslip` template input from the payslip + employee +
         organization, deep-merges an optional request body on top for the
-        fields not on file (`net_words`), creates a draft document
+        one field not on file (`net_words`), creates a draft document
         (doc_type='hr', source='generated') and enqueues a docgen.render job
-        — same async contract as POST /documents/generate. Amounts are
-        rendered with Ledger::format_tiyn ("300000.00"); override any of them
-        through the merge body if a different presentation is wanted.
+        — same async contract as POST /documents/generate. Every other field
+        is authoritative (the payslip's own amounts, the employee's iin/name,
+        the organization's bin/name) and CANNOT be overridden: any other body
+        key is a 422 `not_allowed_override` naming that field, checked before
+        the merge. Amounts are rendered with Ledger::format_tiyn
+        ("300000.00").
       tags: [payroll]
       security: [{ BearerAuth: [] }]
       requestBody:
@@ -2581,7 +2600,7 @@ paths:
         '400': { description: 'Malformed id/employee_id, or body is not a JSON object' }
         '403': { description: 'No org context, or caller''s role is viewer' }
         '404': { description: 'No such run in this organization, or the run has no payslip for that employee' }
-        '422': { description: The merged input fails the payslip template's JSON Schema (e.g. net_words was not supplied) }
+        '422': { description: 'The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the payslip template''s JSON Schema (e.g. net_words was not supplied)' }
         '503': { description: Job queue not enabled }
 
   # ── Tax ────────────────────────────────────────────────────────────────────
@@ -2709,11 +2728,11 @@ paths:
     post:
       summary: Generate a ФНО filing — XML into object storage plus a printable form (accountant/owner only)
       description: |
-        Everything that can reject the request runs first (allowlists, the
-        calculation lookup, the form/calculation kind pairing, the print
-        template's JSON Schema over the merged `document_input`), so a
-        rejected request leaves no object in storage and no document row
-        behind. Only then is the XML written, the document created, the
+        Everything that can reject the request runs first (allowlists —
+        including the `document_input` override allowlist — the calculation
+        lookup, the form/calculation kind pairing, the print template's JSON
+        Schema over the merged `document_input`), so a rejected request
+        leaves no object in storage and no document row behind. Only then is the XML written, the document created, the
         filing row inserted and the render job enqueued.
 
         `xml_ready` and `render_queued` are both best-effort flags and may be
@@ -2735,7 +2754,7 @@ paths:
               schema: { $ref: '#/components/schemas/TaxFilingCreateResponse' }
         '400': { description: 'Validation failed (missing/wrong-type field, or a malformed calculation_id)' }
         '403': { description: 'No org context, or caller''s role is viewer' }
-        '422': { description: 'kind is not a registered form code, calculation_id does not belong to this organization, the form does not match the calculation''s kind, the stored calculation cannot be rendered as this form, or the merged document_input fails the template''s JSON Schema' }
+        '422': { description: 'kind is not a registered form code, calculation_id does not belong to this organization, the form does not match the calculation''s kind, the stored calculation cannot be rendered as this form (including a result_snapshot missing a figure the form needs), document_input tries to override a field derived from stored data (not_allowed_override), or the merged document_input fails the template''s JSON Schema' }
         '503': { description: 'Object storage is not configured, or the job queue is not enabled' }
 
   /api/v1/tax/filings/{id}:

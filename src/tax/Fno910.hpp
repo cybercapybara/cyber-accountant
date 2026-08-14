@@ -140,11 +140,24 @@ public:
      *         `CalculationKind::kSnrSimplified` — this generator is
      *         910.00-specific and would otherwise silently mislabel a
      *         different tax's figures as a СНР declaration.
+     * @throws std::invalid_argument if `calc.org_id` and `org.org_id`
+     *         disagree. Multi-tenancy is enforced by construction everywhere
+     *         else in this codebase (every query is org-scoped, org_id comes
+     *         only from the JWT claim), and it is enforced here too rather
+     *         than trusting the caller to pair the two correctly: a mismatch
+     *         means one organization's figures would be filed under another
+     *         organization's BIN and name, which must fail loudly, not
+     *         produce a document.
      */
     static std::string build_xml(const Calculation& calc, const OrgInfo& org) {
         if (calc.kind != CalculationKind::kSnrSimplified) {
             throw std::invalid_argument("Fno910::build_xml: expected Calculation.kind='" +
                                         std::string(CalculationKind::kSnrSimplified) + "', got '" + calc.kind + "'");
+        }
+        if (calc.org_id != org.org_id) {
+            throw std::invalid_argument("Fno910::build_xml: calculation belongs to organization '" + calc.org_id +
+                                        "' but the supplied OrgInfo identifies '" + org.org_id +
+                                        "' — refusing to emit a filing that mixes two organizations' data");
         }
 
         // income_tiyn/rate_bp are read defensively (default 0) — they are

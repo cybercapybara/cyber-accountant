@@ -146,11 +146,19 @@ public:
      *         `CalculationKind::kVat` — this generator is 300.00-specific
      *         and would otherwise silently mislabel a different tax's
      *         figures as a НДС declaration.
+     * @throws std::invalid_argument if `calc.org_id` and `org.org_id`
+     *         disagree — the same multi-tenancy guard Fno910::build_xml
+     *         documents at length, for the same reason.
      */
     static std::string build_xml(const Calculation& calc, const OrgInfo& org) {
         if (calc.kind != CalculationKind::kVat) {
             throw std::invalid_argument("Fno300::build_xml: expected Calculation.kind='" +
                                         std::string(CalculationKind::kVat) + "', got '" + calc.kind + "'");
+        }
+        if (calc.org_id != org.org_id) {
+            throw std::invalid_argument("Fno300::build_xml: calculation belongs to organization '" + calc.org_id +
+                                        "' but the supplied OrgInfo identifies '" + org.org_id +
+                                        "' — refusing to emit a filing that mixes two organizations' data");
         }
 
         // accrued_tiyn/deductible_tiyn are read defensively (default 0) —

@@ -51,6 +51,7 @@
 #include "repositories/UserRepository.hpp"
 #include "security/Auth.hpp"
 #include "storage/Storage.hpp"
+#include "tax/FnoXml.hpp"
 #include "tax/TaxCalculation.hpp"
 #include "tax/TaxFilingRepository.hpp"
 #include "tax/TaxService.hpp"
@@ -687,6 +688,117 @@ TEST_F(TaxFilingApiTest, FilingWithoutFreeTextFieldsUnprocessable) {
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     EXPECT_EQ(body_of(resp)["errors"][0]["code"].get<std::string>(), "schema_validation_failed");
     // Rejected BEFORE any side effect: nothing was enqueued, nothing stored.
+    EXPECT_EQ(queue_depth(), before);
+    Tax::TaxFilingRepository filings;
+    EXPECT_EQ(filings.count_in_org(org.id), 0);
+}
+
+// Final fix round (security): `document_input` is allowlisted
+// (TaxController::fno_300_allowed_extra_fields()). Without it,
+// `{"balance_tenge": "1.00"}` produced a ФНО 300.00 PDF stating a 1 ₸
+// balance while the XML stored for the SAME filing row stated the truth —
+// both downloadable from the same endpoint. The override must be rejected
+// outright, and a legitimate request must still store the REAL balance in
+// both artifacts.
+//
+// This test bites: with the allowlist removed the first request answers 202
+// and the stored document input carries "1.00".
+TEST_F(TaxFilingApiTest, FilingRejectsAuthoritativeOverrideAndKeepsTheTrueFigures) {
+    auto org = seed_org("777180000011", "Filing Override Org LLP");
+    auto accountant = member("filing-acc11@example.com", org.id, "accountant");
+    auto user = seed_user("filing-journal11@example.com");
+    post_income(org.id, user.id, "2026-02-01", "1000000.00", std::string("160000.00"));
+
+    Tax::TaxService svc;
+    auto calc = svc.calculate_vat(org.id, "2026-01-01", "2026-03-31");
+    const std::string true_balance = Ledger::format_tiyn(calc.total_tiyn < 0 ? -calc.total_tiyn : calc.total_tiyn);
+    ASSERT_NE(true_balance, "1.00");
+
+    const long before = queue_depth();
+    json malicious = fno300_extra();
+    malicious["balance_tenge"] = "1.00";
+    auto bad_req =
+        authed_json(accountant, json{{"kind", "300.00"}, {"calculation_id", calc.id}, {"document_input", malicious}});
+    HttpResponsePtr bad_resp;
+    ctrl.createFiling(bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; });
+    ASSERT_NE(bad_resp, nullptr);
+    ASSERT_EQ(bad_resp->statusCode(), k422UnprocessableEntity) << bad_resp->body();
+    auto bad_body = body_of(bad_resp);
+    EXPECT_EQ(bad_body["errors"][0]["field"].get<std::string>(), "balance_tenge");
+    EXPECT_EQ(bad_body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    // Rejected BEFORE any side effect: no filing row, nothing enqueued.
+    Tax::TaxFilingRepository filings;
+    EXPECT_EQ(filings.count_in_org(org.id), 0);
+    EXPECT_EQ(queue_depth(), before);
+
+    // A nested authoritative field is caught at its own leaf too.
+    json malicious_bin = fno300_extra();
+    malicious_bin["org"] = json{{"bin", "999999999999"}};
+    auto bin_req = authed_json(
+        accountant, json{{"kind", "300.00"}, {"calculation_id", calc.id}, {"document_input", malicious_bin}});
+    HttpResponsePtr bin_resp;
+    ctrl.createFiling(bin_req, [&](const HttpResponsePtr& r) { bin_resp = r; });
+    ASSERT_NE(bin_resp, nullptr);
+    EXPECT_EQ(bin_resp->statusCode(), k422UnprocessableEntity);
+    EXPECT_EQ(body_of(bin_resp)["errors"][0]["field"].get<std::string>(), "org.bin");
+    EXPECT_EQ(queue_depth(), before);
+
+    // The allowlisted free-text fields alone still work, and both artifacts
+    // carry the balance the calculation actually produced.
+    auto filing_id = create_filing(accountant, "300.00", calc.id, fno300_extra());
+    ASSERT_TRUE(filing_id.has_value());
+    auto filing = filings.find_in_org(*filing_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(filing);
+    ASSERT_TRUE(filing->document_id);
+    Ledger::DocumentRepository documents;
+    auto document = documents.find_in_org(*filing->document_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(document);
+    ASSERT_TRUE(document->input_snapshot);
+    const json& stored = *document->input_snapshot;
+    EXPECT_EQ(stored["balance_tenge"].get<std::string>(), true_balance);
+    EXPECT_EQ(stored["org"]["bin"].get<std::string>(), "777180000011");
+    EXPECT_EQ(stored["sales_tenge"].get<std::string>(), "1000000.00");
+
+    // The XML for the same filing agrees with the PDF input — the whole
+    // point of the allowlist is that these two can never diverge.
+    ASSERT_TRUE(filing->xml_s3_key);
+    auto xml = Storage::get().get(*filing->xml_s3_key);
+    ASSERT_TRUE(xml);
+    const std::string xml_balance = std::to_string(Tax::FnoXml::round_half_up_to_tenge(calc.total_tiyn));
+    EXPECT_NE(xml->find("<balanceTenge>" + xml_balance + "</balanceTenge>"), std::string::npos);
+    EXPECT_NE(xml->find("777180000011"), std::string::npos);
+}
+
+// Final fix round: a result_snapshot missing a figure the form needs is a
+// bug or a schema drift, never a legitimate 0 ₸ line in a filing — it fails
+// loudly, naming the key, instead of silently filing a zero.
+TEST_F(TaxFilingApiTest, FilingRefusesACalculationMissingASnapshotFigure) {
+    auto org = seed_org("777180000012", "Filing Snapshot Org LLP");
+    auto accountant = member("filing-acc12@example.com", org.id, "accountant");
+    auto user = seed_user("filing-journal12@example.com");
+    post_income(org.id, user.id, "2026-02-01", "500000.00");
+
+    Tax::TaxService svc;
+    auto calc = svc.calculate_snr(org.id, "2026-01-01", "2026-06-30");
+
+    // Simulate the drift: drop `income_tiyn` from the stored snapshot.
+    Database::get().execute_write([&](auto& txn) {
+        txn.exec_params("UPDATE tax_calculations SET result_snapshot = result_snapshot - 'income_tiyn' WHERE id = $1",
+                        calc.id);
+        return 0;
+    });
+
+    const long before = queue_depth();
+    auto req = authed_json(accountant,
+                           json{{"kind", "910.00"}, {"calculation_id", calc.id}, {"document_input", fno910_extra()}});
+    HttpResponsePtr resp;
+    ctrl.createFiling(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k422UnprocessableEntity) << resp->body();
+    auto payload = body_of(resp);
+    EXPECT_EQ(payload["errors"][0]["field"].get<std::string>(), "calculation_id");
+    EXPECT_EQ(payload["errors"][0]["code"].get<std::string>(), "incomplete_calculation");
+    EXPECT_NE(payload["errors"][0]["message"].get<std::string>().find("income_tiyn"), std::string::npos);
     EXPECT_EQ(queue_depth(), before);
     Tax::TaxFilingRepository filings;
     EXPECT_EQ(filings.count_in_org(org.id), 0);
