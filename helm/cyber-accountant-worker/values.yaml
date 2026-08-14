@@ -111,7 +111,11 @@ worker:
   # MUST include "account_email" (transactional confirm/reset/change-email) and
   # "email.send" (generic ad-hoc email) — a worker that only drains "default"
   # silently leaves those jobs to pile up in Redis and no mail is ever sent.
-  types: "account_email,email.send,webhook.deliver"
+  # "docgen.render" (src/docgen/RenderJob.hpp) needs the worker IMAGE built
+  # from the worker-runtime Dockerfile stage (TeX Live) — a deployment
+  # pointed at an image without it would dead-letter every docgen job on
+  # first XeLaTeX invocation.
+  types: "account_email,email.send,webhook.deliver,docgen.render"
   concurrency: 2
   healthPort: 9091
   brpopTimeout: 5

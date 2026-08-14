@@ -32,7 +32,7 @@ cyber-accountant-worker:
   app:
     baseUrl: https://app.stage.example.com
   worker:
-    types: account_email,email.send,webhook.deliver
+    types: account_email,email.send,webhook.deliver,docgen.render
 
 # Stage exposes the dev mailbox + traces (same as demo) for QA walkthroughs.
 jaeger:
