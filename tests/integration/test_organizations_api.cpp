@@ -145,6 +145,59 @@ TEST_F(OrganizationsApiTest, AdminCreatesOrganization) {
     EXPECT_EQ(found->bin, "111240000001");
 }
 
+// Regression for the "org creator becomes its owner" hotfix: an admin who
+// provisions a tenant must land in org_members as "owner" for it, or they're
+// stuck outside the org they just created — unable to reach any of the
+// owner-gated member-management routes for it. Checks both surfaces a
+// frontend would use to notice: GET /orgs/mine (role annotation) and
+// GET /orgs/{id}/members (roster), the latter exercised via the same
+// admin-fallback path require_admin_or_org_owner() falls back to.
+TEST_F(OrganizationsApiTest, AdminCreatingOrgBecomesOwner) {
+    auto admin = seed_user("owner-admin@example.com", "Administrator");
+    auto req = authed_json(admin.principal, {{"bin", "111240000012"}, {"name", "Newly Owned LLP"}});
+    HttpResponsePtr create_resp;
+    orgs_ctrl.createOrganization(req, [&](const HttpResponsePtr& r) { create_resp = r; });
+    ASSERT_NE(create_resp, nullptr);
+    ASSERT_EQ(create_resp->statusCode(), k201Created);
+    auto create_body = json::parse(std::string(create_resp->body()));
+    const std::string org_id = create_body["data"]["id"].get<std::string>();
+
+    // The membership row exists directly.
+    Tenancy::OrgMemberRepository members;
+    auto membership = members.find_membership(org_id, admin.user.id);
+    ASSERT_TRUE(membership.has_value());
+    EXPECT_EQ(membership->role, "owner");
+
+    // GET /orgs/mine surfaces it with the right role.
+    HttpResponsePtr mine_resp;
+    orgs_ctrl.mine(authed(admin.principal), [&](const HttpResponsePtr& r) { mine_resp = r; });
+    ASSERT_NE(mine_resp, nullptr);
+    ASSERT_EQ(mine_resp->statusCode(), k200OK);
+    auto mine_body = json::parse(std::string(mine_resp->body()));
+    ASSERT_TRUE(mine_body["data"].is_array());
+    bool found_in_mine = false;
+    for (const auto& item : mine_body["data"]) {
+        if (item["id"].get<std::string>() == org_id) {
+            EXPECT_EQ(item["role"].get<std::string>(), "owner");
+            found_in_mine = true;
+        }
+    }
+    EXPECT_TRUE(found_in_mine);
+
+    // GET /orgs/{id}/members shows the admin as owner of the org they made
+    // (admin-fallback path, since the admin never switched into this org).
+    HttpResponsePtr roster_resp;
+    orgs_ctrl.listMembers(
+        authed(admin.principal), [&](const HttpResponsePtr& r) { roster_resp = r; }, org_id);
+    ASSERT_NE(roster_resp, nullptr);
+    ASSERT_EQ(roster_resp->statusCode(), k200OK);
+    auto roster_body = json::parse(std::string(roster_resp->body()));
+    ASSERT_TRUE(roster_body["data"].is_array());
+    ASSERT_EQ(roster_body["data"].size(), 1U);
+    EXPECT_EQ(roster_body["data"][0]["user_id"].get<std::string>(), admin.user.id);
+    EXPECT_EQ(roster_body["data"][0]["role"].get<std::string>(), "owner");
+}
+
 TEST_F(OrganizationsApiTest, NonAdminCannotCreate) {
     auto user = seed_user("user@example.com", "User");
     auto req = authed_json(user.principal, {{"bin", "111240000002"}, {"name", "Nope LLP"}});
