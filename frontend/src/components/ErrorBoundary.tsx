@@ -40,12 +40,12 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="container mx-auto max-w-md py-8 space-y-4">
           <Alert variant="destructive">
-            <AlertTitle>Something went wrong</AlertTitle>
+            <AlertTitle>Что-то пошло не так</AlertTitle>
             <AlertDescription>
-              The page hit an unexpected error. Reloading usually fixes it.
+              На странице произошла непредвиденная ошибка. Обычно помогает перезагрузка страницы.
             </AlertDescription>
           </Alert>
-          <Button onClick={() => window.location.reload()}>Reload the page</Button>
+          <Button onClick={() => window.location.reload()}>Перезагрузить страницу</Button>
         </div>
       );
     }

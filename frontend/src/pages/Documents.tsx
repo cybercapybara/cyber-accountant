@@ -4,7 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { DataTable, type Column } from '@/components/DataTable';
+import { PageHeader } from '@/components/PageHeader';
 import { PaginationFooter } from '@/components/PaginationFooter';
+import { StatusBadge, type BadgeTone } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -93,34 +95,17 @@ const SOURCE_LABELS: Record<string, string> = {
 const FOCUS_POLL_INTERVAL_MS = 2000;
 const FOCUS_POLL_TIMEOUT_MS = 120_000;
 
-// Thin-bordered, low-chroma badges — same palette family as Journal's
-// StatusBadge (pages/Journal.tsx) and admin/Jobs.tsx's, so a document's
+// Shared StatusBadge tone family (DESIGN.md §5) — a document's
 // "draft/final/sent/…" pill reads the same as any other status pill in the app.
-const STATUS_STYLES: Record<string, string> = {
-  draft:
-    'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
-  final:
-    'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300',
-  sent: 'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300',
-  recognized:
-    'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300',
-  linked:
-    'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300',
-  inbox:
-    'border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-500/30 dark:bg-slate-500/10 dark:text-slate-300',
-  archived:
-    'border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-500/30 dark:bg-slate-500/10 dark:text-slate-300',
+const STATUS_TONE: Record<string, BadgeTone> = {
+  draft: 'warning',
+  final: 'success',
+  sent: 'info',
+  recognized: 'info',
+  linked: 'info',
+  inbox: 'neutral',
+  archived: 'neutral',
 };
-
-function Badge({ text, className }: { text: string; className?: string }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium ${className ?? 'border-border bg-muted text-muted-foreground'}`}
-    >
-      {text}
-    </span>
-  );
-}
 
 function formatDate(iso: string): string {
   const d = new Date(iso);
@@ -221,7 +206,7 @@ export function DocumentsPage() {
         body: vars.file,
       });
       if (!putResponse.ok) {
-        throw new Error(`Upload to storage failed: HTTP ${putResponse.status}`);
+        throw new Error(`Не удалось загрузить файл в хранилище: HTTP ${putResponse.status}`);
       }
       const checksum_sha256 = await sha256Hex(vars.file);
       return api.postJson<DocumentDetailResponse>(
@@ -258,12 +243,15 @@ export function DocumentsPage() {
   const columns: Column<Document>[] = [
     {
       header: 'Тип',
-      cell: (d) => <Badge text={DOC_TYPE_LABELS[d.doc_type] ?? d.doc_type} />,
+      cell: (d) => <StatusBadge label={DOC_TYPE_LABELS[d.doc_type] ?? d.doc_type} />,
     },
     {
       header: 'Статус',
       cell: (d) => (
-        <Badge text={STATUS_LABELS[d.status] ?? d.status} className={STATUS_STYLES[d.status]} />
+        <StatusBadge
+          label={STATUS_LABELS[d.status] ?? d.status}
+          tone={STATUS_TONE[d.status] ?? 'neutral'}
+        />
       ),
     },
     { header: 'Контрагент', cell: (d) => counterpartyName(d.counterparty_id) },
@@ -297,22 +285,20 @@ export function DocumentsPage() {
 
   return (
     <div className="container mx-auto max-w-6xl py-8 space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">Документы</h1>
-          <p className="text-sm text-muted-foreground">
-            Сгенерированные и загруженные документы организации.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setUploading((v) => !v)}>
-            {uploading ? 'Закрыть' : 'Загрузить'}
-          </Button>
-          <Button asChild>
-            <Link to="/documents/generate">Создать документ</Link>
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Документы"
+        description="Сгенерированные и загруженные документы организации."
+        actions={
+          <>
+            <Button variant="outline" onClick={() => setUploading((v) => !v)}>
+              {uploading ? 'Закрыть' : 'Загрузить'}
+            </Button>
+            <Button asChild>
+              <Link to="/documents/generate">Создать документ</Link>
+            </Button>
+          </>
+        }
+      />
 
       {focusId && (
         <FocusedDocumentAlert id={focusId} queuedFailed={queuedFailed} onDismiss={clearFocus} />
@@ -531,9 +517,9 @@ function FocusedDocumentAlert({
             <>
               <p>
                 {DOC_TYPE_LABELS[doc.doc_type] ?? doc.doc_type} — статус:{' '}
-                <Badge
-                  text={STATUS_LABELS[doc.status] ?? doc.status}
-                  className={STATUS_STYLES[doc.status]}
+                <StatusBadge
+                  label={STATUS_LABELS[doc.status] ?? doc.status}
+                  tone={STATUS_TONE[doc.status] ?? 'neutral'}
                 />
               </p>
               {queuedFailed && doc.status === 'draft' && (

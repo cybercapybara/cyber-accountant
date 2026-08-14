@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 
 import { DataTable, type Column } from '@/components/DataTable';
 import { FormField } from '@/components/FormField';
+import { PageHeader } from '@/components/PageHeader';
 import { PaginationFooter } from '@/components/PaginationFooter';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -58,7 +59,7 @@ export function CounterpartiesPage() {
       invalidate: [qk.counterparties.all()],
       onSuccess: () => {
         setCreating(false);
-        toast.success('Counterparty created.');
+        toast.success('Контрагент создан.');
       },
     },
   );
@@ -73,7 +74,7 @@ export function CounterpartiesPage() {
       invalidate: [qk.counterparties.all()],
       onSuccess: () => {
         setEditingId(null);
-        toast.success('Counterparty updated.');
+        toast.success('Контрагент обновлён.');
       },
     },
   );
@@ -82,17 +83,17 @@ export function CounterpartiesPage() {
   const editingRow = editingId ? data?.data.find((c) => c.id === editingId) : undefined;
 
   const columns: Column<Counterparty>[] = [
-    { header: 'Name', className: 'font-medium', cell: (c) => c.name },
-    { header: 'Identifier', className: 'font-mono', cell: (c) => c.identifier },
+    { header: 'Название', className: 'font-medium', cell: (c) => c.name },
+    { header: 'БИН/ИИН', className: 'font-mono', cell: (c) => c.identifier },
     {
-      header: 'VAT payer',
+      header: 'Плательщик НДС',
       cell: (c) => (
-        <span aria-label={c.vat_payer ? 'VAT payer' : 'Not a VAT payer'}>
+        <span aria-label={c.vat_payer ? 'Плательщик НДС' : 'Не плательщик НДС'}>
           <span aria-hidden="true">{c.vat_payer ? '✓' : '—'}</span>
         </span>
       ),
     },
-    { header: 'IIK', className: 'font-mono', cell: (c) => c.iik || '—' },
+    { header: 'ИИК', className: 'font-mono', cell: (c) => c.iik || '—' },
     {
       header: '',
       className: 'text-right',
@@ -105,7 +106,7 @@ export function CounterpartiesPage() {
             setEditingId(c.id);
           }}
         >
-          Edit
+          Изменить
         </Button>
       ),
     },
@@ -113,25 +114,21 @@ export function CounterpartiesPage() {
 
   return (
     <div className="container mx-auto max-w-4xl py-8 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Counterparties</h1>
-        <p className="text-sm text-muted-foreground">
-          Suppliers, customers, and other parties your organization deals with.
-        </p>
-      </div>
+      <PageHeader
+        title="Контрагенты"
+        description="Поставщики, покупатели и другие стороны сделок вашей организации."
+      />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>
-            {data ? `${data.total} counterpart${data.total === 1 ? 'y' : 'ies'}` : 'Counterparties'}
-          </CardTitle>
+          <CardTitle>{data ? `Контрагентов: ${data.total}` : 'Контрагенты'}</CardTitle>
           <Button
             onClick={() => {
               setEditingId(null);
               setCreating(true);
             }}
           >
-            New counterparty
+            Новый контрагент
           </Button>
         </CardHeader>
         <CardContent className="overflow-x-auto">
@@ -141,7 +138,7 @@ export function CounterpartiesPage() {
             rowKey={(c) => c.id}
             isLoading={isLoading}
             error={error}
-            emptyText="No counterparties yet."
+            emptyText="Контрагентов пока нет."
             isPlaceholder={isPlaceholderData}
           />
           {data && (
@@ -169,7 +166,7 @@ export function CounterpartiesPage() {
               submitting={update.isPending}
               onSubmit={(values) => update.mutate({ id: editingRow.id, values })}
               onCancel={() => setEditingId(null)}
-              submitLabel="Save changes"
+              submitLabel="Сохранить изменения"
             />
           </CardContent>
         )}
@@ -183,7 +180,7 @@ function CounterpartyForm({
   submitting,
   onSubmit,
   onCancel,
-  submitLabel = 'Create counterparty',
+  submitLabel = 'Создать контрагента',
 }: {
   defaultValues?: Counterparty;
   submitting: boolean;
@@ -215,24 +212,29 @@ function CounterpartyForm({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <FormField
           id="cp-identifier"
-          label="БИН/ИИН (12 digits)"
+          label="БИН/ИИН (12 цифр)"
           inputMode="numeric"
           maxLength={12}
           error={errors.identifier?.message}
           {...register('identifier')}
         />
-        <FormField id="cp-name" label="Name" error={errors.name?.message} {...register('name')} />
+        <FormField
+          id="cp-name"
+          label="Название"
+          error={errors.name?.message}
+          {...register('name')}
+        />
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <FormField
           id="cp-address"
-          label="Address"
+          label="Адрес"
           error={errors.address?.message}
           {...register('address')}
         />
         <FormField
           id="cp-contact-email"
-          label="Contact email"
+          label="Email для связи"
           type="email"
           error={errors.contact_email?.message}
           {...register('contact_email')}
@@ -241,29 +243,29 @@ function CounterpartyForm({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <FormField
           id="cp-iik"
-          label="IIK (IBAN)"
+          label="ИИК (IBAN)"
           error={errors.iik?.message}
           {...register('iik')}
         />
-        <FormField id="cp-bik" label="BIK" error={errors.bik?.message} {...register('bik')} />
-        <FormField id="cp-kbe" label="KBE" error={errors.kbe?.message} {...register('kbe')} />
+        <FormField id="cp-bik" label="БИК" error={errors.bik?.message} {...register('bik')} />
+        <FormField id="cp-kbe" label="КБЕ" error={errors.kbe?.message} {...register('kbe')} />
       </div>
       <div className="flex flex-wrap gap-6">
         <div className="flex items-center gap-2">
           <input id="cp-is-resident" type="checkbox" {...register('is_resident')} />
-          <Label htmlFor="cp-is-resident">Resident</Label>
+          <Label htmlFor="cp-is-resident">Резидент</Label>
         </div>
         <div className="flex items-center gap-2">
           <input id="cp-vat-payer" type="checkbox" {...register('vat_payer')} />
-          <Label htmlFor="cp-vat-payer">VAT payer</Label>
+          <Label htmlFor="cp-vat-payer">Плательщик НДС</Label>
         </div>
       </div>
       <div className="flex gap-2">
         <Button type="submit" disabled={submitting}>
-          {submitting ? 'Saving…' : submitLabel}
+          {submitting ? 'Сохранение…' : submitLabel}
         </Button>
         <Button type="button" variant="ghost" onClick={onCancel}>
-          Cancel
+          Отмена
         </Button>
       </div>
     </form>

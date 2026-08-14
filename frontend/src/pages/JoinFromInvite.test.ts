@@ -63,7 +63,7 @@ describe('submitJoinFromInvite', () => {
     const result = await submitJoinFromInvite('tok', 'hunter2pw');
     expect(result).toEqual({
       ok: false,
-      error: 'This invitation link is invalid or has expired.',
+      error: 'Эта ссылка-приглашение недействительна или истёк её срок.',
     });
   });
 });

@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
 import { FormField } from '@/components/FormField';
+import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -125,13 +126,10 @@ export function GenerateDocumentPage() {
 
   return (
     <div className="container mx-auto max-w-4xl py-8 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Создать документ</h1>
-        <p className="text-sm text-muted-foreground">
-          Выберите шаблон и заполните форму. Рендер выполняется в фоне — после отправки вы увидите
-          статус документа на странице «Документы».
-        </p>
-      </div>
+      <PageHeader
+        title="Создать документ"
+        description="Выберите шаблон и заполните форму. Рендер выполняется в фоне — после отправки вы увидите статус документа на странице «Документы»."
+      />
 
       <Card>
         <CardHeader>

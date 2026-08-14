@@ -129,8 +129,9 @@ type PathsWith<M extends HttpMethod> = {
 }[keyof paths];
 
 /** The operation object for (path, method). */
-type Op<P extends keyof paths, M extends HttpMethod> =
-  M extends keyof paths[P] ? paths[P][M] : never;
+type Op<P extends keyof paths, M extends HttpMethod> = M extends keyof paths[P]
+  ? paths[P][M]
+  : never;
 
 /** Pluck the application/json content from a `{ content: {...} }` wrapper. */
 type JsonContent<T> = T extends { content: { 'application/json': infer J } } ? J : never;
@@ -332,7 +333,7 @@ async function request<T>(
     // fetch() rejected: DNS failure, connection refused, offline…
     // Surface it through the same { error } channel instead of an
     // unhandled rejection in every call site.
-    return { error: new ApiClientError({ status: 0, message: 'Network error' }) };
+    return { error: new ApiClientError({ status: 0, message: 'Ошибка сети' }) };
   }
 
   const text = await response.text();
@@ -433,7 +434,7 @@ export const api: ApiSurface = {
   deleteJson: (path: string, opts?: RequestOptions) => fetchJson('DELETE', path, opts),
 } as ApiSurface;
 
-export function apiErrorMessage(error: unknown, fallback = 'Something went wrong'): string {
+export function apiErrorMessage(error: unknown, fallback = 'Что-то пошло не так.'): string {
   if (typeof error === 'object' && error !== null) {
     const e = error as Partial<ApiError>;
     // Surface field-level validation details when the backend sent them —

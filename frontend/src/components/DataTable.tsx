@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 
-import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/EmptyState';
+import { ErrorState } from '@/components/ErrorState';
+import { LoadingTableRows } from '@/components/LoadingTable';
 import { apiErrorMessage } from '@/lib/api/client';
 
 /**
@@ -36,11 +38,11 @@ export function DataTable<Row>({
   rowKey,
   isLoading,
   error,
-  emptyText = 'Nothing here yet.',
+  emptyText = 'Данных пока нет.',
   isPlaceholder,
   rowProps,
 }: DataTableProps<Row>) {
-  if (error) return <p className="text-destructive">{apiErrorMessage(error, 'Failed to load.')}</p>;
+  if (error) return <ErrorState message={apiErrorMessage(error, 'Не удалось загрузить данные.')} />;
   // Initial load (rows still undefined) renders skeleton rows so the header
   // and layout are stable from the first paint; pagination keeps the dimmed
   // previous-page placeholder (isPlaceholder) instead.
@@ -57,21 +59,13 @@ export function DataTable<Row>({
           </tr>
         </thead>
         <tbody>
-          {Array.from({ length: 5 }).map((_, r) => (
-            <tr key={r} className="border-b border-border last:border-0">
-              {columns.map((_, i) => (
-                <td key={i} className="py-1.5 pr-4">
-                  <Skeleton className="h-4 w-full" />
-                </td>
-              ))}
-            </tr>
-          ))}
+          <LoadingTableRows columns={columns.length} rows={5} />
         </tbody>
       </table>
     );
   }
   if (!rows) return null;
-  if (rows.length === 0) return <p className="text-muted-foreground">{emptyText}</p>;
+  if (rows.length === 0) return <EmptyState title={emptyText} />;
 
   return (
     <table className={`w-full text-sm ${isPlaceholder ? 'opacity-50' : ''}`}>

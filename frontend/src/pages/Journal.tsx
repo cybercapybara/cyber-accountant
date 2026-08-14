@@ -6,7 +6,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type Column } from '@/components/DataTable';
 import { FormField } from '@/components/FormField';
+import { Money } from '@/components/Money';
+import { PageHeader } from '@/components/PageHeader';
 import { PaginationFooter } from '@/components/PaginationFooter';
+import { StatusBadge, type BadgeTone } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -26,33 +29,19 @@ import type {
   JournalEntryDetailResponse,
   JournalEntryListResponse,
 } from '@/lib/api/types';
-import { formatTiyn, toTiyn } from '@/lib/money';
+import { toTiyn } from '@/lib/money';
 import { journalEntrySchema, type JournalEntryValues } from '@/lib/schemas/journal';
 
 const PER_PAGE = 20;
 const ACCOUNT_TYPES: Account['type'][] = ['asset', 'liability', 'equity', 'income', 'expense'];
 
-// Thin-bordered, low-chroma badges — same palette family as StatusBadge in
-// pages/admin/Jobs.tsx, so a "draft/posted/reversed" pill reads the same as
-// a "pending/completed/failed" one elsewhere in the app.
-const STATUS_STYLES: Record<JournalEntry['status'], string> = {
-  draft:
-    'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
-  posted:
-    'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300',
-  reversed:
-    'border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-500/30 dark:bg-slate-500/10 dark:text-slate-300',
+// Shared StatusBadge tone family (DESIGN.md §5) — a "draft/posted/reversed"
+// pill reads the same as a "pending/completed/failed" one elsewhere in the app.
+const JOURNAL_STATUS: Record<JournalEntry['status'], { label: string; tone: BadgeTone }> = {
+  draft: { label: 'Черновик', tone: 'warning' },
+  posted: { label: 'Проведено', tone: 'success' },
+  reversed: { label: 'Сторно', tone: 'neutral' },
 };
-
-function StatusBadge({ status }: { status: JournalEntry['status'] }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium capitalize ${STATUS_STYLES[status] ?? ''}`}
-    >
-      {status}
-    </span>
-  );
-}
 
 /**
  * The list endpoint (GET /api/v1/journal-entries) returns header rows with
@@ -75,7 +64,7 @@ function DebitTotalCell({ id }: { id: string }) {
   const tiyn = q.data.data.lines
     .filter((l) => l.side === 'debit')
     .reduce((acc, l) => acc + toTiyn(l.amount), 0);
-  return <span className="font-mono">{formatTiyn(tiyn)}</span>;
+  return <Money tiyn={tiyn} />;
 }
 
 function LineCountCell({ id }: { id: string }) {
@@ -179,15 +168,21 @@ export function JournalPage() {
   useErrorToast(reverseEntry.error);
 
   const columns: Column<JournalEntry>[] = [
-    { header: 'Date', className: 'whitespace-nowrap', cell: (e) => e.entry_date },
-    { header: 'Description', cell: (e) => e.description },
-    { header: 'Status', cell: (e) => <StatusBadge status={e.status} /> },
+    { header: 'Дата', className: 'whitespace-nowrap', cell: (e) => e.entry_date },
+    { header: 'Описание', cell: (e) => e.description },
     {
-      header: 'Σ Debit',
+      header: 'Статус',
+      cell: (e) => {
+        const s = JOURNAL_STATUS[e.status];
+        return <StatusBadge label={s.label} tone={s.tone} />;
+      },
+    },
+    {
+      header: 'Σ Дебет',
       className: 'text-right',
       cell: (e) => <DebitTotalCell id={e.id} />,
     },
-    { header: 'Lines', className: 'text-right', cell: (e) => <LineCountCell id={e.id} /> },
+    { header: 'Строк', className: 'text-right', cell: (e) => <LineCountCell id={e.id} /> },
     {
       header: '',
       className: 'text-right',
@@ -232,12 +227,10 @@ export function JournalPage() {
 
   return (
     <div className="container mx-auto max-w-5xl py-8 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Journal</h1>
-        <p className="text-sm text-muted-foreground">
-          Double-entry journal entries — draft, post, and storno.
-        </p>
-      </div>
+      <PageHeader
+        title="Журнал проводок"
+        description="Двойная запись — черновик, проведение и сторнирование."
+      />
 
       <Card>
         <CardContent className="pt-6">
@@ -249,7 +242,7 @@ export function JournalPage() {
             }}
           >
             <div className="space-y-1">
-              <Label htmlFor="f-from">From</Label>
+              <Label htmlFor="f-from">С даты</Label>
               <Input
                 id="f-from"
                 type="date"
@@ -258,7 +251,7 @@ export function JournalPage() {
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="f-to">To</Label>
+              <Label htmlFor="f-to">По дату</Label>
               <Input
                 id="f-to"
                 type="date"
@@ -267,13 +260,13 @@ export function JournalPage() {
               />
             </div>
             <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-2">
-              <Button type="submit">Apply</Button>
+              <Button type="submit">Применить</Button>
               <Button type="button" variant="ghost" onClick={clearFilters}>
-                Clear
+                Сбросить
               </Button>
               {data && (
                 <span className="ml-auto self-center text-sm text-muted-foreground">
-                  {data.total} total
+                  Всего: {data.total}
                 </span>
               )}
             </div>
@@ -283,9 +276,9 @@ export function JournalPage() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Entries</CardTitle>
+          <CardTitle>Проводки</CardTitle>
           <Button onClick={() => setCreating((c) => !c)}>
-            {creating ? 'Close' : 'New draft entry'}
+            {creating ? 'Закрыть' : 'Новая проводка'}
           </Button>
         </CardHeader>
         <CardContent className="overflow-x-auto">
@@ -295,7 +288,7 @@ export function JournalPage() {
             rowKey={(e) => e.id}
             isLoading={isLoading}
             error={error}
-            emptyText="No journal entries match these filters."
+            emptyText="Проводок, соответствующих фильтрам, не найдено."
             isPlaceholder={isPlaceholderData}
           />
           {data && (
@@ -320,11 +313,11 @@ export function JournalPage() {
 
       {confirmAction && (
         <ConfirmDialog
-          title={confirmAction.action === 'post' ? 'Провести draft entry' : 'Сторно posted entry'}
+          title={confirmAction.action === 'post' ? 'Провести черновик' : 'Сторнировать проводку'}
           description={
             confirmAction.action === 'post'
-              ? `Post "${confirmAction.entry.description}" (${confirmAction.entry.entry_date})? Posted entries can no longer be edited.`
-              : `Reverse "${confirmAction.entry.description}" (${confirmAction.entry.entry_date})? This creates a new, already-posted storno entry with sides flipped.`
+              ? `Провести «${confirmAction.entry.description}» (${confirmAction.entry.entry_date})? Проведённые проводки больше нельзя редактировать.`
+              : `Сторнировать «${confirmAction.entry.description}» (${confirmAction.entry.entry_date})? Будет создана новая, уже проведённая сторно-проводка с обратными сторонами.`
           }
           confirmLabel={confirmAction.action === 'post' ? 'Провести' : 'Сторно'}
           destructive={confirmAction.action === 'reverse'}
@@ -430,14 +423,14 @@ function JournalEntryForm({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <FormField
           id="je-date"
-          label="Date"
+          label="Дата"
           type="date"
           error={errors.entry_date?.message}
           {...register('entry_date')}
         />
         <FormField
           id="je-description"
-          label="Description"
+          label="Описание"
           error={errors.description?.message}
           {...register('description')}
         />
@@ -445,9 +438,9 @@ function JournalEntryForm({
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <Label>Lines</Label>
+          <Label>Строки</Label>
           <Button type="button" size="sm" variant="outline" onClick={() => append(EMPTY_LINE)}>
-            Add line
+            Добавить строку
           </Button>
         </div>
 
@@ -457,14 +450,14 @@ function JournalEntryForm({
             className="grid grid-cols-1 gap-2 rounded-md border border-border p-3 sm:grid-cols-[2fr_1fr_1fr_1.5fr_auto] sm:items-start"
           >
             <div className="space-y-1">
-              <Label htmlFor={`je-account-${index}`}>Account</Label>
+              <Label htmlFor={`je-account-${index}`}>Счёт</Label>
               <select
                 id={`je-account-${index}`}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 disabled={accountsQ.isLoading}
                 {...register(`lines.${index}.account_code`)}
               >
-                <option value="">{accountsQ.isLoading ? 'Loading…' : 'Select account…'}</option>
+                <option value="">{accountsQ.isLoading ? 'Загрузка…' : 'Выберите счёт…'}</option>
                 {ACCOUNT_TYPES.map((type) =>
                   accountsByType[type].length > 0 ? (
                     <optgroup key={type} label={type}>
@@ -485,20 +478,20 @@ function JournalEntryForm({
             </div>
 
             <div className="space-y-1">
-              <Label htmlFor={`je-side-${index}`}>Side</Label>
+              <Label htmlFor={`je-side-${index}`}>Сторона</Label>
               <select
                 id={`je-side-${index}`}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 {...register(`lines.${index}.side`)}
               >
-                <option value="debit">Debit</option>
-                <option value="credit">Credit</option>
+                <option value="debit">Дебет</option>
+                <option value="credit">Кредит</option>
               </select>
             </div>
 
             <FormField
               id={`je-amount-${index}`}
-              label="Amount"
+              label="Сумма"
               inputMode="decimal"
               placeholder="0.00"
               error={errors.lines?.[index]?.amount?.message}
@@ -506,7 +499,7 @@ function JournalEntryForm({
             />
 
             <div className="space-y-1">
-              <Label htmlFor={`je-cp-${index}`}>Counterparty</Label>
+              <Label htmlFor={`je-cp-${index}`}>Контрагент</Label>
               <select
                 id={`je-cp-${index}`}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -529,7 +522,7 @@ function JournalEntryForm({
               disabled={fields.length <= 2}
               onClick={() => remove(index)}
             >
-              Remove
+              Удалить
             </Button>
           </div>
         ))}
@@ -549,29 +542,29 @@ function JournalEntryForm({
       >
         <div className="flex flex-wrap gap-4">
           <span>
-            Σ Debit: <strong className="font-mono">{formatTiyn(debitTiyn)}</strong>
+            Σ Дебет: <Money tiyn={debitTiyn} className="font-semibold" />
           </span>
           <span>
-            Σ Credit: <strong className="font-mono">{formatTiyn(creditTiyn)}</strong>
+            Σ Кредит: <Money tiyn={creditTiyn} className="font-semibold" />
           </span>
           <span>
-            Difference: <strong className="font-mono">{formatTiyn(debitTiyn - creditTiyn)}</strong>
+            Разница: <Money tiyn={debitTiyn - creditTiyn} className="font-semibold" />
           </span>
         </div>
         {!balanced && (
           <p className="mt-1 text-muted-foreground">
-            Debit and credit totals must match (and be greater than zero) before this entry can be
-            saved.
+            Суммы дебета и кредита должны совпадать (и быть больше нуля), прежде чем проводку можно
+            будет сохранить.
           </p>
         )}
       </div>
 
       <div className="flex gap-2">
         <Button type="submit" disabled={submitting || !balanced}>
-          {submitting ? 'Saving…' : 'Create draft entry'}
+          {submitting ? 'Сохранение…' : 'Создать черновик проводки'}
         </Button>
         <Button type="button" variant="ghost" onClick={onCancel}>
-          Cancel
+          Отмена
         </Button>
       </div>
     </form>

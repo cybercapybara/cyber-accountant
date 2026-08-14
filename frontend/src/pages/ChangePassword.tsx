@@ -33,7 +33,7 @@ export function ChangePasswordPage() {
     {
       onSuccess: () => {
         reset();
-        toast.success('Password updated.');
+        toast.success('Пароль обновлён.');
       },
     },
   );
@@ -45,33 +45,33 @@ export function ChangePasswordPage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Change password</CardTitle>
+          <CardTitle>Смена пароля</CardTitle>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={onSubmit}>
             <FormField
               id="old_password"
               type="password"
-              label="Current password"
+              label="Текущий пароль"
               error={errors.old_password?.message}
               {...register('old_password')}
             />
             <FormField
               id="new_password"
               type="password"
-              label="New password"
+              label="Новый пароль"
               error={errors.new_password?.message}
               {...register('new_password')}
             />
             <FormField
               id="new_password_confirm"
               type="password"
-              label="Confirm new password"
+              label="Подтверждение нового пароля"
               error={errors.new_password_confirm?.message}
               {...register('new_password_confirm')}
             />
             <Button type="submit" className="w-full" disabled={isSubmitting || change.isPending}>
-              Update password
+              Обновить пароль
             </Button>
           </form>
         </CardContent>

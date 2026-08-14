@@ -4,6 +4,7 @@ import { Trash2, Pencil } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type Column } from '@/components/DataTable';
+import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -57,19 +58,19 @@ export function AdminRolesPage() {
   useErrorToast(create.error ?? update.error ?? remove.error);
 
   const columns: Column<Role>[] = [
-    { header: 'Name', className: 'font-medium', cell: (r) => r.name },
+    { header: 'Название', className: 'font-medium', cell: (r) => r.name },
     {
-      header: 'Permissions',
+      header: 'Права',
       className: 'font-mono',
       cell: (r) =>
         r.permissions === ADMIN_ALL_BITS
-          ? `0x${ADMIN_ALL_BITS.toString(16)} (all)`
+          ? `0x${ADMIN_ALL_BITS.toString(16)} (все)`
           : `0x${r.permissions.toString(16)}`,
     },
     {
-      header: 'Default?',
+      header: 'По умолчанию?',
       cell: (r) => (
-        <span aria-label={r.is_default ? 'Default role' : 'Not default'}>
+        <span aria-label={r.is_default ? 'Роль по умолчанию' : 'Не по умолчанию'}>
           <span aria-hidden="true">{r.is_default ? '✓' : '—'}</span>
         </span>
       ),
@@ -79,14 +80,20 @@ export function AdminRolesPage() {
       className: 'text-right space-x-1',
       cell: (r) => (
         <>
-          <Button size="sm" variant="ghost" onClick={() => setEditing(r)}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setEditing(r)}
+            aria-label={`Изменить роль ${r.name}`}
+          >
             <Pencil className="h-3.5 w-3.5" />
           </Button>
           <Button
             size="sm"
             variant="ghost"
             disabled={r.is_default}
-            title={r.is_default ? 'Default role cannot be deleted' : ''}
+            title={r.is_default ? 'Роль по умолчанию нельзя удалить' : ''}
+            aria-label={`Удалить роль ${r.name}`}
             onClick={() => setDeleting(r)}
           >
             <Trash2 className="h-3.5 w-3.5 text-destructive" />
@@ -98,24 +105,26 @@ export function AdminRolesPage() {
 
   return (
     <div className="container mx-auto max-w-4xl py-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Roles</h1>
-          <p className="text-sm text-muted-foreground">
-            Permission bits map to <code>Domain::Permission::k*</code> on the backend.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button asChild variant="ghost">
-            <Link to="/admin">← Admin</Link>
-          </Button>
-          <Button onClick={() => setCreating(true)}>New role</Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Роли"
+        description={
+          <>
+            Биты прав соответствуют <code>Domain::Permission::k*</code> на бэкенде.
+          </>
+        }
+        actions={
+          <>
+            <Button asChild variant="ghost">
+              <Link to="/admin">← Администрирование</Link>
+            </Button>
+            <Button onClick={() => setCreating(true)}>Новая роль</Button>
+          </>
+        }
+      />
 
       <Card>
         <CardHeader>
-          <CardTitle>{rolesQ.data ? `${rolesQ.data.data.length} role(s)` : 'Loading…'}</CardTitle>
+          <CardTitle>{rolesQ.data ? `Ролей: ${rolesQ.data.data.length}` : 'Загрузка…'}</CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
           <DataTable
@@ -124,7 +133,7 @@ export function AdminRolesPage() {
             rowKey={(r) => r.id}
             isLoading={rolesQ.isLoading}
             error={rolesQ.error}
-            emptyText="No roles defined."
+            emptyText="Роли ещё не заданы."
           />
         </CardContent>
       </Card>
@@ -132,7 +141,7 @@ export function AdminRolesPage() {
       {creating && (
         <RoleFormCard
           key="new"
-          title="New role"
+          title="Новая роль"
           initial={{ name: '', permissions: 0, is_default: false }}
           submitting={create.isPending}
           onSubmit={(form) => create.mutate(form)}
@@ -145,7 +154,7 @@ export function AdminRolesPage() {
         // previous role's edits would bleed into the next one.
         <RoleFormCard
           key={editing.id}
-          title={`Edit role: ${editing.name}`}
+          title={`Редактирование роли: ${editing.name}`}
           initial={{
             name: editing.name,
             permissions: editing.permissions,
@@ -158,9 +167,9 @@ export function AdminRolesPage() {
       )}
       {deleting && (
         <ConfirmDialog
-          title="Delete role"
-          description={`Delete role "${deleting.name}"? Users referencing it must be reassigned first.`}
-          confirmLabel="Delete role"
+          title="Удалить роль"
+          description={`Удалить роль «${deleting.name}»? Пользователей с этой ролью нужно сначала переназначить.`}
+          confirmLabel="Удалить роль"
           destructive
           busy={remove.isPending}
           onConfirm={() => remove.mutate(deleting.id)}
@@ -207,7 +216,7 @@ function RoleFormCard({ title, initial, submitting, onSubmit, onCancel }: RoleFo
       <CardContent>
         <form className="space-y-4" onSubmit={handleSubmit}>
           <div className="space-y-2">
-            <Label htmlFor="role-name">Name</Label>
+            <Label htmlFor="role-name">Название</Label>
             <Input
               id="role-name"
               value={name}
@@ -218,7 +227,7 @@ function RoleFormCard({ title, initial, submitting, onSubmit, onCancel }: RoleFo
           </div>
 
           <div className="space-y-2">
-            <Label>Permissions</Label>
+            <Label>Права</Label>
             <div className="flex items-center gap-2 mb-2">
               <input
                 id="role-admin-all"
@@ -227,7 +236,7 @@ function RoleFormCard({ title, initial, submitting, onSubmit, onCancel }: RoleFo
                 onChange={(e) => setAdminAll(e.target.checked)}
               />
               <label htmlFor="role-admin-all" className="text-sm">
-                Administrator (all, 0x{ADMIN_ALL_BITS.toString(16)})
+                Администратор (все права, 0x{ADMIN_ALL_BITS.toString(16)})
               </label>
             </div>
             {/* Each input below carries `disabled={adminAll}`, which removes
@@ -257,7 +266,7 @@ function RoleFormCard({ title, initial, submitting, onSubmit, onCancel }: RoleFo
               ))}
             </div>
             <p className="text-xs text-muted-foreground font-mono">
-              Bitmask: 0x{(adminAll ? ADMIN_ALL_BITS : perms).toString(16).padStart(2, '0')} (
+              Битовая маска: 0x{(adminAll ? ADMIN_ALL_BITS : perms).toString(16).padStart(2, '0')} (
               {adminAll ? ADMIN_ALL_BITS : perms})
             </p>
           </div>
@@ -270,16 +279,16 @@ function RoleFormCard({ title, initial, submitting, onSubmit, onCancel }: RoleFo
               onChange={(e) => setIsDefault(e.target.checked)}
             />
             <label htmlFor="role-default" className="text-sm">
-              Default for new sign-ups (only one role can be default)
+              По умолчанию для новых регистраций (только одна роль может быть по умолчанию)
             </label>
           </div>
 
           <div className="flex gap-2">
             <Button type="submit" disabled={submitting || name.trim().length === 0}>
-              {submitting ? 'Saving…' : 'Save'}
+              {submitting ? 'Сохранение…' : 'Сохранить'}
             </Button>
             <Button type="button" variant="ghost" onClick={onCancel}>
-              Cancel
+              Отмена
             </Button>
           </div>
         </form>

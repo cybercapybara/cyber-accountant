@@ -48,9 +48,9 @@ export function AdminInviteUserPage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Invite a user</CardTitle>
+          <CardTitle>Пригласить пользователя</CardTitle>
           <CardDescription>
-            They'll get an email with a link to set their own password.
+            Он получит письмо со ссылкой для установки собственного пароля.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -65,23 +65,23 @@ export function AdminInviteUserPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <FormField
                 id="first_name"
-                label="First name"
+                label="Имя"
                 error={errors.first_name?.message}
                 {...register('first_name')}
               />
               <FormField
                 id="last_name"
-                label="Last name"
+                label="Фамилия"
                 error={errors.last_name?.message}
                 {...register('last_name')}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="role_id">Role</Label>
+              <Label htmlFor="role_id">Роль</Label>
               <RoleSelect id="role_id" includeDefaultOption {...register('role_id')} />
             </div>
             <Button type="submit" className="w-full" disabled={isSubmitting || invite.isPending}>
-              Send invitation
+              Отправить приглашение
             </Button>
           </form>
         </CardContent>

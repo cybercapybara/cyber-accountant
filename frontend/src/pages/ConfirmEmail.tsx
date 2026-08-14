@@ -31,29 +31,25 @@ export function ConfirmEmailPage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Confirm your account</CardTitle>
-          <CardDescription>
-            Click the button below to activate your account.
-          </CardDescription>
+          <CardTitle>Подтверждение аккаунта</CardTitle>
+          <CardDescription>Нажмите кнопку ниже, чтобы активировать аккаунт.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {confirm.isSuccess && (
             <Alert variant="success">
-              <AlertDescription>
-                Your account is confirmed. You can log in now.
-              </AlertDescription>
+              <AlertDescription>Аккаунт подтверждён. Теперь вы можете войти.</AlertDescription>
             </Alert>
           )}
           {confirm.isError && (
             <Alert variant="destructive">
               <AlertDescription>
-                {confirm.error ?? 'This confirmation link is invalid or has expired.'}
+                {confirm.error ?? 'Эта ссылка недействительна или истёк её срок.'}
               </AlertDescription>
             </Alert>
           )}
           {confirm.isSuccess ? (
             <Button asChild className="w-full">
-              <Link to="/login">Continue to log in</Link>
+              <Link to="/login">Перейти ко входу</Link>
             </Button>
           ) : (
             <Button
@@ -61,7 +57,7 @@ export function ConfirmEmailPage() {
               disabled={confirm.isPending}
               onClick={() => confirm.mutate()}
             >
-              {confirm.isPending ? 'Confirming…' : 'Confirm my account'}
+              {confirm.isPending ? 'Подтверждение…' : 'Подтвердить аккаунт'}
             </Button>
           )}
         </CardContent>

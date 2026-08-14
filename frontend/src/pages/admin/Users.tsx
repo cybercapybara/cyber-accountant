@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 
 import { DataTable, type Column } from '@/components/DataTable';
+import { PageHeader } from '@/components/PageHeader';
 import { PaginationFooter } from '@/components/PaginationFooter';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,12 +14,12 @@ const PER_PAGE = 20;
 
 const columns: Column<User>[] = [
   { header: 'Email', cell: (u) => <span className="font-mono">{u.email}</span> },
-  { header: 'Name', cell: (u) => u.full_name },
-  { header: 'Role', cell: (u) => u.role?.name ?? u.role_id },
+  { header: 'Имя', cell: (u) => u.full_name },
+  { header: 'Роль', cell: (u) => u.role?.name ?? u.role_id },
   {
-    header: 'Confirmed',
+    header: 'Подтверждён',
     cell: (u) => (
-      <span aria-label={u.confirmed ? 'Confirmed' : 'Not confirmed'}>
+      <span aria-label={u.confirmed ? 'Подтверждён' : 'Не подтверждён'}>
         <span aria-hidden="true">{u.confirmed ? '✓' : '—'}</span>
       </span>
     ),
@@ -28,7 +29,7 @@ const columns: Column<User>[] = [
     className: 'text-right',
     cell: (u) => (
       <Button variant="ghost" size="sm" asChild>
-        <Link to={`/admin/users/${u.id}`}>Edit</Link>
+        <Link to={`/admin/users/${u.id}`}>Изменить</Link>
       </Button>
     ),
   },
@@ -44,15 +45,17 @@ export function AdminUsersPage() {
 
   return (
     <div className="container mx-auto py-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Users</h1>
-        <Button asChild>
-          <Link to="/admin/invite">Invite user</Link>
-        </Button>
-      </div>
+      <PageHeader
+        title="Пользователи"
+        actions={
+          <Button asChild>
+            <Link to="/admin/invite">Пригласить пользователя</Link>
+          </Button>
+        }
+      />
       <Card>
         <CardHeader>
-          <CardTitle>{data ? `${data.total} total` : 'Users'}</CardTitle>
+          <CardTitle>{data ? `Всего: ${data.total}` : 'Пользователи'}</CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
           <DataTable
@@ -61,7 +64,7 @@ export function AdminUsersPage() {
             rowKey={(u) => u.id}
             isLoading={isLoading}
             error={error}
-            emptyText="No users yet."
+            emptyText="Пользователей пока нет."
             isPlaceholder={isPlaceholderData}
           />
           {data && (

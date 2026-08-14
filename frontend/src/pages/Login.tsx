@@ -39,8 +39,8 @@ export function LoginPage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Log in</CardTitle>
-          <CardDescription>Use your email and password.</CardDescription>
+          <CardTitle>Вход</CardTitle>
+          <CardDescription>Введите email и пароль.</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={onSubmit}>
@@ -55,20 +55,20 @@ export function LoginPage() {
             <FormField
               id="password"
               type="password"
-              label="Password"
+              label="Пароль"
               autoComplete="current-password"
               error={errors.password?.message}
               {...register('password')}
             />
             <Button type="submit" className="w-full" disabled={isSubmitting || login.isPending}>
-              {login.isPending ? 'Signing in…' : 'Log in'}
+              {login.isPending ? 'Выполняется вход…' : 'Войти'}
             </Button>
             <div className="flex justify-between text-sm text-muted-foreground">
               <Link to="/account/reset-password" className="hover:underline">
-                Forgot password?
+                Забыли пароль?
               </Link>
               <Link to="/register" className="hover:underline">
-                Create account
+                Создать аккаунт
               </Link>
             </div>
           </form>

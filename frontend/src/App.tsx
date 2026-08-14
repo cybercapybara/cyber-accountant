@@ -22,9 +22,7 @@ function RequireAuth() {
 
 // Fallback shown while a code-split admin chunk loads. Matches the plain
 // "Loading…" the guards already use, so the transition is visually quiet.
-const ChunkFallback = (
-  <div className="container mx-auto py-8 text-muted-foreground">Loading…</div>
-);
+const ChunkFallback = <div className="container mx-auto py-8 text-muted-foreground">Загрузка…</div>;
 
 function RequireConfirmed() {
   // The /admin/audit route's element is lazy, so the confirmed group needs a

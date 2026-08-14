@@ -37,7 +37,7 @@ export function AdminUserDetailPage() {
       api.patchJson<UserDetailResponse>('/api/v1/admin/users/' + id, { body: patch }),
     {
       invalidate: [qk.admin.user(id), qk.admin.users()],
-      onSuccess: () => toast.success('Changes saved.'),
+      onSuccess: () => toast.success('Изменения сохранены.'),
     },
   );
 
@@ -48,9 +48,9 @@ export function AdminUserDetailPage() {
 
   useErrorToast(update.error ?? remove.error);
 
-  if (userQ.isLoading) return <p className="container py-8">Loading…</p>;
+  if (userQ.isLoading) return <p className="container py-8">Загрузка…</p>;
   if (userQ.error || !userQ.data)
-    return <p className="container py-8 text-destructive">User not found.</p>;
+    return <p className="container py-8 text-destructive">Пользователь не найден.</p>;
 
   const user = userQ.data.data;
   const isSelf = me?.id === user.id;
@@ -60,12 +60,12 @@ export function AdminUserDetailPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{user.email}</h1>
         <Button variant="ghost" asChild>
-          <Link to="/admin/users">← Back</Link>
+          <Link to="/admin/users">← Назад</Link>
         </Button>
       </div>
       <Card>
         <CardHeader>
-          <CardTitle>Details</CardTitle>
+          <CardTitle>Данные</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <form
@@ -91,18 +91,18 @@ export function AdminUserDetailPage() {
               <FormField
                 id="first_name"
                 name="first_name"
-                label="First name"
+                label="Имя"
                 defaultValue={user.first_name ?? ''}
               />
               <FormField
                 id="last_name"
                 name="last_name"
-                label="Last name"
+                label="Фамилия"
                 defaultValue={user.last_name ?? ''}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="role_id">Role</Label>
+              <Label htmlFor="role_id">Роль</Label>
               <RoleSelect
                 id="role_id"
                 name="role_id"
@@ -111,36 +111,36 @@ export function AdminUserDetailPage() {
               />
               {isSelf && (
                 <p className="text-xs text-muted-foreground">
-                  You cannot change the role of your own account.
+                  Вы не можете изменить роль своего собственного аккаунта.
                 </p>
               )}
             </div>
             <Button type="submit" disabled={update.isPending}>
-              {update.isPending ? 'Saving…' : 'Save changes'}
+              {update.isPending ? 'Сохранение…' : 'Сохранить изменения'}
             </Button>
           </form>
         </CardContent>
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle className="text-destructive">Danger zone</CardTitle>
+          <CardTitle className="text-destructive">Опасная зона</CardTitle>
         </CardHeader>
         <CardContent>
           <Button variant="destructive" disabled={isSelf} onClick={() => setConfirmDelete(true)}>
-            Delete user
+            Удалить пользователя
           </Button>
           {isSelf && (
             <p className="text-xs text-muted-foreground mt-2">
-              You cannot delete your own account; ask another admin.
+              Вы не можете удалить свой собственный аккаунт; обратитесь к другому администратору.
             </p>
           )}
         </CardContent>
       </Card>
       {confirmDelete && (
         <ConfirmDialog
-          title="Delete user"
-          description={`Delete user ${user.email}? This cannot be undone.`}
-          confirmLabel="Delete user"
+          title="Удалить пользователя"
+          description={`Удалить пользователя ${user.email}? Это действие необратимо.`}
+          confirmLabel="Удалить пользователя"
           destructive
           busy={remove.isPending}
           onConfirm={() => remove.mutate()}

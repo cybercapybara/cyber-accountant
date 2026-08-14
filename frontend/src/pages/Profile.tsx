@@ -11,30 +11,30 @@ export function ProfilePage() {
     <div className="container mx-auto max-w-2xl py-8 space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Your account</CardTitle>
+          <CardTitle>Мой аккаунт</CardTitle>
           <CardDescription>{user.email}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-1 text-sm">
           <div>
-            <span className="text-muted-foreground">Name: </span>
-            {user.full_name || '(not set)'}
+            <span className="text-muted-foreground">Имя: </span>
+            {user.full_name || '(не задано)'}
           </div>
           <div>
-            <span className="text-muted-foreground">Role: </span>
+            <span className="text-muted-foreground">Роль: </span>
             {user.role?.name ?? user.role_id}
           </div>
           <div>
-            <span className="text-muted-foreground">Confirmed: </span>
-            {user.confirmed ? 'yes' : 'no'}
+            <span className="text-muted-foreground">Email подтверждён: </span>
+            {user.confirmed ? 'да' : 'нет'}
           </div>
         </CardContent>
       </Card>
       <div className="grid gap-3 sm:grid-cols-3">
         <Button variant="outline" asChild>
-          <Link to="/account/change-password">Change password</Link>
+          <Link to="/account/change-password">Сменить пароль</Link>
         </Button>
         <Button variant="outline" asChild>
-          <Link to="/account/change-email">Change email</Link>
+          <Link to="/account/change-email">Сменить email</Link>
         </Button>
       </div>
     </div>

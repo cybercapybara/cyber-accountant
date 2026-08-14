@@ -19,7 +19,7 @@ interface ConfirmDialogProps {
 export function ConfirmDialog({
   title,
   description,
-  confirmLabel = 'Confirm',
+  confirmLabel = 'Подтвердить',
   destructive,
   busy,
   onConfirm,
@@ -54,14 +54,14 @@ export function ConfirmDialog({
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={onClose} disabled={busy}>
-              Cancel
+              Отмена
             </Button>
             <Button
               variant={destructive ? 'destructive' : 'default'}
               onClick={onConfirm}
               disabled={busy}
             >
-              {busy ? 'Working…' : confirmLabel}
+              {busy ? 'Выполняется…' : confirmLabel}
             </Button>
           </div>
         </CardContent>

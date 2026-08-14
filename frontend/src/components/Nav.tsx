@@ -94,7 +94,7 @@ export function Nav() {
             size="sm"
             variant="ghost"
             onClick={toggleTheme}
-            aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}
+            aria-label={dark ? 'Включить светлую тему' : 'Включить тёмную тему'}
           >
             {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
@@ -112,7 +112,7 @@ export function Nav() {
                 >
                   {user.full_name || user.email}
                 </Link>
-                <Button size="sm" variant="ghost" aria-label="Log out" onClick={logoutAndRedirect}>
+                <Button size="sm" variant="ghost" aria-label="Выйти" onClick={logoutAndRedirect}>
                   <LogOut className="h-4 w-4" />
                 </Button>
               </>
@@ -120,10 +120,10 @@ export function Nav() {
             {showAuthButtons && (
               <>
                 <Button size="sm" variant="ghost" asChild>
-                  <Link to="/login">Log in</Link>
+                  <Link to="/login">Войти</Link>
                 </Button>
                 <Button size="sm" asChild>
-                  <Link to="/register">Register</Link>
+                  <Link to="/register">Регистрация</Link>
                 </Button>
               </>
             )}
@@ -133,7 +133,7 @@ export function Nav() {
             size="sm"
             variant="ghost"
             className="md:hidden"
-            aria-label="Toggle navigation menu"
+            aria-label="Открыть меню навигации"
             aria-expanded={menuOpen}
             aria-controls="mobile-nav"
             onClick={() => setMenuOpen((o) => !o)}
@@ -181,14 +181,14 @@ export function Nav() {
                 <Button
                   variant="ghost"
                   className="justify-start px-2"
-                  aria-label="Log out"
+                  aria-label="Выйти"
                   onClick={() => {
                     setMenuOpen(false);
                     logoutAndRedirect();
                   }}
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  Log out
+                  Выйти
                 </Button>
               </>
             )}
@@ -196,12 +196,12 @@ export function Nav() {
               <div className="flex flex-col gap-2 px-2 pt-2">
                 <Button variant="ghost" asChild>
                   <Link to="/login" onClick={() => setMenuOpen(false)}>
-                    Log in
+                    Войти
                   </Link>
                 </Button>
                 <Button asChild>
                   <Link to="/register" onClick={() => setMenuOpen(false)}>
-                    Register
+                    Регистрация
                   </Link>
                 </Button>
               </div>

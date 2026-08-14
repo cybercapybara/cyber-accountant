@@ -6,7 +6,7 @@ import { z } from 'zod';
  */
 
 export const inviteUserSchema = z.object({
-  email: z.string().min(1, 'Email is required').email('Invalid email'),
+  email: z.string().min(1, 'Укажите email').email('Некорректный email'),
   first_name: z.string().max(64).optional(),
   last_name: z.string().max(64).optional(),
   // RoleSelect renders a native <select> whose value is a string; empty

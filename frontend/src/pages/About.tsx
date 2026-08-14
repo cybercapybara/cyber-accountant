@@ -5,19 +5,17 @@ export function AboutPage() {
     <div className="container mx-auto py-8 max-w-3xl">
       <Card>
         <CardHeader>
-          <CardTitle>About</CardTitle>
+          <CardTitle>О сервисе</CardTitle>
           <CardDescription>
-            React admin SPA on a C++ REST backend — full account and admin flows.
+            Кабинет бухгалтера ТОО — контрагенты, журнал проводок, документы и организации в одном
+            месте.
           </CardDescription>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-2">
+          <p>Бэкенд: Drogon, libpqxx, redis-plus-plus, libsodium argon2id, JWT в HttpOnly-куках.</p>
           <p>
-            Backend: Drogon, libpqxx, redis-plus-plus, libsodium argon2id, JWT in HttpOnly
-            cookies.
-          </p>
-          <p>
-            Frontend: Vite + React 18 + TanStack Query + react-hook-form + zod + Tailwind +
-            shadcn/ui primitives.
+            Фронтенд: Vite + React 18 + TanStack Query + react-hook-form + zod + Tailwind +
+            примитивы shadcn/ui.
           </p>
         </CardContent>
       </Card>

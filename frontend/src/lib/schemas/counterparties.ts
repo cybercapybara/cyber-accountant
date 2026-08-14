@@ -12,8 +12,8 @@ export const counterpartySchema = z.object({
   identifier: z
     .string()
     .trim()
-    .regex(/^[0-9]{12}$/, 'БИН/ИИН must be exactly 12 digits'),
-  name: z.string().trim().min(1, 'Name is required'),
+    .regex(/^[0-9]{12}$/, 'БИН/ИИН должен состоять ровно из 12 цифр'),
+  name: z.string().trim().min(1, 'Укажите название'),
   address: z.string().trim().default(''),
   iik: z.string().trim().default(''),
   bik: z.string().trim().default(''),

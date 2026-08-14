@@ -14,8 +14,8 @@ export interface PermissionBit {
 }
 
 export const PERMISSION_BITS: PermissionBit[] = [
-  { bit: 0x01, label: 'General', hint: 'Baseline access for any signed-in user' },
-  { bit: 0x02, label: 'Audit read', hint: 'Read the audit trail (GET /api/admin/audit)' },
+  { bit: 0x01, label: 'Базовое', hint: 'Базовый доступ для любого авторизованного пользователя' },
+  { bit: 0x02, label: 'Чтение аудита', hint: 'Чтение журнала аудита (GET /api/admin/audit)' },
   // Bits 0x04..0x80 are NOT carved out on the backend yet — only kGeneral
   // (0x01), kAuditRead (0x02) and kAdminister (0x40000000, a dedicated sentinel
   // bit) exist in Domain::Permission (src/domain/Role.hpp). Add a row here the moment you
