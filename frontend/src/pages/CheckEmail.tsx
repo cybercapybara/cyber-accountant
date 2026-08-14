@@ -14,19 +14,21 @@ export function CheckEmailPage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Check your email</CardTitle>
+          <CardTitle>Проверьте почту</CardTitle>
           <CardDescription>
-            {email ? `We sent a confirmation link to ${email}.` : 'We sent a confirmation link.'}
+            {email
+              ? `Мы отправили ссылку для подтверждения на ${email}.`
+              : 'Мы отправили ссылку для подтверждения.'}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Alert>
             <AlertDescription>
-              Didn't get one? Check spam, or{' '}
+              Не пришло письмо? Проверьте папку «Спам» или{' '}
               <Link to="/login" className="underline">
-                log in
+                войдите
               </Link>{' '}
-              and use "Resend confirmation email".
+              и воспользуйтесь кнопкой «Отправить письмо повторно».
             </AlertDescription>
           </Alert>
         </CardContent>

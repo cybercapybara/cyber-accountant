@@ -22,26 +22,26 @@ export function PaginationFooter({
   return (
     <div className="mt-4 flex items-center justify-between">
       <p className="text-sm text-muted-foreground">
-        Page {page} of {totalPages}
+        Страница {page} из {totalPages}
       </p>
       <div className="space-x-2">
         <Button
           variant="outline"
           size="sm"
-          aria-label="Previous page"
+          aria-label="Предыдущая страница"
           disabled={page <= 1}
           onClick={() => onPageChange(page - 1)}
         >
-          Previous
+          Назад
         </Button>
         <Button
           variant="outline"
           size="sm"
-          aria-label="Next page"
+          aria-label="Следующая страница"
           disabled={page >= totalPages || isPlaceholderData}
           onClick={() => onPageChange(page + 1)}
         >
-          Next
+          Далее
         </Button>
       </div>
     </div>

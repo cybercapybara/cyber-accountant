@@ -601,6 +601,519 @@ components:
         document_id:   { type: string, format: uuid, description: 'Poll GET /api/v1/documents/{id} for the final rendered status' }
         render_queued: { type: boolean, description: 'false if the docgen.render job could not be enqueued (e.g. a transient Redis error) — the document row still exists as draft; an operator must re-enqueue it (Fix round 1: best-effort enqueue)' }
 
+    # Mirrors Hr::to_json(Employee) in src/hr/Employee.hpp.
+    Employee:
+      type: object
+      required: [id, org_id, iin, last_name, first_name, middle_name, position, salary_tiyn, hired_on, dismissed_on, ipn_deduction_claimed, opvr_exempt, payout_iik, status, created_at, updated_at]
+      properties:
+        id:                    { type: string, format: uuid }
+        org_id:                { type: string, format: uuid }
+        iin:                   { type: string, pattern: '^[0-9]{12}$', description: '12 digits + valid check digit' }
+        last_name:             { type: string }
+        first_name:            { type: string }
+        middle_name:           { type: ['string', 'null'] }
+        position:              { type: string }
+        salary_tiyn:           { type: integer, format: int64, description: 'Salary in tiyn (1/100 tenge)' }
+        hired_on:              { type: string, format: date }
+        dismissed_on:          { type: ['string', 'null'], format: date }
+        ipn_deduction_claimed: { type: boolean }
+        opvr_exempt:           { type: boolean }
+        payout_iik:            { type: string }
+        status:                { type: string, enum: [active, dismissed] }
+        created_at:            { type: string }
+        updated_at:            { type: string }
+
+    EmployeeListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Employee' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    EmployeeDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Employee' }
+
+    # POST /api/v1/employees request body — EmployeesController::validate_and_fill_create.
+    EmployeeCreate:
+      type: object
+      required: [iin, last_name, first_name, position, salary, hired_on]
+      properties:
+        iin:                   { type: string, pattern: '^[0-9]{12}$', description: 'ИИН, 12 digits + valid check digit' }
+        last_name:             { type: string }
+        first_name:            { type: string }
+        middle_name:           { type: string }
+        position:              { type: string }
+        salary:                { type: string, description: 'Decimal string in tenge, e.g. "300000.00" — parsed via Ledger::parse_tiyn, must be strictly positive' }
+        hired_on:               { type: string, pattern: '^\d{4}-\d{2}-\d{2}$', description: 'Calendar-valid date; immutable after creation' }
+        ipn_deduction_claimed: { type: boolean, default: false }
+        opvr_exempt:           { type: boolean, default: false }
+        payout_iik:            { type: string, default: '' }
+
+    # PATCH /api/v1/employees/{id} request body — same as EmployeeCreate minus
+    # hired_on (immutable) — EmployeesController::validate_and_fill_update.
+    # hired_on/status/dismissed_on are all REJECTED with 422 if present (see
+    # EmployeesController.hpp's file header) rather than accepted here.
+    EmployeeUpdate:
+      type: object
+      required: [iin, last_name, first_name, position, salary]
+      properties:
+        iin:                   { type: string, pattern: '^[0-9]{12}$' }
+        last_name:             { type: string }
+        first_name:            { type: string }
+        middle_name:           { type: string }
+        position:              { type: string }
+        salary:                { type: string, description: 'Decimal string in tenge, e.g. "300000.00"' }
+        ipn_deduction_claimed: { type: boolean }
+        opvr_exempt:           { type: boolean }
+        payout_iik:            { type: string }
+
+    # POST /api/v1/employees/{id}/dismiss request body.
+    EmployeeDismiss:
+      type: object
+      required: [dismissed_on]
+      properties:
+        dismissed_on: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$', description: 'Calendar-valid date' }
+
+    # Mirrors Hr::to_json(HrOrder) in src/hr/HrDocuments.hpp.
+    HrOrder:
+      type: object
+      required: [id, org_id, employee_id, kind, number, issued_on, effective_from, effective_to, payload, document_id, created_at, updated_at]
+      properties:
+        id:              { type: string, format: uuid }
+        org_id:          { type: string, format: uuid }
+        employee_id:     { type: string, format: uuid }
+        kind:            { type: string, enum: [hire, dismiss, vacation, business_trip, salary_change] }
+        number:          { type: string }
+        issued_on:       { type: string, format: date }
+        effective_from:  { type: string, format: date }
+        effective_to:    { type: ['string', 'null'], format: date }
+        payload:         { type: ['object', 'null'], additionalProperties: true }
+        document_id:     { type: ['string', 'null'], format: uuid }
+        created_at:      { type: string }
+        updated_at:      { type: string }
+
+    # GET /api/v1/hr-orders is paginated (`hr_orders` grows for the life of an
+    # organization), so this is the {data, total, limit, offset} envelope every
+    # other list route in this API uses — not the bare {data} it once was.
+    HrOrderListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/HrOrder' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    HrOrderDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/HrOrder' }
+
+    # POST /api/v1/hr-orders request body — HrController::createOrder.
+    HrOrderCreate:
+      type: object
+      required: [employee_id, kind, number, issued_on, effective_from]
+      properties:
+        employee_id:    { type: string, format: uuid, description: 'Must belong to the caller''s organization (422 foreign_employee otherwise)' }
+        kind:           { type: string, enum: [hire, dismiss, vacation, business_trip, salary_change] }
+        number:         { type: string }
+        issued_on:      { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        effective_from: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        effective_to:   { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        payload:        { type: object, additionalProperties: true }
+
+    # POST /api/v1/hr-orders/{id}/generate-document and
+    # /api/v1/labor-contracts/{id}/generate-document request body — every
+    # field OPTIONAL: the handler auto-derives what it can from the order/
+    # contract/employee/organization records and deep-merges this body on
+    # top (RFC 7396 merge patch) for the free-text fields the schema needs
+    # that this codebase has no column for (director, salary_words,
+    # work_schedule, ...) — see HrController.hpp's file header.
+    GenerateHrDocumentExtra:
+      type: object
+      additionalProperties: true
+      description: 'Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid. ALLOWLISTED — hr_order accepts director/reason/details; labor_contract accepts salary_words/work_schedule/probation_months/employer.director/employer.address/employee.address. Anything else is rejected 422 not_allowed_override naming that field'
+
+    # Mirrors Hr::to_json(LaborContract) in src/hr/HrDocuments.hpp.
+    LaborContract:
+      type: object
+      required: [id, org_id, employee_id, number, signed_on, starts_on, ends_on, terms_json, created_at, updated_at]
+      properties:
+        id:          { type: string, format: uuid }
+        org_id:      { type: string, format: uuid }
+        employee_id: { type: string, format: uuid }
+        number:      { type: string }
+        signed_on:   { type: string, format: date }
+        starts_on:   { type: string, format: date }
+        ends_on:     { type: ['string', 'null'], format: date }
+        terms_json:  { type: ['object', 'null'], additionalProperties: true }
+        created_at:  { type: string }
+        updated_at:  { type: string }
+
+    LaborContractListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/LaborContract' }
+
+    LaborContractDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/LaborContract' }
+
+    # POST /api/v1/labor-contracts request body — HrController::createContract.
+    LaborContractCreate:
+      type: object
+      required: [employee_id, number, signed_on, starts_on]
+      properties:
+        employee_id: { type: string, format: uuid, description: 'Must belong to the caller''s organization (422 foreign_employee otherwise)' }
+        number:      { type: string }
+        signed_on:   { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        starts_on:   { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        ends_on:     { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        terms_json:  { type: object, additionalProperties: true }
+
+    # Mirrors Hr::to_json(Vacation) in src/hr/HrDocuments.hpp.
+    Vacation:
+      type: object
+      required: [id, org_id, employee_id, starts_on, ends_on, days, kind, created_at, updated_at]
+      properties:
+        id:          { type: string, format: uuid }
+        org_id:      { type: string, format: uuid }
+        employee_id: { type: string, format: uuid }
+        starts_on:   { type: string, format: date }
+        ends_on:     { type: string, format: date }
+        days:        { type: integer }
+        kind:        { type: string, enum: [annual, unpaid, sick] }
+        created_at:  { type: string }
+        updated_at:  { type: string }
+
+    # Paginated for the same reason as HrOrderListResponse above.
+    VacationListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Vacation' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    VacationDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Vacation' }
+
+    # POST /api/v1/vacations request body — HrController::createVacation.
+    VacationCreate:
+      type: object
+      required: [employee_id, starts_on, ends_on, days, kind]
+      properties:
+        employee_id: { type: string, format: uuid, description: 'Must belong to the caller''s organization (422 foreign_employee otherwise)' }
+        starts_on:   { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        ends_on:     { type: string, pattern: '^\d{4}-\d{2}-\d{2}$', description: 'Must be on or after starts_on (422 before_starts_on otherwise)' }
+        days:        { type: integer, minimum: 1 }
+        kind:        { type: string, enum: [annual, unpaid, sick] }
+
+    # ── Payroll (Task 12) ─────────────────────────────────────────────────
+    # Mirrors Payroll::to_json(Payslip) in src/payroll/Payslip.hpp. Every
+    # amount is an integer TIYN (1 ₸ = 100 tiyn) — never a decimal string,
+    # unlike journal_lines.amount, because these columns are BIGINT.
+    Payslip:
+      type: object
+      required: [id, org_id, run_id, employee_id, gross_tiyn, opv, vosms, ipn, net, opvr, so, osms, social_tax, created_at, updated_at]
+      properties:
+        id:          { type: string, format: uuid }
+        org_id:      { type: string, format: uuid }
+        run_id:      { type: string, format: uuid }
+        employee_id: { type: string, format: uuid }
+        gross_tiyn:  { type: integer, format: int64, description: 'Начислено, тиын' }
+        opv:         { type: integer, format: int64, description: 'ОПВ, тиын' }
+        vosms:       { type: integer, format: int64, description: 'ВОСМС, тиын' }
+        ipn:         { type: integer, format: int64, description: 'ИПН, тиын' }
+        net:         { type: integer, format: int64, description: 'К выплате, тиын' }
+        opvr:        { type: integer, format: int64, description: 'ОПВР (за счёт работодателя), тиын' }
+        so:          { type: integer, format: int64, description: 'СО, тиын' }
+        osms:        { type: integer, format: int64, description: 'ОСМС, тиын' }
+        social_tax:  { type: integer, format: int64, description: 'Социальный налог, тиын (0 на СНР упрощёнке)' }
+        created_at:  { type: string }
+        updated_at:  { type: string }
+
+    # Mirrors Payroll::to_json(PayrollRun) in src/payroll/Payslip.hpp.
+    # `payslips` is populated only by POST /payroll-runs (which has them in
+    # hand); list/approve responses carry the header alone.
+    PayrollRun:
+      type: object
+      required: [id, org_id, period_year, period_month, status, calculated_at, rates_snapshot, journal_entry_id, posted_at, created_at, updated_at, payslips]
+      properties:
+        id:               { type: string, format: uuid }
+        org_id:           { type: string, format: uuid }
+        period_year:      { type: integer }
+        period_month:     { type: integer, minimum: 1, maximum: 12 }
+        status:           { type: string, enum: [draft, approved] }
+        calculated_at:    { type: string }
+        rates_snapshot:   { type: object, additionalProperties: true, description: 'Exact rates/constants resolved on the last day of the period — the reproducibility record' }
+        journal_entry_id: { type: ['string', 'null'], format: uuid, description: 'Non-null once posted; the compare-and-swap guard against a double post' }
+        posted_at:        { type: ['string', 'null'] }
+        created_at:       { type: string }
+        updated_at:       { type: string }
+        payslips:
+          type: array
+          items: { $ref: '#/components/schemas/Payslip' }
+
+    PayrollRunListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/PayrollRun' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    PayrollRunDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/PayrollRun' }
+
+    PayslipListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Payslip' }
+
+    # POST /api/v1/payroll-runs request body — PayrollController::calculate.
+    PayrollRunCreate:
+      type: object
+      required: [year, month]
+      properties:
+        year:  { type: integer, minimum: 2000, maximum: 2100 }
+        month: { type: integer, minimum: 1, maximum: 12 }
+
+    # POST /api/v1/payroll-runs/{id}/post-to-journal response.
+    PostToJournalResponse:
+      type: object
+      required: [entry_id]
+      properties:
+        entry_id: { type: string, format: uuid, description: 'The single balanced journal entry this run was posted as' }
+
+    # POST /api/v1/payroll-runs/{id}/payslips/{employee_id}/generate-document
+    # request body — deep-merged (RFC 7396) over the base input derived from
+    # the payslip/employee/organization. The payslip template requires
+    # `net_words` (the net amount in Russian words), which this codebase
+    # cannot derive — supply it here or the request is a 422. It is also the
+    # ONLY accepted key: every other field of that template comes from stored
+    # data, so any other key is a 422 not_allowed_override.
+    PayslipDocumentExtra:
+      type: object
+      additionalProperties: true
+      description: 'Merged on top of the auto-derived base input before template-schema validation. ALLOWLISTED — `net_words` is the only accepted key; anything else is rejected 422 not_allowed_override naming that field'
+
+    # ── Tax (Task 12) ─────────────────────────────────────────────────────
+    # Mirrors Tax::to_json(Rate) in src/tax/TaxRate.hpp.
+    TaxRate:
+      type: object
+      required: [id, kind, rate_bp, region, effective_from, effective_to, source_note]
+      properties:
+        id:             { type: string, format: uuid }
+        kind:           { type: string, enum: [vat, snr_simplified, ipn, opv, opvr, so, osms, vosms, social_tax] }
+        rate_bp:        { type: integer, format: int64, description: 'Basis points (1 bp = 0.01%), e.g. 1600 = 16%' }
+        region:         { type: ['string', 'null'], description: 'null = republic-wide default' }
+        effective_from: { type: string, format: date }
+        effective_to:   { type: ['string', 'null'], format: date }
+        source_note:    { type: string }
+
+    # Mirrors Tax::to_json(Constant) in src/tax/TaxRate.hpp.
+    TaxConstant:
+      type: object
+      required: [id, key, value_tiyn, value_units, effective_from, effective_to, source_note]
+      properties:
+        id:             { type: string, format: uuid }
+        key:            { type: string, description: 'e.g. mrp, mzp, ipn_deduction_mrp, vat_threshold_tenge' }
+        value_tiyn:     { type: integer, format: int64 }
+        value_units:    { type: ['integer', 'null'], format: int64, description: 'Multiplier of МРП/МЗП when the value is legally expressed that way' }
+        effective_from: { type: string, format: date }
+        effective_to:   { type: ['string', 'null'], format: date }
+        source_note:    { type: string }
+
+    TaxRatesResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [on, rates, constants]
+          properties:
+            on: { type: string, format: date, description: 'The effective date the lists were resolved at (defaults to today)' }
+            rates:
+              type: array
+              items: { $ref: '#/components/schemas/TaxRate' }
+            constants:
+              type: array
+              items: { $ref: '#/components/schemas/TaxConstant' }
+
+    # Mirrors Tax::to_json(Calculation) in src/tax/TaxCalculation.hpp.
+    TaxCalculation:
+      type: object
+      required: [id, org_id, kind, period_from, period_to, computed_at, input_snapshot, result_snapshot, total_tiyn]
+      properties:
+        id:              { type: string, format: uuid }
+        org_id:          { type: string, format: uuid }
+        kind:            { type: string, enum: [snr_simplified, vat] }
+        period_from:     { type: string, format: date }
+        period_to:       { type: string, format: date }
+        computed_at:     { type: string }
+        input_snapshot:  { type: object, additionalProperties: true, description: 'Every rate/constant/account-set/period bound the calculation used' }
+        result_snapshot: { type: object, additionalProperties: true, description: 'Every intermediate and final figure, all in tiyn' }
+        total_tiyn:      { type: integer, format: int64, description: 'Tax due (snr_simplified) or net VAT balance (vat) — signed: negative is a refund position' }
+
+    TaxCalculationListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/TaxCalculation' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    TaxCalculationDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/TaxCalculation' }
+
+    # POST /api/v1/tax/calculations request body — TaxController::createCalculation.
+    TaxCalculationCreate:
+      type: object
+      required: [kind, period_from, period_to]
+      properties:
+        kind:        { type: string, enum: [snr_simplified, vat] }
+        period_from: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$', description: 'Half-year start for snr_simplified, quarter start for vat' }
+        period_to:   { type: string, pattern: '^\d{4}-\d{2}-\d{2}$', description: 'Must be on or after period_from' }
+
+    # Mirrors Tax::to_json(Alert) in src/tax/TaxService.hpp.
+    TaxAlert:
+      type: object
+      required: [kind, message, current_tiyn, threshold_tiyn]
+      properties:
+        kind:           { type: string, enum: [vat_registration, snr_limit] }
+        message:        { type: string }
+        current_tiyn:   { type: integer, format: int64, description: 'Trailing-12-month posted income, tiyn' }
+        threshold_tiyn: { type: integer, format: int64, description: 'The real (100%) legal threshold — an alert fires from 90% of it' }
+
+    TaxAlertListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/TaxAlert' }
+
+    # Mirrors Tax::to_json(Deadline) in src/tax/TaxCalendar.hpp.
+    TaxDeadline:
+      type: object
+      required: [form, kind, period_label, due_date, days_left]
+      properties:
+        form:         { type: string, description: 'e.g. "910.00", "300.00"' }
+        kind:         { type: string, description: 'e.g. "report", "payment"' }
+        period_label: { type: string, description: 'Russian label, e.g. "I полугодие 2026"' }
+        due_date:     { type: string, format: date, description: 'Already shifted off Saturday/Sunday (public holidays are out of scope in P2)' }
+        days_left:    { type: integer }
+
+    TaxDeadlineListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/TaxDeadline' }
+
+    # Mirrors Tax::to_json(Filing) in src/tax/TaxFiling.hpp.
+    TaxFiling:
+      type: object
+      required: [id, org_id, kind, period_from, period_to, status, calculation_id, xml_s3_key, document_id, schema_validated, created_at, updated_at]
+      properties:
+        id:               { type: string, format: uuid }
+        org_id:           { type: string, format: uuid }
+        kind:             { type: string, enum: ['910.00', '300.00'], description: 'ФНО form code — a different vocabulary from the calculation kind' }
+        period_from:      { type: string, format: date }
+        period_to:        { type: string, format: date }
+        status:           { type: string, enum: [draft, generated, submitted_manually] }
+        calculation_id:   { type: string, format: uuid }
+        xml_s3_key:       { type: ['string', 'null'], description: 'null while status is draft (the XML never reached storage)' }
+        document_id:      { type: ['string', 'null'], format: uuid, description: 'The printable form; poll GET /api/v1/documents/{id} for its render status' }
+        schema_validated: { type: boolean, description: 'Always false — KGD publishes no content XSD for any ФНО form' }
+        created_at:       { type: string }
+        updated_at:       { type: string }
+
+    TaxFilingListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/TaxFiling' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    TaxFilingDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/TaxFiling' }
+
+    # POST /api/v1/tax/filings request body — TaxController::createFiling.
+    TaxFilingCreate:
+      type: object
+      required: [kind, calculation_id]
+      properties:
+        kind:           { type: string, enum: ['910.00', '300.00'] }
+        calculation_id: { type: string, format: uuid, description: '910.00 needs a snr_simplified calculation, 300.00 a vat one (422 kind_mismatch otherwise); must belong to the caller''s organization' }
+        document_input:
+          type: object
+          additionalProperties: true
+          description: 'Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. ALLOWLISTED — only the fields the database cannot hold may appear: director, accountant, tax_words (910.00); director, accountant, balance_words (300.00). Any other key — the org identity, the period, and every amount including the ФНО 300.00 revenue turnover `sales_tenge`, which is derived from the calculation''s own snapshot — is rejected 422 not_allowed_override naming that field, before the merge happens. Left open here (additionalProperties) because the accepted set depends on `kind`; the server is the authority'
+
+    # POST /api/v1/tax/filings response — both flags are best-effort.
+    TaxFilingCreateResponse:
+      type: object
+      required: [filing_id, xml_ready, render_queued]
+      properties:
+        filing_id:     { type: string, format: uuid }
+        xml_ready:     { type: boolean, description: 'false if the XML could not be written to object storage — the filing row still exists, in status draft with a null xml_s3_key' }
+        render_queued: { type: boolean, description: 'false if the docgen.render job could not be enqueued — the document row still exists as draft' }
+
+    # POST /api/v1/tax/filings/{id}/download-url response.
+    FilingDownloadUrlResponse:
+      type: object
+      required: [url, artifact, key]
+      properties:
+        url:      { type: string, description: 'Presigned S3 GET URL, TTL 300s' }
+        artifact: { type: string, enum: [xml, pdf] }
+        key:      { type: string, description: 'The object key the URL points at — different per artifact' }
+
 # -----------------------------------------------------------------------------
 paths:
   /:
@@ -1685,6 +2198,618 @@ paths:
         '403': { description: 'No org context, or caller''s role is viewer' }
         '422': { description: 'template_slug is not a registered template, input fails the template''s JSON Schema, or counterparty_id/link_entry_id does not belong to this organization' }
         '503': { description: Job queue not enabled }
+
+  /api/v1/employees:
+    get:
+      summary: List employees for the caller's organization (paginated, includes dismissed)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Employee page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeListResponse' }
+        '403': { description: No org context }
+    post:
+      summary: Create an employee (accountant/owner only)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmployeeCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '409': { description: An employee with that IIN already exists in this organization }
+        '422': { description: 'iin fails its check digit, salary fails to parse (Ledger::parse_tiyn), or hired_on is not a calendar-valid date' }
+
+  /api/v1/employees/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Get an employee
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Employee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeDetailResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including an employee belonging to another organization) }
+    patch:
+      summary: Patch an employee's editable fields (accountant/owner only)
+      description: |
+        Patches every field Hr::EmployeeRepository::update() allows in one
+        call — hired_on/status/dismissed_on are NOT among them.
+        Including any of those three (non-null) in the body is rejected with
+        422, not silently ignored: hired_on is immutable after hire, and
+        status/dismissed_on change only through
+        POST /employees/{id}/dismiss.
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmployeeUpdate' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found (including an employee belonging to another organization) }
+        '409': { description: The patched iin collides with another employee in this organization }
+        '422': { description: 'iin fails its check digit, salary fails to parse, or hired_on/status/dismissed_on was included in the body' }
+
+  /api/v1/employees/{id}/dismiss:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Dismiss an employee (accountant/owner only)
+      description: |
+        Sets status='dismissed' and dismissed_on in one call — the only way
+        to change either field (Hr::EmployeeRepository::dismiss()). A wrong
+        org, a missing id, and an already-dismissed employee are all
+        indistinguishable 404s.
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmployeeDismiss' }
+      responses:
+        '200':
+          description: Dismissed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found, already dismissed, or belonging to another organization }
+        '422': { description: dismissed_on is not a calendar-valid date }
+
+  /api/v1/hr-orders:
+    get:
+      summary: List HR orders for the caller's organization (paginated, optional ?employee_id filter)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: employee_id, in: query, schema: { type: string, format: uuid } }
+        - { name: limit,       in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset,      in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: HR-order page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrOrderListResponse' }
+        '400': { description: employee_id is present but not a well-formed uuid }
+        '403': { description: No org context }
+    post:
+      summary: Create an HR order (accountant/owner only)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HrOrderCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrOrderDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field, or a malformed employee_id) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '422': { description: 'kind is not one of the registered values, issued_on/effective_from/effective_to is not calendar-valid, or employee_id does not belong to this organization' }
+
+  /api/v1/hr-orders/{id}/generate-document:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Generate the hr_order document for an HR order (accountant/owner only)
+      description: |
+        Builds the hr_order template input from the order + its employee +
+        the organization, deep-merges an optional request body on top for
+        the free-text fields not on file (director, reason, details, ...),
+        creates a draft document (doc_type='hr', source='generated'),
+        attaches it back onto the order (hr_orders.document_id), and
+        enqueues a docgen.render job — same async contract as
+        POST /documents/generate.
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerateHrDocumentExtra' }
+      responses:
+        '202':
+          description: Accepted — render enqueued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerateDocumentResponse' }
+        '400': { description: Malformed id, or body is not a JSON object }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found (including an HR order belonging to another organization) }
+        '422': { description: 'The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the hr_order template''s JSON Schema (e.g. a required free-text field was not supplied)' }
+        '503': { description: Job queue not enabled }
+
+  /api/v1/labor-contracts:
+    get:
+      summary: List labor contracts for one employee (unpaginated; ?employee_id is required)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: employee_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Labor contracts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LaborContractListResponse' }
+        '400': { description: employee_id is missing or not a well-formed uuid }
+        '403': { description: No org context }
+    post:
+      summary: Create a labor contract (accountant/owner only)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LaborContractCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LaborContractDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field, or a malformed employee_id) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '422': { description: 'signed_on/starts_on/ends_on is not calendar-valid, or employee_id does not belong to this organization' }
+
+  /api/v1/labor-contracts/{id}/generate-document:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Generate the labor_contract document for a labor contract (accountant/owner only)
+      description: |
+        Same shape as the hr-orders variant, sourced from the contract + its
+        employee + the organization. labor_contracts has no document_id
+        column, so there is no attach-back step here.
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerateHrDocumentExtra' }
+      responses:
+        '202':
+          description: Accepted — render enqueued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerateDocumentResponse' }
+        '400': { description: Malformed id, or body is not a JSON object }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found (including a labor contract belonging to another organization) }
+        '422': { description: 'The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the labor_contract template''s JSON Schema (e.g. a required free-text field was not supplied)' }
+        '503': { description: Job queue not enabled }
+
+  /api/v1/vacations:
+    get:
+      summary: List vacations for the caller's organization (paginated, optional ?employee_id filter)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: employee_id, in: query, schema: { type: string, format: uuid } }
+        - { name: limit,       in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset,      in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Vacation page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VacationListResponse' }
+        '400': { description: employee_id is present but not a well-formed uuid }
+        '403': { description: No org context }
+    post:
+      summary: Create a vacation record (accountant/owner only)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VacationCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VacationDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field, or a malformed employee_id) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '422': { description: 'starts_on/ends_on is not calendar-valid, ends_on is before starts_on, days is not positive, kind is not one of the registered values, or employee_id does not belong to this organization' }
+
+  # ── Payroll ────────────────────────────────────────────────────────────────
+  /api/v1/payroll-runs:
+    get:
+      summary: List payroll runs for the caller's organization (paginated, optional ?year filter)
+      tags: [payroll]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: year,   in: query, schema: { type: integer, minimum: 2000, maximum: 2100 } }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Payroll-run page (headers only — `payslips` is empty here)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PayrollRunListResponse' }
+        '403': { description: No org context }
+        '422': { description: year is present but not an in-range 4-digit calendar year }
+    post:
+      summary: Calculate (or recalculate) a period's payroll run (accountant/owner only)
+      description: |
+        Runs Payroll::calculate over every ACTIVE employee and persists the
+        run header plus one payslip each, resolving rates/constants on the
+        last calendar day of the period. Answers 200, not 201: a second call
+        for the same period REPLACES the draft's payslips rather than
+        creating a second run (payroll_runs is UNIQUE per org/period).
+        Recalculating a run that is already approved is a 409.
+      tags: [payroll]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayrollRunCreate' }
+      responses:
+        '200':
+          description: The run with every payslip it produced
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PayrollRunDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '409': { description: The run for this period is already approved and cannot be recalculated }
+        '422': { description: 'year or month is out of range, or no tax rate/constant is in force on the last day of the period (the response names the missing one)' }
+
+  /api/v1/payroll-runs/{id}/approve:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Approve a draft payroll run (accountant/owner only)
+      tags: [payroll]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Approved, with the run's payslips
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PayrollRunDetailResponse' }
+        '400': { description: Malformed id }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found (including a run belonging to another organization) }
+        '409': { description: The run exists but is not in status draft }
+
+  /api/v1/payroll-runs/{id}/post-to-journal:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Post an approved payroll run to the journal as one balanced entry (accountant/owner only)
+      description: |
+        Sums every payslip and posts a single balanced journal entry (debit
+        7210 for the full employer cost; credits 3350/3120/3220/3210/3230 and,
+        when non-zero, 3150). The run must be `approved`, and a run that has
+        already been posted (`journal_entry_id` set) is refused — both are
+        409s, never a duplicate ledger entry.
+      tags: [payroll]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Posted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PostToJournalResponse' }
+        '400': { description: Malformed id }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found (including a run belonging to another organization) }
+        '409': { description: 'The run is not approved yet, has already been posted, or has no payslips (empty_run)' }
+
+  /api/v1/payroll-runs/{id}/payslips:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: List a payroll run's payslips (unpaginated — one per active employee)
+      tags: [payroll]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Payslips
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PayslipListResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including a run belonging to another organization) }
+
+  /api/v1/payroll-runs/{id}/payslips/{employee_id}/generate-document:
+    parameters:
+      - { name: id,          in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: employee_id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Generate the payslip document for one employee of a run (accountant/owner only)
+      description: |
+        Builds the `payslip` template input from the payslip + employee +
+        organization, deep-merges an optional request body on top for the
+        one field not on file (`net_words`), creates a draft document
+        (doc_type='hr', source='generated') and enqueues a docgen.render job
+        — same async contract as POST /documents/generate. Every other field
+        is authoritative (the payslip's own amounts, the employee's iin/name,
+        the organization's bin/name) and CANNOT be overridden: any other body
+        key is a 422 `not_allowed_override` naming that field, checked before
+        the merge. Amounts are rendered with Ledger::format_tiyn
+        ("300000.00").
+      tags: [payroll]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayslipDocumentExtra' }
+      responses:
+        '202':
+          description: Accepted — render enqueued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerateDocumentResponse' }
+        '400': { description: 'Malformed id/employee_id, or body is not a JSON object' }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: 'No such run in this organization, or the run has no payslip for that employee' }
+        '422': { description: 'The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the payslip template''s JSON Schema (e.g. net_words was not supplied)' }
+        '503': { description: Job queue not enabled }
+
+  # ── Tax ────────────────────────────────────────────────────────────────────
+  /api/v1/tax/rates:
+    get:
+      summary: Tax rates and constants in force on a date
+      description: |
+        System reference data (`tax_rates`/`tax_constants` have no org_id at
+        all — the documented exception #2 to org-scoping), intended for UI
+        hints. The org guard only establishes that the caller has access to
+        some organization.
+      tags: [tax]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: on, in: query, schema: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }, description: 'Effective date; defaults to today (UTC)' }
+      responses:
+        '200':
+          description: Rates and constants in force
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxRatesResponse' }
+        '403': { description: No org context }
+        '422': { description: on is not a calendar-valid date }
+
+  /api/v1/tax/calculations:
+    get:
+      summary: List stored tax calculations (paginated, optional ?kind and ?year filters)
+      tags: [tax]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: kind,   in: query, schema: { type: string, enum: [snr_simplified, vat] } }
+        - { name: year,   in: query, schema: { type: integer }, description: 'Matched against the year of period_from' }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Calculation page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxCalculationListResponse' }
+        '403': { description: No org context }
+        '422': { description: 'kind is not one of the registered values, or year is not a 4-digit calendar year' }
+    post:
+      summary: Run a tax calculation for a period (accountant/owner only)
+      description: |
+        Computes СНР на основе упрощённой декларации (half-year) or НДС
+        (quarter) from posted journal entries and stores it with both
+        reproducibility snapshots. Answers 200, not 201: recalculating the
+        same (kind, period) REPLACES the stored row rather than adding one.
+      tags: [tax]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaxCalculationCreate' }
+      responses:
+        '200':
+          description: The calculation, with its input and result snapshots
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxCalculationDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '422': { description: 'kind is not one of the registered values, period_from/period_to is not calendar-valid, period_to is before period_from, or no rate is in force on period_to' }
+
+  /api/v1/tax/alerts:
+    get:
+      summary: Registration-threshold alerts for the caller's organization
+      description: |
+        Fires from 90% of either legal threshold (VAT registration, СНР
+        income limit) measured over the trailing 12 months of posted income.
+        `threshold_tiyn` always reports the real 100% threshold.
+      tags: [tax]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: on, in: query, schema: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }, description: 'As-of date; defaults to today (UTC)' }
+      responses:
+        '200':
+          description: Alerts (possibly an empty list)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxAlertListResponse' }
+        '403': { description: No org context }
+        '422': { description: 'on is not a calendar-valid date, or a threshold constant is not in force on that date' }
+
+  /api/v1/tax/deadlines:
+    get:
+      summary: Upcoming tax deadlines within a horizon
+      description: |
+        System reference data (`tax_deadlines` has no org_id — the documented
+        exception #3 to org-scoping). Due dates are shifted off Saturday and
+        Sunday; Kazakhstani public holidays are explicitly out of scope in P2.
+      tags: [tax]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: on,           in: query, schema: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }, description: 'As-of date; defaults to today (UTC)' }
+        - { name: horizon_days, in: query, schema: { type: integer, minimum: 1, maximum: 3650, default: 90 }, description: 'Clamped into range rather than rejected' }
+      responses:
+        '200':
+          description: Deadlines, soonest first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxDeadlineListResponse' }
+        '403': { description: No org context }
+        '422': { description: on is not a calendar-valid date }
+
+  /api/v1/tax/filings:
+    get:
+      summary: List tax filings for the caller's organization (paginated, optional ?kind filter)
+      tags: [tax]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: kind,   in: query, schema: { type: string, enum: ['910.00', '300.00'] } }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Filing page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxFilingListResponse' }
+        '403': { description: No org context }
+        '422': { description: kind is not one of the registered form codes }
+    post:
+      summary: Generate a ФНО filing — XML into object storage plus a printable form (accountant/owner only)
+      description: |
+        Everything that can reject the request runs first (allowlists —
+        including the `document_input` override allowlist — the calculation
+        lookup, the form/calculation kind pairing, the print template's JSON
+        Schema over the merged `document_input`), so a rejected request
+        leaves no object in storage and no document row behind. Only then is the XML written, the document created, the
+        filing row inserted and the render job enqueued.
+
+        `xml_ready` and `render_queued` are both best-effort flags and may be
+        false in a successful 202 — see their schema descriptions.
+        `schema_validated` on the stored filing is always false: KGD
+        publishes no content XSD for any ФНО form.
+      tags: [tax]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaxFilingCreate' }
+      responses:
+        '202':
+          description: Accepted — filing recorded, render enqueued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxFilingCreateResponse' }
+        '400': { description: 'Validation failed (missing/wrong-type field, or a malformed calculation_id)' }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '422': { description: 'kind is not a registered form code, calculation_id does not belong to this organization, the form does not match the calculation''s kind, the stored calculation cannot be rendered as this form (including a result_snapshot missing a figure the form needs), document_input tries to override a field derived from stored data (not_allowed_override), or the merged document_input fails the template''s JSON Schema' }
+        '503': { description: 'Object storage is not configured, or the job queue is not enabled' }
+
+  /api/v1/tax/filings/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Get a tax filing
+      tags: [tax]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Filing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaxFilingDetailResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including a filing belonging to another organization) }
+
+  /api/v1/tax/filings/{id}/download-url:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Mint a presigned download URL for one of the filing's artifacts
+      description: |
+        `artifact=xml` points at the filing's own `xml_s3_key`;
+        `artifact=pdf` points at the linked document's `s3_key`, written by
+        the docgen.render worker — the two are always different objects.
+        Read-only (mints a URL, writes nothing), so this route does NOT
+        reject viewers.
+      tags: [tax]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: artifact, in: query, schema: { type: string, enum: [xml, pdf], default: xml } }
+      responses:
+        '200':
+          description: Presigned URL
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FilingDownloadUrlResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including a filing belonging to another organization) }
+        '409': { description: 'The requested artifact does not exist yet: no XML (no_xml), no printable document (no_document), or the document has not been rendered (not_rendered)' }
+        '422': { description: artifact is neither xml nor pdf }
+        '503': { description: Presigning requires the S3 storage backend }
 
   /api/v1/jobs:
     get:

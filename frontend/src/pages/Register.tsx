@@ -44,14 +44,14 @@ export function RegisterPage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Create your account</CardTitle>
-          <CardDescription>You'll get a confirmation email after signing up.</CardDescription>
+          <CardTitle>Создание аккаунта</CardTitle>
+          <CardDescription>После регистрации мы отправим письмо для подтверждения.</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={onSubmit}>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <FormField id="first_name" label="First name" {...register('first_name')} />
-              <FormField id="last_name" label="Last name" {...register('last_name')} />
+              <FormField id="first_name" label="Имя" {...register('first_name')} />
+              <FormField id="last_name" label="Фамилия" {...register('last_name')} />
             </div>
             <FormField
               id="email"
@@ -64,7 +64,7 @@ export function RegisterPage() {
             <FormField
               id="password"
               type="password"
-              label="Password"
+              label="Пароль"
               autoComplete="new-password"
               error={errors.password?.message}
               {...register('password')}
@@ -72,18 +72,18 @@ export function RegisterPage() {
             <FormField
               id="password_confirm"
               type="password"
-              label="Confirm password"
+              label="Подтверждение пароля"
               autoComplete="new-password"
               error={errors.password_confirm?.message}
               {...register('password_confirm')}
             />
             <Button type="submit" className="w-full" disabled={isSubmitting || reg.isPending}>
-              {reg.isPending ? 'Creating account…' : 'Register'}
+              {reg.isPending ? 'Создание аккаунта…' : 'Зарегистрироваться'}
             </Button>
             <div className="text-sm text-muted-foreground text-center">
-              Already have an account?{' '}
+              Уже есть аккаунт?{' '}
               <Link to="/login" className="hover:underline">
-                Log in
+                Войти
               </Link>
             </div>
           </form>

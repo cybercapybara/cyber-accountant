@@ -27,12 +27,16 @@
 #include "api/AuthController.hpp"
 #include "api/CounterpartiesController.hpp"
 #include "api/DocgenController.hpp"
+#include "api/EmployeesController.hpp"
 #include "api/HealthController.hpp"
+#include "api/HrController.hpp"
 #include "api/JobsController.hpp"
 #include "api/JournalController.hpp"
 #include "api/LedgerDocumentsController.hpp"
 #include "api/Middleware.hpp"
 #include "api/OrganizationsController.hpp"
+#include "api/PayrollController.hpp"
+#include "api/TaxController.hpp"
 
 namespace Api {
 

@@ -1,0 +1,19 @@
+{
+  "org": {
+    "bin": "104332181962",
+    "name": "Cyber Capybara ТОО"
+  },
+  "period": {
+    "year": "2026",
+    "quarter": "2"
+  },
+  "sales_tenge": "5 000 000,00",
+  "vat_charged_tenge": "800 000,00",
+  "vat_credited_tenge": "350 000,00",
+  "balance_tenge": "450 000,00",
+  "balance_kind": "to_pay",
+  "balance_words": "Четыреста пятьдесят тысяч тенге 00 тиын",
+  "signed_on": "14.08.2026",
+  "director": "Ахметов Ерлан Серикович",
+  "accountant": "Серикбаева Айгерим Кайратовна"
+}

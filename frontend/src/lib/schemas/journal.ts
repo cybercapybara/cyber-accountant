@@ -17,11 +17,11 @@ import { toTiyn } from '@/lib/money';
 const amountSchema = z
   .string()
   .trim()
-  .regex(/^\d+(\.\d{1,2})?$/, 'Up to 2 decimal places, e.g. 1234.56')
-  .refine((v) => toTiyn(v) > 0, 'Amount must be greater than zero');
+  .regex(/^\d+(\.\d{1,2})?$/, 'Не более 2 знаков после запятой, например 1234.56')
+  .refine((v) => toTiyn(v) > 0, 'Сумма должна быть больше нуля');
 
 export const journalLineSchema = z.object({
-  account_code: z.string().min(1, 'Select an account'),
+  account_code: z.string().min(1, 'Выберите счёт'),
   side: z.enum(['debit', 'credit']),
   amount: amountSchema,
   // '' means "no counterparty" — stripped before the request body is built
@@ -34,9 +34,9 @@ export const journalEntrySchema = z
     entry_date: z
       .string()
       .trim()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'),
-    description: z.string().trim().min(1, 'Description is required'),
-    lines: z.array(journalLineSchema).min(2, 'A journal entry needs at least 2 lines'),
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Формат: ГГГГ-ММ-ДД'),
+    description: z.string().trim().min(1, 'Укажите описание'),
+    lines: z.array(journalLineSchema).min(2, 'В проводке должно быть минимум 2 строки'),
   })
   // Cross-field invariant: Σdebit === Σcredit, in integer tiyn — the same
   // check JournalPage's live indicator runs (lib/money.ts's toTiyn), so a
@@ -53,7 +53,7 @@ export const journalEntrySchema = z
       }
       return debit === credit;
     },
-    { message: 'Debit and credit totals must match', path: ['lines'] },
+    { message: 'Суммы дебета и кредита должны совпадать', path: ['lines'] },
   );
 
 export type JournalLineValues = z.infer<typeof journalLineSchema>;

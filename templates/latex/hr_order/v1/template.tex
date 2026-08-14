@@ -1,0 +1,52 @@
+\documentclass[a4paper,10pt]{article}
+\usepackage[margin=18mm]{geometry}
+\usepackage{fontspec}
+\setmainfont[Scale=0.92]{Noto Sans}
+\usepackage{polyglossia}\setmainlanguage{russian}
+\usepackage{tabularx,booktabs,array}
+\newcommand{\field}[1]{\textbf{#1}}
+\pagestyle{empty}
+\begin{document}
+\begin{center}\Large\bfseries Бұйрық № {{ number }} / Приказ № {{ number }}\\
+\normalsize {{ issued_on }} ж. / от {{ issued_on }}\end{center}
+\vspace{4mm}
+\noindent {{ employer.name }}, БСН/БИН {{ employer.bin }}
+\vspace{4mm}
+
+{% if kind == "hire" %}
+\noindent\field{Жұмысқа қабылдау туралы бұйрық / Приказ о приёме на работу}\\
+{{ employee.full_name }} (ЖСН/ИИН {{ employee.iin }}) {{ effective_from }} бастап {{ employee.position }} лауазымына жұмысқа қабылдансын.\\
+Принять {{ employee.full_name }} (ИИН {{ employee.iin }}) на работу с {{ effective_from }} на должность {{ employee.position }}.
+{% endif %}
+{% if kind == "dismiss" %}
+\noindent\field{Жұмыстан босату туралы бұйрық / Приказ о прекращении трудового договора}\\
+{{ employee.full_name }} (ЖСН/ИИН {{ employee.iin }}) {{ effective_from }} бастап {{ employee.position }} лауазымынан босатылсын.\\
+Уволить {{ employee.full_name }} (ИИН {{ employee.iin }}) с {{ effective_from }} с должности {{ employee.position }}.
+{% endif %}
+{% if kind == "vacation" %}
+\noindent\field{Демалыс беру туралы бұйрық / Приказ о предоставлении отпуска}\\
+{{ employee.full_name }} қызметкеріне ({{ employee.position }}) {{ effective_from }}{% if effective_to != "" %} бастап {{ effective_to }} дейін{% endif %} демалыс берілсін.\\
+Предоставить {{ employee.full_name }} ({{ employee.position }}) отпуск с {{ effective_from }}{% if effective_to != "" %} по {{ effective_to }}{% endif %}.
+{% endif %}
+{% if kind == "business_trip" %}
+\noindent\field{Іссапарға жіберу туралы бұйрық / Приказ о направлении в командировку}\\
+{{ employee.full_name }} қызметкері ({{ employee.position }}) {{ effective_from }}{% if effective_to != "" %} бастап {{ effective_to }} дейін{% endif %} іссапарға жіберілсін.\\
+Направить {{ employee.full_name }} ({{ employee.position }}) в командировку с {{ effective_from }}{% if effective_to != "" %} по {{ effective_to }}{% endif %}.
+{% endif %}
+{% if kind == "salary_change" %}
+\noindent\field{Лауазымдық жалақыны өзгерту туралы бұйрық / Приказ об изменении должностного оклада}\\
+{{ employee.full_name }} қызметкерінің ({{ employee.position }}) лауазымдық жалақысы {{ effective_from }} бастап өзгертілсін.\\
+Изменить должностной оклад {{ employee.full_name }} ({{ employee.position }}) с {{ effective_from }}.
+{% endif %}
+
+{% if details != "" %}\vspace{2mm}
+\noindent\field{Мазмұны / Содержание:} {{ details }}
+{% endif %}
+{% if reason != "" %}\vspace{2mm}
+\noindent\field{Негіздеме / Основание:} {{ reason }}
+{% endif %}
+\vspace{12mm}
+\noindent Басшы / Директор \hrulefill\qquad {{ director }}
+\vspace{6mm}
+\noindent Бұйрықпен таныстым / С приказом ознакомлен(а): \hrulefill\qquad {{ employee.full_name }}
+\end{document}

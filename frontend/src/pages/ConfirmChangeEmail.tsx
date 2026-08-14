@@ -30,29 +30,29 @@ export function ConfirmChangeEmailPage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Confirm your new email</CardTitle>
+          <CardTitle>Подтверждение нового email</CardTitle>
           <CardDescription>
-            Click the button below to switch your account to this address.
+            Нажмите кнопку ниже, чтобы привязать аккаунт к этому адресу.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {confirm.isSuccess && (
             <Alert variant="success">
               <AlertDescription>
-                Your email address has been updated. Log in with the new address from now on.
+                Email адрес обновлён. Используйте новый адрес для входа.
               </AlertDescription>
             </Alert>
           )}
           {confirm.isError && (
             <Alert variant="destructive">
               <AlertDescription>
-                {confirm.error ?? 'This link is invalid or has expired.'}
+                {confirm.error ?? 'Эта ссылка недействительна или истёк её срок.'}
               </AlertDescription>
             </Alert>
           )}
           {confirm.isSuccess ? (
             <Button asChild className="w-full">
-              <Link to="/login">Continue to log in</Link>
+              <Link to="/login">Перейти ко входу</Link>
             </Button>
           ) : (
             <Button
@@ -60,7 +60,7 @@ export function ConfirmChangeEmailPage() {
               disabled={confirm.isPending}
               onClick={() => confirm.mutate()}
             >
-              {confirm.isPending ? 'Confirming…' : 'Confirm new email'}
+              {confirm.isPending ? 'Подтверждение…' : 'Подтвердить новый email'}
             </Button>
           )}
         </CardContent>

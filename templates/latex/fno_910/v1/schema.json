@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["org", "period", "income_tenge", "rate_percent", "tax_tenge", "tax_words", "signed_on", "director", "accountant"],
+  "properties": {
+    "org": {"$ref": "#/definitions/org"},
+    "period": {"$ref": "#/definitions/period"},
+    "income_tenge": {"type": "string"},
+    "rate_percent": {"type": "string"},
+    "tax_tenge": {"type": "string"},
+    "tax_words": {"type": "string"},
+    "signed_on": {"type": "string", "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$"},
+    "director": {"type": "string"},
+    "accountant": {"type": "string"}
+  },
+  "definitions": {
+    "org": {
+      "type": "object",
+      "required": ["bin", "name"],
+      "properties": {
+        "bin": {"type": "string"}, "name": {"type": "string"}
+      }
+    },
+    "period": {
+      "type": "object",
+      "required": ["year", "half"],
+      "properties": {
+        "year": {"type": "string", "pattern": "^\\d{4}$"},
+        "half": {"type": "string", "enum": ["1", "2"]}
+      }
+    }
+  }
+}

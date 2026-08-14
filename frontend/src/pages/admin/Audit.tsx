@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { DataTable, type Column } from '@/components/DataTable';
+import { PageHeader } from '@/components/PageHeader';
 import { PaginationFooter } from '@/components/PaginationFooter';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -12,6 +13,7 @@ import { usePagedQuery } from '@/hooks/usePagedQuery';
 import { api } from '@/lib/api/client';
 import { qk } from '@/lib/api/queryKeys';
 import type { AuditEntry } from '@/lib/api/types';
+import { formatIsoDateTimeRu } from '@/lib/dateFormat';
 
 const PER_PAGE = 50;
 
@@ -25,10 +27,7 @@ interface Filters {
 
 const EMPTY_FILTERS: Filters = { action: '', target_type: '', actor_id: '', from: '', to: '' };
 
-function formatTimestamp(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-}
+const formatTimestamp = formatIsoDateTimeRu;
 
 /**
  * A <input type="datetime-local"> emits `YYYY-MM-DDTHH:mm` (no zone). The
@@ -70,27 +69,27 @@ export function AdminAuditPage() {
 
   const columns: Column<AuditEntry>[] = [
     {
-      header: 'When',
+      header: 'Когда',
       className: 'whitespace-nowrap',
       cell: (e) => formatTimestamp(e.created_at),
     },
     {
-      header: 'Actor',
+      header: 'Инициатор',
       className: 'font-mono text-xs',
-      cell: (e) => (e.actor_id ? `${e.actor_id.slice(0, 8)}…` : 'system'),
+      cell: (e) => (e.actor_id ? `${e.actor_id.slice(0, 8)}…` : 'система'),
     },
-    { header: 'Action', className: 'font-mono text-xs', cell: (e) => e.action },
-    { header: 'Target', cell: (e) => e.target_type },
+    { header: 'Действие', className: 'font-mono text-xs', cell: (e) => e.action },
+    { header: 'Объект', cell: (e) => e.target_type },
     {
-      header: 'Target id',
+      header: 'ID объекта',
       className: 'font-mono text-xs',
       cell: (e) => e.target_id || '—',
     },
     {
-      header: 'Details',
+      header: 'Подробности',
       cell: (e) =>
         e.details && Object.keys(e.details).length > 0 ? (
-          <span className="text-primary underline-offset-2 hover:underline">view</span>
+          <span className="text-primary underline-offset-2 hover:underline">просмотр</span>
         ) : (
           <span className="text-muted-foreground">—</span>
         ),
@@ -110,12 +109,14 @@ export function AdminAuditPage() {
 
   return (
     <div className="container mx-auto py-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Audit log</h1>
-        <Button asChild variant="ghost">
-          <Link to="/admin">← Admin</Link>
-        </Button>
-      </div>
+      <PageHeader
+        title="Журнал аудита"
+        actions={
+          <Button asChild variant="ghost">
+            <Link to="/admin">← Администрирование</Link>
+          </Button>
+        }
+      />
 
       <Card>
         <CardContent className="pt-6">
@@ -127,7 +128,7 @@ export function AdminAuditPage() {
             }}
           >
             <div className="space-y-1">
-              <Label htmlFor="f-action">Action</Label>
+              <Label htmlFor="f-action">Действие</Label>
               <Input
                 id="f-action"
                 placeholder="user.create"
@@ -136,7 +137,7 @@ export function AdminAuditPage() {
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="f-target">Target type</Label>
+              <Label htmlFor="f-target">Тип объекта</Label>
               <Input
                 id="f-target"
                 placeholder="user / role"
@@ -145,7 +146,7 @@ export function AdminAuditPage() {
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="f-actor">Actor id</Label>
+              <Label htmlFor="f-actor">ID инициатора</Label>
               <Input
                 id="f-actor"
                 placeholder="uuid"
@@ -154,7 +155,7 @@ export function AdminAuditPage() {
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="f-from">From</Label>
+              <Label htmlFor="f-from">С даты</Label>
               <Input
                 id="f-from"
                 type="datetime-local"
@@ -163,7 +164,7 @@ export function AdminAuditPage() {
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="f-to">To</Label>
+              <Label htmlFor="f-to">По дату</Label>
               <Input
                 id="f-to"
                 type="datetime-local"
@@ -172,13 +173,13 @@ export function AdminAuditPage() {
               />
             </div>
             <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-5">
-              <Button type="submit">Apply</Button>
+              <Button type="submit">Применить</Button>
               <Button type="button" variant="ghost" onClick={clear}>
-                Clear
+                Сбросить
               </Button>
               {data && (
                 <span className="ml-auto self-center text-sm text-muted-foreground">
-                  {data.total} total
+                  Всего: {data.total}
                 </span>
               )}
             </div>
@@ -194,11 +195,15 @@ export function AdminAuditPage() {
             rowKey={(e) => e.id}
             isLoading={isLoading}
             error={error}
-            emptyText="No audit entries match these filters."
+            emptyText="Записей, соответствующих фильтрам, не найдено."
             isPlaceholder={isPlaceholderData}
             rowProps={(e) => ({
               className: `cursor-pointer hover:bg-accent ${selected?.id === e.id ? 'bg-accent' : ''}`,
               onClick: () => setSelected(selected?.id === e.id ? null : e),
+              'aria-label':
+                selected?.id === e.id
+                  ? 'Скрыть подробности записи аудита'
+                  : 'Показать подробности записи аудита',
             })}
           />
           {data && (
@@ -251,11 +256,11 @@ function AuditDetailModal({ entry, onClose }: { entry: AuditEntry; onClose: () =
               </p>
             </div>
             <Button size="sm" variant="ghost" onClick={onClose}>
-              Close
+              Закрыть
             </Button>
           </div>
           <div>
-            <p className="mb-1 font-medium">Details</p>
+            <p className="mb-1 font-medium">Подробности</p>
             <pre className="overflow-x-auto rounded bg-muted p-3 text-xs">
               {JSON.stringify(entry.details, null, 2)}
             </pre>

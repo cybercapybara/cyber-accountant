@@ -4,7 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 import { RotateCcw } from 'lucide-react';
 
 import { DataTable, type Column } from '@/components/DataTable';
+import { PageHeader } from '@/components/PageHeader';
 import { PaginationFooter } from '@/components/PaginationFooter';
+import { StatusBadge, type BadgeTone } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -14,6 +16,7 @@ import { useErrorToast } from '@/hooks/useErrorToast';
 import { api } from '@/lib/api/client';
 import { qk } from '@/lib/api/queryKeys';
 import type { DlqListResponse, Job } from '@/lib/api/types';
+import { formatEpochSecondsRu } from '@/lib/dateFormat';
 
 const PER_PAGE = 20;
 
@@ -41,7 +44,8 @@ function resolveTraceUiTemplate(): string | null {
   const configured =
     (typeof window !== 'undefined' ? window.__TRACE_UI__ : undefined) ||
     import.meta.env.VITE_TRACE_UI_URL;
-  if (configured) return configured.includes('{traceId}') ? configured : `${configured}/trace/{traceId}`;
+  if (configured)
+    return configured.includes('{traceId}') ? configured : `${configured}/trace/{traceId}`;
   if (typeof window !== 'undefined') {
     const { hostname } = window.location;
     // Local dev: the compose stack ships Jaeger on 16686.
@@ -60,58 +64,45 @@ function traceLink(traceId: string | undefined): string | null {
   return TRACE_UI_TEMPLATE.replace('{traceId}', encodeURIComponent(traceId));
 }
 
-// Thin-bordered, low-chroma badges that read on both themes. Dark-first
-// (the app default), with a light-mode fallback that matches the palette.
-const STATUS_STYLES: Record<Job['status'], string> = {
-  pending:
-    'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
-  processing:
-    'border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300',
-  completed:
-    'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300',
-  failed:
-    'border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-300',
-  dead: 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300',
+// Shared StatusBadge tone family (DESIGN.md §5).
+const JOB_STATUS: Record<Job['status'], { label: string; tone: BadgeTone }> = {
+  pending: { label: 'Ожидание', tone: 'warning' },
+  processing: { label: 'Выполняется', tone: 'info' },
+  completed: { label: 'Завершено', tone: 'success' },
+  failed: { label: 'Ошибка', tone: 'danger' },
+  dead: { label: 'DLQ', tone: 'danger' },
 };
 
-function StatusBadge({ status }: { status: Job['status'] }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[status] ?? ''}`}
-    >
-      {status}
-    </span>
-  );
-}
-
-function formatEpoch(sec: number | undefined): string {
-  return sec ? new Date(sec * 1000).toLocaleString() : '—';
-}
+const formatEpoch = formatEpochSecondsRu;
 
 export function AdminJobsPage() {
   const [tab, setTab] = useState<'jobs' | 'dlq'>('jobs');
 
   return (
     <div className="container mx-auto py-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Jobs</h1>
-        <Button asChild variant="ghost">
-          <Link to="/admin">← Admin</Link>
-        </Button>
-      </div>
+      <PageHeader
+        title="Задачи"
+        actions={
+          <Button asChild variant="ghost">
+            <Link to="/admin">← Администрирование</Link>
+          </Button>
+        }
+      />
 
-      <div className="flex gap-2 border-b">
+      <div className="flex gap-2 border-b" role="tablist">
         {(['jobs', 'dlq'] as const).map((t) => (
           <button
             key={t}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+            role="tab"
+            aria-selected={tab === t}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
               tab === t
                 ? 'border-primary text-foreground'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
             onClick={() => setTab(t)}
           >
-            {t === 'jobs' ? 'All jobs' : 'Dead letter queue'}
+            {t === 'jobs' ? 'Все задачи' : 'Очередь недоставленных (DLQ)'}
           </button>
         ))}
       </div>
@@ -137,19 +128,26 @@ function JobsTab() {
 
   const columns: Column<Job>[] = [
     { header: 'ID', className: 'font-mono text-xs', cell: (j) => `${j.id.slice(0, 8)}…` },
-    { header: 'Type', className: 'font-mono', cell: (j) => j.type },
-    { header: 'Status', cell: (j) => <StatusBadge status={j.status} /> },
-    { header: 'Retries', cell: (j) => `${j.retry_count ?? 0}/${j.max_retries ?? 0}` },
-    { header: 'Worker', className: 'font-mono text-xs', cell: (j) => j.worker_id || '—' },
-    { header: 'Created', className: 'whitespace-nowrap', cell: (j) => formatEpoch(j.created_at) },
-    { header: 'Updated', className: 'whitespace-nowrap', cell: (j) => formatEpoch(j.updated_at) },
+    { header: 'Тип', className: 'font-mono', cell: (j) => j.type },
+    {
+      header: 'Статус',
+      cell: (j) => {
+        const s = JOB_STATUS[j.status];
+        return <StatusBadge label={s.label} tone={s.tone} />;
+      },
+    },
+    { header: 'Повторы', cell: (j) => `${j.retry_count ?? 0}/${j.max_retries ?? 0}` },
+    { header: 'Воркер', className: 'font-mono text-xs', cell: (j) => j.worker_id || '—' },
+    { header: 'Создана', className: 'whitespace-nowrap', cell: (j) => formatEpoch(j.created_at) },
+    { header: 'Обновлена', className: 'whitespace-nowrap', cell: (j) => formatEpoch(j.updated_at) },
   ];
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Input
-          placeholder="Filter by type (exact, e.g. account_email)"
+          placeholder="Фильтр по типу (точное совпадение, например account_email)"
+          aria-label="Фильтр по типу задачи"
           value={typeFilter}
           onChange={(e) => {
             setTypeFilter(e.target.value.trim());
@@ -157,7 +155,7 @@ function JobsTab() {
           }}
           className="max-w-xs"
         />
-        {data && <span className="text-sm text-muted-foreground">{data.total} total</span>}
+        {data && <span className="text-sm text-muted-foreground">Всего: {data.total}</span>}
       </div>
 
       <Card>
@@ -168,11 +166,15 @@ function JobsTab() {
             rowKey={(j) => j.id}
             isLoading={isLoading}
             error={error}
-            emptyText="No jobs recorded yet."
+            emptyText="Задач пока не зафиксировано."
             isPlaceholder={isPlaceholderData}
             rowProps={(j) => ({
               className: `cursor-pointer hover:bg-accent ${selected?.id === j.id ? 'bg-accent' : ''}`,
               onClick: () => setSelected(selected?.id === j.id ? null : j),
+              'aria-label':
+                selected?.id === j.id
+                  ? `Скрыть подробности задачи ${j.id}`
+                  : `Показать подробности задачи ${j.id}`,
             })}
           />
           {data && (
@@ -199,27 +201,23 @@ function JobDetailCard({ job, onClose }: { job: Job; onClose: () => void }) {
         <div className="flex gap-2">
           {traceLink(job.trace_id) && (
             <Button asChild size="sm" variant="outline">
-              <a
-                href={traceLink(job.trace_id)!}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Open trace
+              <a href={traceLink(job.trace_id)!} target="_blank" rel="noopener noreferrer">
+                Открыть трассировку
               </a>
             </Button>
           )}
           <Button size="sm" variant="ghost" onClick={onClose}>
-            Close
+            Закрыть
           </Button>
         </div>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <JobTimeline job={job} />
-        <DetailJson label="Payload" value={job.payload} />
-        {job.result != null && <DetailJson label="Result" value={job.result} />}
+        <DetailJson label="Данные" value={job.payload} />
+        {job.result != null && <DetailJson label="Результат" value={job.result} />}
         {job.error && (
           <div>
-            <p className="font-medium mb-1">Last error</p>
+            <p className="font-medium mb-1">Последняя ошибка</p>
             <pre className="rounded bg-destructive/10 text-destructive p-3 text-xs whitespace-pre-wrap">
               {job.error}
             </pre>
@@ -232,11 +230,10 @@ function JobDetailCard({ job, onClose }: { job: Job; onClose: () => void }) {
 
 /** Event timeline reconstructed from the job's own fields. */
 function JobTimeline({ job }: { job: Job }) {
-  const events: string[] = [`${formatEpoch(job.created_at)} — submitted (type ${job.type})`];
-  if (job.worker_id) events.push(`picked by ${job.worker_id}`);
-  if ((job.retry_count ?? 0) > 0)
-    events.push(`retried ${job.retry_count}/${job.max_retries} time(s)`);
-  events.push(`${formatEpoch(job.updated_at)} — ${job.status}`);
+  const events: string[] = [`${formatEpoch(job.created_at)} — создана (тип ${job.type})`];
+  if (job.worker_id) events.push(`взята воркером ${job.worker_id}`);
+  if ((job.retry_count ?? 0) > 0) events.push(`повторов: ${job.retry_count}/${job.max_retries}`);
+  events.push(`${formatEpoch(job.updated_at)} — ${JOB_STATUS[job.status]?.label ?? job.status}`);
   return (
     <ol className="border-l pl-4 space-y-1">
       {events.map((e, i) => (
@@ -280,9 +277,9 @@ function DlqTab() {
 
   const columns: Column<Job>[] = [
     { header: 'ID', className: 'font-mono text-xs', cell: (j) => `${j.id.slice(0, 8)}…` },
-    { header: 'Type', className: 'font-mono', cell: (j) => j.type },
+    { header: 'Тип', className: 'font-mono', cell: (j) => j.type },
     {
-      header: 'Error',
+      header: 'Ошибка',
       className: 'max-w-md truncate text-destructive',
       cell: (j) => (
         <span title={j.error} className="block max-w-md truncate">
@@ -290,7 +287,11 @@ function DlqTab() {
         </span>
       ),
     },
-    { header: 'Died at', className: 'whitespace-nowrap', cell: (j) => formatEpoch(j.updated_at) },
+    {
+      header: 'Время сбоя',
+      className: 'whitespace-nowrap',
+      cell: (j) => formatEpoch(j.updated_at),
+    },
     {
       header: '',
       className: 'text-right',
@@ -302,7 +303,7 @@ function DlqTab() {
           onClick={() => requeue.mutate(j.id)}
         >
           <RotateCcw className="h-3.5 w-3.5 mr-1" />
-          Requeue
+          Повторить
         </Button>
       ),
     },
@@ -312,7 +313,9 @@ function DlqTab() {
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>{data ? `${data.depth} job(s) in DLQ` : 'Dead letter queue'}</CardTitle>
+          <CardTitle>
+            {data ? `Задач в DLQ: ${data.depth}` : 'Очередь недоставленных (DLQ)'}
+          </CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
           <DataTable
@@ -321,7 +324,7 @@ function DlqTab() {
             rowKey={(j) => j.id}
             isLoading={isLoading}
             error={loadError}
-            emptyText="DLQ is empty — nothing exhausted its retries."
+            emptyText="DLQ пуста — ни одна задача не исчерпала попытки."
           />
         </CardContent>
       </Card>

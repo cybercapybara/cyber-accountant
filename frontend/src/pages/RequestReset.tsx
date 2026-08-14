@@ -34,14 +34,16 @@ export function RequestResetPage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Reset your password</CardTitle>
-          <CardDescription>We'll email a reset link if the address is registered.</CardDescription>
+          <CardTitle>Сброс пароля</CardTitle>
+          <CardDescription>
+            Если такой email зарегистрирован, мы отправим на него ссылку для сброса пароля.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {sent ? (
             <Alert>
               <AlertDescription>
-                If that email is registered, a reset link is on its way.
+                Если этот email зарегистрирован, ссылка для сброса пароля уже отправлена.
               </AlertDescription>
             </Alert>
           ) : (
@@ -54,11 +56,11 @@ export function RequestResetPage() {
                 {...register('email')}
               />
               <Button type="submit" className="w-full" disabled={isSubmitting || request.isPending}>
-                Send reset link
+                Отправить ссылку
               </Button>
               <div className="text-sm text-muted-foreground text-center">
                 <Link to="/login" className="hover:underline">
-                  Back to log in
+                  Назад ко входу
                 </Link>
               </div>
             </form>

@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { DataTable, type Column } from '@/components/DataTable';
+import { PageHeader } from '@/components/PageHeader';
 import { PaginationFooter } from '@/components/PaginationFooter';
+import { StatusBadge, type BadgeTone } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/toaster';
 import { useApiMutation } from '@/hooks/useApiMutation';
+import { useDocumentRender } from '@/hooks/useDocumentRender';
 import { useErrorToast } from '@/hooks/useErrorToast';
 import { usePagedQuery } from '@/hooks/usePagedQuery';
 import { ApiClientError, api } from '@/lib/api/client';
@@ -22,6 +25,7 @@ import type {
   DocumentUploadResponse,
   DownloadUrlResponse,
 } from '@/lib/api/types';
+import { formatIsoDateTimeRu } from '@/lib/dateFormat';
 
 const PER_PAGE = 20;
 
@@ -80,52 +84,26 @@ const STATUS_LABELS: Record<string, string> = {
 const SOURCE_LABELS: Record<string, string> = {
   generated: 'Сгенерирован',
   uploaded: 'Загружен',
-  email: 'Email',
+  email: 'Почта',
 };
 
-// FocusedDocumentAlert's polling cadence and hard cap. Fix round 1
-// (controller review): the previous version polled every 2s forever while
-// status stayed 'draft' — a LaTeX render failure or exhausted job retries
-// leave a document in 'draft' permanently, so that was an unbounded
-// background poll with no stop condition. Two minutes is generous for a
-// docgen render (seconds in practice); past that we stop and tell the user
-// plainly rather than keep claiming "рендер выполняется".
-const FOCUS_POLL_INTERVAL_MS = 2000;
-const FOCUS_POLL_TIMEOUT_MS = 120_000;
+// The polling cadence and hard cap FocusedDocumentAlert used to own inline
+// now live in useDocumentRender (hooks/useDocumentRender.ts) — four screens
+// wait for a docgen render, and they all need the same two bounds.
 
-// Thin-bordered, low-chroma badges — same palette family as Journal's
-// StatusBadge (pages/Journal.tsx) and admin/Jobs.tsx's, so a document's
+// Shared StatusBadge tone family (DESIGN.md §5) — a document's
 // "draft/final/sent/…" pill reads the same as any other status pill in the app.
-const STATUS_STYLES: Record<string, string> = {
-  draft:
-    'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
-  final:
-    'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300',
-  sent: 'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300',
-  recognized:
-    'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300',
-  linked:
-    'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300',
-  inbox:
-    'border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-500/30 dark:bg-slate-500/10 dark:text-slate-300',
-  archived:
-    'border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-500/30 dark:bg-slate-500/10 dark:text-slate-300',
+const STATUS_TONE: Record<string, BadgeTone> = {
+  draft: 'warning',
+  final: 'success',
+  sent: 'info',
+  recognized: 'info',
+  linked: 'info',
+  inbox: 'neutral',
+  archived: 'neutral',
 };
 
-function Badge({ text, className }: { text: string; className?: string }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium ${className ?? 'border-border bg-muted text-muted-foreground'}`}
-    >
-      {text}
-    </span>
-  );
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-}
+const formatDate = formatIsoDateTimeRu;
 
 async function sha256Hex(file: File): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
@@ -221,7 +199,7 @@ export function DocumentsPage() {
         body: vars.file,
       });
       if (!putResponse.ok) {
-        throw new Error(`Upload to storage failed: HTTP ${putResponse.status}`);
+        throw new Error(`Не удалось загрузить файл в хранилище: HTTP ${putResponse.status}`);
       }
       const checksum_sha256 = await sha256Hex(vars.file);
       return api.postJson<DocumentDetailResponse>(
@@ -258,12 +236,15 @@ export function DocumentsPage() {
   const columns: Column<Document>[] = [
     {
       header: 'Тип',
-      cell: (d) => <Badge text={DOC_TYPE_LABELS[d.doc_type] ?? d.doc_type} />,
+      cell: (d) => <StatusBadge label={DOC_TYPE_LABELS[d.doc_type] ?? d.doc_type} />,
     },
     {
       header: 'Статус',
       cell: (d) => (
-        <Badge text={STATUS_LABELS[d.status] ?? d.status} className={STATUS_STYLES[d.status]} />
+        <StatusBadge
+          label={STATUS_LABELS[d.status] ?? d.status}
+          tone={STATUS_TONE[d.status] ?? 'neutral'}
+        />
       ),
     },
     { header: 'Контрагент', cell: (d) => counterpartyName(d.counterparty_id) },
@@ -297,22 +278,20 @@ export function DocumentsPage() {
 
   return (
     <div className="container mx-auto max-w-6xl py-8 space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">Документы</h1>
-          <p className="text-sm text-muted-foreground">
-            Сгенерированные и загруженные документы организации.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setUploading((v) => !v)}>
-            {uploading ? 'Закрыть' : 'Загрузить'}
-          </Button>
-          <Button asChild>
-            <Link to="/documents/generate">Создать документ</Link>
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Документы"
+        description="Сгенерированные и загруженные документы организации."
+        actions={
+          <>
+            <Button variant="outline" onClick={() => setUploading((v) => !v)}>
+              {uploading ? 'Закрыть' : 'Загрузить'}
+            </Button>
+            <Button asChild>
+              <Link to="/documents/generate">Создать документ</Link>
+            </Button>
+          </>
+        }
+      />
 
       {focusId && (
         <FocusedDocumentAlert id={focusId} queuedFailed={queuedFailed} onDismiss={clearFocus} />
@@ -472,25 +451,7 @@ function FocusedDocumentAlert({
   onDismiss: () => void;
 }) {
   const toast = useToast();
-  const startedAtRef = useRef(Date.now());
-  const [timedOut, setTimedOut] = useState(false);
-
-  useEffect(() => {
-    if (queuedFailed) return; // never polling in this case — nothing to time out.
-    const timer = setTimeout(() => setTimedOut(true), FOCUS_POLL_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [queuedFailed]);
-
-  const docQ = useQuery({
-    queryKey: qk.documents.detail(id),
-    queryFn: () => api.getJson<DocumentDetailResponse>(`/api/v1/documents/${id}`),
-    refetchInterval: (query) => {
-      if (queuedFailed) return false;
-      if (query.state.data?.data.status !== 'draft') return false;
-      if (Date.now() - startedAtRef.current > FOCUS_POLL_TIMEOUT_MS) return false;
-      return FOCUS_POLL_INTERVAL_MS;
-    },
-  });
+  const render = useDocumentRender(id, !queuedFailed);
 
   const download = useApiMutation(
     () => api.postJson<DownloadUrlResponse>(`/api/v1/documents/${id}/download-url`),
@@ -503,9 +464,7 @@ function FocusedDocumentAlert({
     },
   );
 
-  const doc = docQ.data?.data;
-  const stillRenderingHonestly = !queuedFailed && !timedOut && doc?.status === 'draft';
-  const stuck = !queuedFailed && timedOut && doc?.status === 'draft';
+  const doc = render.document;
 
   return (
     <div className="space-y-3">
@@ -526,14 +485,14 @@ function FocusedDocumentAlert({
           </Button>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
-          {docQ.isLoading && <p className="text-muted-foreground">Загрузка статуса…</p>}
+          {render.isLoading && <p className="text-muted-foreground">Загрузка статуса…</p>}
           {doc && (
             <>
               <p>
                 {DOC_TYPE_LABELS[doc.doc_type] ?? doc.doc_type} — статус:{' '}
-                <Badge
-                  text={STATUS_LABELS[doc.status] ?? doc.status}
-                  className={STATUS_STYLES[doc.status]}
+                <StatusBadge
+                  label={STATUS_LABELS[doc.status] ?? doc.status}
+                  tone={STATUS_TONE[doc.status] ?? 'neutral'}
                 />
               </p>
               {queuedFailed && doc.status === 'draft' && (
@@ -541,12 +500,12 @@ function FocusedDocumentAlert({
                   Задача рендера не поставлена. Попробуйте сгенерировать документ заново.
                 </p>
               )}
-              {stillRenderingHonestly && (
+              {render.rendering && (
                 <p className="text-muted-foreground">
                   Рендер выполняется, страница обновится автоматически…
                 </p>
               )}
-              {stuck && (
+              {render.stuck && (
                 <div className="space-y-2">
                   <p className="text-muted-foreground">
                     Рендер занимает дольше обычного — обновите страницу позже.
@@ -554,14 +513,14 @@ function FocusedDocumentAlert({
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => docQ.refetch()}
-                    disabled={docQ.isFetching}
+                    onClick={() => render.refetch()}
+                    disabled={render.isFetching}
                   >
                     Обновить
                   </Button>
                 </div>
               )}
-              {doc.status !== 'draft' && (
+              {render.ready && (
                 <Button size="sm" onClick={() => download.mutate()} disabled={download.isPending}>
                   Скачать
                 </Button>

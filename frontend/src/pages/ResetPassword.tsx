@@ -34,16 +34,16 @@ export function ResetPasswordPage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Set a new password</CardTitle>
+          <CardTitle>Новый пароль</CardTitle>
         </CardHeader>
         <CardContent>
           {reset.isSuccess ? (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Password updated. You can log in now.
+                Пароль обновлён. Теперь вы можете войти.
               </p>
               <Button asChild className="w-full">
-                <Link to="/login">Continue to log in</Link>
+                <Link to="/login">Перейти ко входу</Link>
               </Button>
             </div>
           ) : (
@@ -51,19 +51,19 @@ export function ResetPasswordPage() {
               <FormField
                 id="new_password"
                 type="password"
-                label="New password"
+                label="Новый пароль"
                 error={errors.new_password?.message}
                 {...register('new_password')}
               />
               <FormField
                 id="new_password_confirm"
                 type="password"
-                label="Confirm new password"
+                label="Подтверждение нового пароля"
                 error={errors.new_password_confirm?.message}
                 {...register('new_password_confirm')}
               />
               <Button type="submit" className="w-full" disabled={isSubmitting || reset.isPending}>
-                Update password
+                Обновить пароль
               </Button>
             </form>
           )}

@@ -31,17 +31,17 @@ export function ChangeEmailPage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Change your email</CardTitle>
+          <CardTitle>Смена email</CardTitle>
           <CardDescription>
-            We'll send a confirmation link to the new address. Your current email stays active
-            until you click it.
+            Мы отправим ссылку для подтверждения на новый адрес. Текущий email останется активным,
+            пока вы не перейдёте по ней.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {change.isSuccess ? (
             <Alert variant="success">
               <AlertDescription>
-                Confirmation email queued. Check the new address for a link.
+                Письмо с подтверждением отправлено. Проверьте новый адрес.
               </AlertDescription>
             </Alert>
           ) : (
@@ -49,19 +49,19 @@ export function ChangeEmailPage() {
               <FormField
                 id="new_email"
                 type="email"
-                label="New email"
+                label="Новый email"
                 error={errors.new_email?.message}
                 {...register('new_email')}
               />
               <FormField
                 id="password"
                 type="password"
-                label="Confirm with current password"
+                label="Подтвердите текущим паролем"
                 error={errors.password?.message}
                 {...register('password')}
               />
               <Button type="submit" className="w-full" disabled={isSubmitting || change.isPending}>
-                Send confirmation link
+                Отправить ссылку подтверждения
               </Button>
             </form>
           )}

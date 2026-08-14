@@ -32,14 +32,14 @@ export const RoleSelect = forwardRef<HTMLSelectElement, RoleSelectProps>(functio
   if (roles.length === 0) {
     return (
       <select disabled aria-busy={rolesQ.isLoading} className={selectClass}>
-        <option>{rolesQ.isLoading ? 'Loading…' : 'No roles'}</option>
+        <option>{rolesQ.isLoading ? 'Загрузка…' : 'Нет ролей'}</option>
       </select>
     );
   }
 
   return (
     <select ref={ref} className={selectClass} {...props}>
-      {includeDefaultOption && <option value="">(default)</option>}
+      {includeDefaultOption && <option value="">(по умолчанию)</option>}
       {roles.map((r) => (
         <option key={r.id} value={r.id}>
           {r.name}

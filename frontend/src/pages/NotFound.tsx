@@ -6,12 +6,13 @@ export function NotFoundPage() {
   return (
     <div className="container mx-auto flex max-w-md flex-col items-center gap-4 py-24 text-center">
       <p className="text-6xl font-bold text-muted-foreground">404</p>
-      <h1 className="text-2xl font-semibold">Page not found</h1>
+      <h1 className="text-2xl font-semibold">Страница не найдена</h1>
       <p className="text-muted-foreground">
-        That page doesn&apos;t exist or has moved. Check the address, or head back home.
+        Такой страницы не существует или она была перемещена. Проверьте адрес или вернитесь на
+        главную.
       </p>
       <Button asChild>
-        <Link to="/">Back to home</Link>
+        <Link to="/">На главную</Link>
       </Button>
     </div>
   );

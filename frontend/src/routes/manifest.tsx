@@ -1,5 +1,16 @@
 import { lazy, type ReactElement } from 'react';
-import { Shield, ScrollText, Building2, Users, BookOpenText, FileText } from 'lucide-react';
+import {
+  Shield,
+  ScrollText,
+  Building2,
+  Users,
+  BookOpenText,
+  FileText,
+  UsersRound,
+  BriefcaseBusiness,
+  Wallet,
+  Landmark,
+} from 'lucide-react';
 
 import { Permission } from '@/lib/auth/permissions';
 
@@ -22,6 +33,10 @@ import { CounterpartiesPage } from '@/pages/Counterparties';
 import { JournalPage } from '@/pages/Journal';
 import { DocumentsPage } from '@/pages/Documents';
 import { GenerateDocumentPage } from '@/pages/GenerateDocument';
+import { EmployeesPage } from '@/pages/Employees';
+import { HrOrdersPage } from '@/pages/HrOrders';
+import { PayrollPage } from '@/pages/Payroll';
+import { TaxesPage } from '@/pages/Taxes';
 
 // Admin pages are code-split: a logged-out visitor on /login should not pull
 // the whole admin bundle. React.lazy needs a module with a `default` export,
@@ -91,8 +106,8 @@ export interface RouteEntry {
 
 export const routes: RouteEntry[] = [
   // ── Public ────────────────────────────────────────────────────────────
-  { path: '/', element: <HomePage />, guard: 'public', navLabel: 'Home' },
-  { path: '/about', element: <AboutPage />, guard: 'public', navLabel: 'About' },
+  { path: '/', element: <HomePage />, guard: 'public', navLabel: 'Главная' },
+  { path: '/about', element: <AboutPage />, guard: 'public', navLabel: 'О сервисе' },
   { path: '/login', element: <LoginPage />, guard: 'public' },
   { path: '/register', element: <RegisterPage />, guard: 'public' },
   { path: '/account/check-email', element: <CheckEmailPage />, guard: 'public' },
@@ -127,7 +142,7 @@ export const routes: RouteEntry[] = [
     path: '/admin',
     element: <AdminDashboardPage />,
     guard: 'admin',
-    navLabel: 'Admin',
+    navLabel: 'Администрирование',
     navIcon: Shield,
   },
   { path: '/admin/users', element: <AdminUsersPage />, guard: 'admin' },
@@ -146,40 +161,68 @@ export const routes: RouteEntry[] = [
     element: <AdminAuditPage />,
     guard: 'confirmed',
     requirePermission: Permission.AuditRead,
-    navLabel: 'Audit',
+    navLabel: 'Аудит',
     navIcon: ScrollText,
   },
   {
     path: '/organizations',
     element: <OrganizationsPage />,
     guard: 'confirmed',
-    navLabel: 'Organizations',
+    navLabel: 'Организации',
     navIcon: Building2,
   },
   {
     path: '/counterparties',
     element: <CounterpartiesPage />,
     guard: 'confirmed',
-    navLabel: 'Counterparties',
+    navLabel: 'Контрагенты',
     navIcon: Users,
   },
   {
     path: '/journal',
     element: <JournalPage />,
     guard: 'confirmed',
-    navLabel: 'Journal',
+    navLabel: 'Журнал проводок',
     navIcon: BookOpenText,
   },
   {
     path: '/documents',
     element: <DocumentsPage />,
     guard: 'confirmed',
-    navLabel: 'Documents',
+    navLabel: 'Документы',
     navIcon: FileText,
   },
   // No navLabel: reached from DocumentsPage's "Создать документ" button,
   // not a top-level nav destination.
   { path: '/documents/generate', element: <GenerateDocumentPage />, guard: 'confirmed' },
+  {
+    path: '/employees',
+    element: <EmployeesPage />,
+    guard: 'confirmed',
+    navLabel: 'Сотрудники',
+    navIcon: UsersRound,
+  },
+  {
+    path: '/hr',
+    element: <HrOrdersPage />,
+    guard: 'confirmed',
+    navLabel: 'Кадры',
+    navIcon: BriefcaseBusiness,
+  },
+  {
+    path: '/payroll',
+    element: <PayrollPage />,
+    guard: 'confirmed',
+    navLabel: 'Зарплата',
+    navIcon: Wallet,
+  },
+  {
+    path: '/taxes',
+    element: <TaxesPage />,
+    guard: 'confirmed',
+    navLabel: 'Налоги',
+    navIcon: Landmark,
+  },
 ];
 
 /** The permission a guard implies, for nav-link filtering in Nav.tsx. */

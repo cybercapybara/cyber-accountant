@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["kind", "number", "issued_on", "employer", "employee", "effective_from", "director"],
+  "properties": {
+    "kind": {"type": "string", "enum": ["hire", "dismiss", "vacation", "business_trip", "salary_change"]},
+    "number": {"type": "string", "minLength": 1},
+    "issued_on": {"type": "string", "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$"},
+    "employer": {"$ref": "#/definitions/employer"},
+    "employee": {"$ref": "#/definitions/employee"},
+    "effective_from": {"type": "string", "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$"},
+    "effective_to": {"type": "string"},
+    "reason": {"type": "string"},
+    "details": {"type": "string"},
+    "director": {"type": "string"}
+  },
+  "definitions": {
+    "employer": {
+      "type": "object",
+      "required": ["name", "bin"],
+      "properties": {
+        "name": {"type": "string"}, "bin": {"type": "string"}
+      }
+    },
+    "employee": {
+      "type": "object",
+      "required": ["full_name", "iin", "position"],
+      "properties": {
+        "full_name": {"type": "string"}, "iin": {"type": "string"}, "position": {"type": "string"}
+      }
+    }
+  }
+}

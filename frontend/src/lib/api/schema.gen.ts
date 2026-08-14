@@ -3097,6 +3097,1745 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/employees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List employees for the caller's organization (paginated, includes dismissed) */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Employee page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EmployeeListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create an employee (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["EmployeeCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EmployeeDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description An employee with that IIN already exists in this organization */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description iin fails its check digit, salary fails to parse (Ledger::parse_tiyn), or hired_on is not a calendar-valid date */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employees/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get an employee */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Employee */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EmployeeDetailResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including an employee belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch an employee's editable fields (accountant/owner only)
+         * @description Patches every field Hr::EmployeeRepository::update() allows in one
+         *     call — hired_on/status/dismissed_on are NOT among them.
+         *     Including any of those three (non-null) in the body is rejected with
+         *     422, not silently ignored: hired_on is immutable after hire, and
+         *     status/dismissed_on change only through
+         *     POST /employees/{id}/dismiss.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["EmployeeUpdate"];
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EmployeeDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including an employee belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The patched iin collides with another employee in this organization */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description iin fails its check digit, salary fails to parse, or hired_on/status/dismissed_on was included in the body */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/employees/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss an employee (accountant/owner only)
+         * @description Sets status='dismissed' and dismissed_on in one call — the only way
+         *     to change either field (Hr::EmployeeRepository::dismiss()). A wrong
+         *     org, a missing id, and an already-dismissed employee are all
+         *     indistinguishable 404s.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["EmployeeDismiss"];
+                };
+            };
+            responses: {
+                /** @description Dismissed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EmployeeDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description dismissed_on is not a calendar-valid date */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hr-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List HR orders for the caller's organization (paginated, optional ?employee_id filter) */
+        get: {
+            parameters: {
+                query?: {
+                    employee_id?: string;
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description HR-order page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrOrderListResponse"];
+                    };
+                };
+                /** @description employee_id is present but not a well-formed uuid */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create an HR order (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HrOrderCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrOrderDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description kind is not one of the registered values, issued_on/effective_from/effective_to is not calendar-valid, or employee_id does not belong to this organization */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hr-orders/{id}/generate-document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate the hr_order document for an HR order (accountant/owner only)
+         * @description Builds the hr_order template input from the order + its employee +
+         *     the organization, deep-merges an optional request body on top for
+         *     the free-text fields not on file (director, reason, details, ...),
+         *     creates a draft document (doc_type='hr', source='generated'),
+         *     attaches it back onto the order (hr_orders.document_id), and
+         *     enqueues a docgen.render job — same async contract as
+         *     POST /documents/generate.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["GenerateHrDocumentExtra"];
+                };
+            };
+            responses: {
+                /** @description Accepted — render enqueued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GenerateDocumentResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including an HR order belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the hr_order template's JSON Schema (e.g. a required free-text field was not supplied) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Job queue not enabled */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/labor-contracts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List labor contracts for one employee (unpaginated; ?employee_id is required) */
+        get: {
+            parameters: {
+                query: {
+                    employee_id: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Labor contracts */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LaborContractListResponse"];
+                    };
+                };
+                /** @description employee_id is missing or not a well-formed uuid */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a labor contract (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LaborContractCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LaborContractDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description signed_on/starts_on/ends_on is not calendar-valid, or employee_id does not belong to this organization */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/labor-contracts/{id}/generate-document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate the labor_contract document for a labor contract (accountant/owner only)
+         * @description Same shape as the hr-orders variant, sourced from the contract + its
+         *     employee + the organization. labor_contracts has no document_id
+         *     column, so there is no attach-back step here.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["GenerateHrDocumentExtra"];
+                };
+            };
+            responses: {
+                /** @description Accepted — render enqueued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GenerateDocumentResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a labor contract belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the labor_contract template's JSON Schema (e.g. a required free-text field was not supplied) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Job queue not enabled */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/vacations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List vacations for the caller's organization (paginated, optional ?employee_id filter) */
+        get: {
+            parameters: {
+                query?: {
+                    employee_id?: string;
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Vacation page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["VacationListResponse"];
+                    };
+                };
+                /** @description employee_id is present but not a well-formed uuid */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a vacation record (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["VacationCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["VacationDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description starts_on/ends_on is not calendar-valid, ends_on is before starts_on, days is not positive, kind is not one of the registered values, or employee_id does not belong to this organization */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/payroll-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List payroll runs for the caller's organization (paginated, optional ?year filter) */
+        get: {
+            parameters: {
+                query?: {
+                    year?: number;
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Payroll-run page (headers only — `payslips` is empty here) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PayrollRunListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description year is present but not an in-range 4-digit calendar year */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Calculate (or recalculate) a period's payroll run (accountant/owner only)
+         * @description Runs Payroll::calculate over every ACTIVE employee and persists the
+         *     run header plus one payslip each, resolving rates/constants on the
+         *     last calendar day of the period. Answers 200, not 201: a second call
+         *     for the same period REPLACES the draft's payslips rather than
+         *     creating a second run (payroll_runs is UNIQUE per org/period).
+         *     Recalculating a run that is already approved is a 409.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PayrollRunCreate"];
+                };
+            };
+            responses: {
+                /** @description The run with every payslip it produced */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PayrollRunDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The run for this period is already approved and cannot be recalculated */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description year or month is out of range, or no tax rate/constant is in force on the last day of the period (the response names the missing one) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/payroll-runs/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve a draft payroll run (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Approved, with the run's payslips */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PayrollRunDetailResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a run belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The run exists but is not in status draft */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/payroll-runs/{id}/post-to-journal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post an approved payroll run to the journal as one balanced entry (accountant/owner only)
+         * @description Sums every payslip and posts a single balanced journal entry (debit
+         *     7210 for the full employer cost; credits 3350/3120/3220/3210/3230 and,
+         *     when non-zero, 3150). The run must be `approved`, and a run that has
+         *     already been posted (`journal_entry_id` set) is refused — both are
+         *     409s, never a duplicate ledger entry.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Posted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PostToJournalResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a run belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The run is not approved yet, has already been posted, or has no payslips (empty_run) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/payroll-runs/{id}/payslips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List a payroll run's payslips (unpaginated — one per active employee) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Payslips */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PayslipListResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a run belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/payroll-runs/{id}/payslips/{employee_id}/generate-document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                employee_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate the payslip document for one employee of a run (accountant/owner only)
+         * @description Builds the `payslip` template input from the payslip + employee +
+         *     organization, deep-merges an optional request body on top for the
+         *     one field not on file (`net_words`), creates a draft document
+         *     (doc_type='hr', source='generated') and enqueues a docgen.render job
+         *     — same async contract as POST /documents/generate. Every other field
+         *     is authoritative (the payslip's own amounts, the employee's iin/name,
+         *     the organization's bin/name) and CANNOT be overridden: any other body
+         *     key is a 422 `not_allowed_override` naming that field, checked before
+         *     the merge. Amounts are rendered with Ledger::format_tiyn
+         *     ("300000.00").
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    employee_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["PayslipDocumentExtra"];
+                };
+            };
+            responses: {
+                /** @description Accepted — render enqueued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GenerateDocumentResponse"];
+                    };
+                };
+                /** @description Malformed id/employee_id, or body is not a JSON object */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No such run in this organization, or the run has no payslip for that employee */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the payslip template's JSON Schema (e.g. net_words was not supplied) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Job queue not enabled */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tax/rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tax rates and constants in force on a date
+         * @description System reference data (`tax_rates`/`tax_constants` have no org_id at
+         *     all — the documented exception #2 to org-scoping), intended for UI
+         *     hints. The org guard only establishes that the caller has access to
+         *     some organization.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Effective date; defaults to today (UTC) */
+                    on?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Rates and constants in force */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaxRatesResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description on is not a calendar-valid date */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tax/calculations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List stored tax calculations (paginated, optional ?kind and ?year filters) */
+        get: {
+            parameters: {
+                query?: {
+                    kind?: "snr_simplified" | "vat";
+                    /** @description Matched against the year of period_from */
+                    year?: number;
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Calculation page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaxCalculationListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description kind is not one of the registered values, or year is not a 4-digit calendar year */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Run a tax calculation for a period (accountant/owner only)
+         * @description Computes СНР на основе упрощённой декларации (half-year) or НДС
+         *     (quarter) from posted journal entries and stores it with both
+         *     reproducibility snapshots. Answers 200, not 201: recalculating the
+         *     same (kind, period) REPLACES the stored row rather than adding one.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TaxCalculationCreate"];
+                };
+            };
+            responses: {
+                /** @description The calculation, with its input and result snapshots */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaxCalculationDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description kind is not one of the registered values, period_from/period_to is not calendar-valid, period_to is before period_from, or no rate is in force on period_to */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tax/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Registration-threshold alerts for the caller's organization
+         * @description Fires from 90% of either legal threshold (VAT registration, СНР
+         *     income limit) measured over the trailing 12 months of posted income.
+         *     `threshold_tiyn` always reports the real 100% threshold.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description As-of date; defaults to today (UTC) */
+                    on?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Alerts (possibly an empty list) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaxAlertListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description on is not a calendar-valid date, or a threshold constant is not in force on that date */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tax/deadlines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Upcoming tax deadlines within a horizon
+         * @description System reference data (`tax_deadlines` has no org_id — the documented
+         *     exception #3 to org-scoping). Due dates are shifted off Saturday and
+         *     Sunday; Kazakhstani public holidays are explicitly out of scope in P2.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description As-of date; defaults to today (UTC) */
+                    on?: string;
+                    /** @description Clamped into range rather than rejected */
+                    horizon_days?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deadlines, soonest first */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaxDeadlineListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description on is not a calendar-valid date */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tax/filings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List tax filings for the caller's organization (paginated, optional ?kind filter) */
+        get: {
+            parameters: {
+                query?: {
+                    kind?: "910.00" | "300.00";
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filing page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaxFilingListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description kind is not one of the registered form codes */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Generate a ФНО filing — XML into object storage plus a printable form (accountant/owner only)
+         * @description Everything that can reject the request runs first (allowlists —
+         *     including the `document_input` override allowlist — the calculation
+         *     lookup, the form/calculation kind pairing, the print template's JSON
+         *     Schema over the merged `document_input`), so a rejected request
+         *     leaves no object in storage and no document row behind. Only then is the XML written, the document created, the
+         *     filing row inserted and the render job enqueued.
+         *
+         *     `xml_ready` and `render_queued` are both best-effort flags and may be
+         *     false in a successful 202 — see their schema descriptions.
+         *     `schema_validated` on the stored filing is always false: KGD
+         *     publishes no content XSD for any ФНО form.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TaxFilingCreate"];
+                };
+            };
+            responses: {
+                /** @description Accepted — filing recorded, render enqueued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaxFilingCreateResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field, or a malformed calculation_id) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description kind is not a registered form code, calculation_id does not belong to this organization, the form does not match the calculation's kind, the stored calculation cannot be rendered as this form (including a result_snapshot missing a figure the form needs), document_input tries to override a field derived from stored data (not_allowed_override), or the merged document_input fails the template's JSON Schema */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Object storage is not configured, or the job queue is not enabled */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tax/filings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get a tax filing */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Filing */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaxFilingDetailResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a filing belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tax/filings/{id}/download-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a presigned download URL for one of the filing's artifacts
+         * @description `artifact=xml` points at the filing's own `xml_s3_key`;
+         *     `artifact=pdf` points at the linked document's `s3_key`, written by
+         *     the docgen.render worker — the two are always different objects.
+         *     Read-only (mints a URL, writes nothing), so this route does NOT
+         *     reject viewers.
+         */
+        post: {
+            parameters: {
+                query?: {
+                    artifact?: "xml" | "pdf";
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Presigned URL */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FilingDownloadUrlResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a filing belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The requested artifact does not exist yet: no XML (no_xml), no printable document (no_document), or the document has not been rendered (not_rendered) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description artifact is neither xml nor pdf */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Presigning requires the S3 storage backend */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs": {
         parameters: {
             query?: never;
@@ -3766,6 +5505,510 @@ export interface components {
             document_id: string;
             /** @description false if the docgen.render job could not be enqueued (e.g. a transient Redis error) — the document row still exists as draft; an operator must re-enqueue it (Fix round 1: best-effort enqueue) */
             render_queued: boolean;
+        };
+        Employee: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** @description 12 digits + valid check digit */
+            iin: string;
+            last_name: string;
+            first_name: string;
+            middle_name: string | null;
+            position: string;
+            /**
+             * Format: int64
+             * @description Salary in tiyn (1/100 tenge)
+             */
+            salary_tiyn: number;
+            /** Format: date */
+            hired_on: string;
+            /** Format: date */
+            dismissed_on: string | null;
+            ipn_deduction_claimed: boolean;
+            opvr_exempt: boolean;
+            payout_iik: string;
+            /** @enum {string} */
+            status: "active" | "dismissed";
+            created_at: string;
+            updated_at: string;
+        };
+        EmployeeListResponse: {
+            data: components["schemas"]["Employee"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        EmployeeDetailResponse: {
+            data: components["schemas"]["Employee"];
+        };
+        EmployeeCreate: {
+            /** @description ИИН, 12 digits + valid check digit */
+            iin: string;
+            last_name: string;
+            first_name: string;
+            middle_name?: string;
+            position: string;
+            /** @description Decimal string in tenge, e.g. "300000.00" — parsed via Ledger::parse_tiyn, must be strictly positive */
+            salary: string;
+            /** @description Calendar-valid date; immutable after creation */
+            hired_on: string;
+            /** @default false */
+            ipn_deduction_claimed: boolean;
+            /** @default false */
+            opvr_exempt: boolean;
+            /** @default  */
+            payout_iik: string;
+        };
+        EmployeeUpdate: {
+            iin: string;
+            last_name: string;
+            first_name: string;
+            middle_name?: string;
+            position: string;
+            /** @description Decimal string in tenge, e.g. "300000.00" */
+            salary: string;
+            ipn_deduction_claimed?: boolean;
+            opvr_exempt?: boolean;
+            payout_iik?: string;
+        };
+        EmployeeDismiss: {
+            /** @description Calendar-valid date */
+            dismissed_on: string;
+        };
+        HrOrder: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** Format: uuid */
+            employee_id: string;
+            /** @enum {string} */
+            kind: "hire" | "dismiss" | "vacation" | "business_trip" | "salary_change";
+            number: string;
+            /** Format: date */
+            issued_on: string;
+            /** Format: date */
+            effective_from: string;
+            /** Format: date */
+            effective_to: string | null;
+            payload: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: uuid */
+            document_id: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        HrOrderListResponse: {
+            data: components["schemas"]["HrOrder"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        HrOrderDetailResponse: {
+            data: components["schemas"]["HrOrder"];
+        };
+        HrOrderCreate: {
+            /**
+             * Format: uuid
+             * @description Must belong to the caller's organization (422 foreign_employee otherwise)
+             */
+            employee_id: string;
+            /** @enum {string} */
+            kind: "hire" | "dismiss" | "vacation" | "business_trip" | "salary_change";
+            number: string;
+            issued_on: string;
+            effective_from: string;
+            effective_to?: string;
+            payload?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid. ALLOWLISTED — hr_order accepts director/reason/details; labor_contract accepts salary_words/work_schedule/probation_months/employer.director/employer.address/employee.address. Anything else is rejected 422 not_allowed_override naming that field */
+        GenerateHrDocumentExtra: {
+            [key: string]: unknown;
+        };
+        LaborContract: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** Format: uuid */
+            employee_id: string;
+            number: string;
+            /** Format: date */
+            signed_on: string;
+            /** Format: date */
+            starts_on: string;
+            /** Format: date */
+            ends_on: string | null;
+            terms_json: {
+                [key: string]: unknown;
+            } | null;
+            created_at: string;
+            updated_at: string;
+        };
+        LaborContractListResponse: {
+            data: components["schemas"]["LaborContract"][];
+        };
+        LaborContractDetailResponse: {
+            data: components["schemas"]["LaborContract"];
+        };
+        LaborContractCreate: {
+            /**
+             * Format: uuid
+             * @description Must belong to the caller's organization (422 foreign_employee otherwise)
+             */
+            employee_id: string;
+            number: string;
+            signed_on: string;
+            starts_on: string;
+            ends_on?: string;
+            terms_json?: {
+                [key: string]: unknown;
+            };
+        };
+        Vacation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** Format: uuid */
+            employee_id: string;
+            /** Format: date */
+            starts_on: string;
+            /** Format: date */
+            ends_on: string;
+            days: number;
+            /** @enum {string} */
+            kind: "annual" | "unpaid" | "sick";
+            created_at: string;
+            updated_at: string;
+        };
+        VacationListResponse: {
+            data: components["schemas"]["Vacation"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        VacationDetailResponse: {
+            data: components["schemas"]["Vacation"];
+        };
+        VacationCreate: {
+            /**
+             * Format: uuid
+             * @description Must belong to the caller's organization (422 foreign_employee otherwise)
+             */
+            employee_id: string;
+            starts_on: string;
+            /** @description Must be on or after starts_on (422 before_starts_on otherwise) */
+            ends_on: string;
+            days: number;
+            /** @enum {string} */
+            kind: "annual" | "unpaid" | "sick";
+        };
+        Payslip: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            employee_id: string;
+            /**
+             * Format: int64
+             * @description Начислено, тиын
+             */
+            gross_tiyn: number;
+            /**
+             * Format: int64
+             * @description ОПВ, тиын
+             */
+            opv: number;
+            /**
+             * Format: int64
+             * @description ВОСМС, тиын
+             */
+            vosms: number;
+            /**
+             * Format: int64
+             * @description ИПН, тиын
+             */
+            ipn: number;
+            /**
+             * Format: int64
+             * @description К выплате, тиын
+             */
+            net: number;
+            /**
+             * Format: int64
+             * @description ОПВР (за счёт работодателя), тиын
+             */
+            opvr: number;
+            /**
+             * Format: int64
+             * @description СО, тиын
+             */
+            so: number;
+            /**
+             * Format: int64
+             * @description ОСМС, тиын
+             */
+            osms: number;
+            /**
+             * Format: int64
+             * @description Социальный налог, тиын (0 на СНР упрощёнке)
+             */
+            social_tax: number;
+            created_at: string;
+            updated_at: string;
+        };
+        PayrollRun: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            period_year: number;
+            period_month: number;
+            /** @enum {string} */
+            status: "draft" | "approved";
+            calculated_at: string;
+            /** @description Exact rates/constants resolved on the last day of the period — the reproducibility record */
+            rates_snapshot: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format: uuid
+             * @description Non-null once posted; the compare-and-swap guard against a double post
+             */
+            journal_entry_id: string | null;
+            posted_at: string | null;
+            created_at: string;
+            updated_at: string;
+            payslips: components["schemas"]["Payslip"][];
+        };
+        PayrollRunListResponse: {
+            data: components["schemas"]["PayrollRun"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        PayrollRunDetailResponse: {
+            data: components["schemas"]["PayrollRun"];
+        };
+        PayslipListResponse: {
+            data: components["schemas"]["Payslip"][];
+        };
+        PayrollRunCreate: {
+            year: number;
+            month: number;
+        };
+        PostToJournalResponse: {
+            /**
+             * Format: uuid
+             * @description The single balanced journal entry this run was posted as
+             */
+            entry_id: string;
+        };
+        /** @description Merged on top of the auto-derived base input before template-schema validation. ALLOWLISTED — `net_words` is the only accepted key; anything else is rejected 422 not_allowed_override naming that field */
+        PayslipDocumentExtra: {
+            [key: string]: unknown;
+        };
+        TaxRate: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "vat" | "snr_simplified" | "ipn" | "opv" | "opvr" | "so" | "osms" | "vosms" | "social_tax";
+            /**
+             * Format: int64
+             * @description Basis points (1 bp = 0.01%), e.g. 1600 = 16%
+             */
+            rate_bp: number;
+            /** @description null = republic-wide default */
+            region: string | null;
+            /** Format: date */
+            effective_from: string;
+            /** Format: date */
+            effective_to: string | null;
+            source_note: string;
+        };
+        TaxConstant: {
+            /** Format: uuid */
+            id: string;
+            /** @description e.g. mrp, mzp, ipn_deduction_mrp, vat_threshold_tenge */
+            key: string;
+            /** Format: int64 */
+            value_tiyn: number;
+            /**
+             * Format: int64
+             * @description Multiplier of МРП/МЗП when the value is legally expressed that way
+             */
+            value_units: number | null;
+            /** Format: date */
+            effective_from: string;
+            /** Format: date */
+            effective_to: string | null;
+            source_note: string;
+        };
+        TaxRatesResponse: {
+            data: {
+                /**
+                 * Format: date
+                 * @description The effective date the lists were resolved at (defaults to today)
+                 */
+                on: string;
+                rates: components["schemas"]["TaxRate"][];
+                constants: components["schemas"]["TaxConstant"][];
+            };
+        };
+        TaxCalculation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** @enum {string} */
+            kind: "snr_simplified" | "vat";
+            /** Format: date */
+            period_from: string;
+            /** Format: date */
+            period_to: string;
+            computed_at: string;
+            /** @description Every rate/constant/account-set/period bound the calculation used */
+            input_snapshot: {
+                [key: string]: unknown;
+            };
+            /** @description Every intermediate and final figure, all in tiyn */
+            result_snapshot: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format: int64
+             * @description Tax due (snr_simplified) or net VAT balance (vat) — signed: negative is a refund position
+             */
+            total_tiyn: number;
+        };
+        TaxCalculationListResponse: {
+            data: components["schemas"]["TaxCalculation"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        TaxCalculationDetailResponse: {
+            data: components["schemas"]["TaxCalculation"];
+        };
+        TaxCalculationCreate: {
+            /** @enum {string} */
+            kind: "snr_simplified" | "vat";
+            /** @description Half-year start for snr_simplified, quarter start for vat */
+            period_from: string;
+            /** @description Must be on or after period_from */
+            period_to: string;
+        };
+        TaxAlert: {
+            /** @enum {string} */
+            kind: "vat_registration" | "snr_limit";
+            message: string;
+            /**
+             * Format: int64
+             * @description Trailing-12-month posted income, tiyn
+             */
+            current_tiyn: number;
+            /**
+             * Format: int64
+             * @description The real (100%) legal threshold — an alert fires from 90% of it
+             */
+            threshold_tiyn: number;
+        };
+        TaxAlertListResponse: {
+            data: components["schemas"]["TaxAlert"][];
+        };
+        TaxDeadline: {
+            /** @description e.g. "910.00", "300.00" */
+            form: string;
+            /** @description e.g. "report", "payment" */
+            kind: string;
+            /** @description Russian label, e.g. "I полугодие 2026" */
+            period_label: string;
+            /**
+             * Format: date
+             * @description Already shifted off Saturday/Sunday (public holidays are out of scope in P2)
+             */
+            due_date: string;
+            days_left: number;
+        };
+        TaxDeadlineListResponse: {
+            data: components["schemas"]["TaxDeadline"][];
+        };
+        TaxFiling: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /**
+             * @description ФНО form code — a different vocabulary from the calculation kind
+             * @enum {string}
+             */
+            kind: "910.00" | "300.00";
+            /** Format: date */
+            period_from: string;
+            /** Format: date */
+            period_to: string;
+            /** @enum {string} */
+            status: "draft" | "generated" | "submitted_manually";
+            /** Format: uuid */
+            calculation_id: string;
+            /** @description null while status is draft (the XML never reached storage) */
+            xml_s3_key: string | null;
+            /**
+             * Format: uuid
+             * @description The printable form; poll GET /api/v1/documents/{id} for its render status
+             */
+            document_id: string | null;
+            /** @description Always false — KGD publishes no content XSD for any ФНО form */
+            schema_validated: boolean;
+            created_at: string;
+            updated_at: string;
+        };
+        TaxFilingListResponse: {
+            data: components["schemas"]["TaxFiling"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        TaxFilingDetailResponse: {
+            data: components["schemas"]["TaxFiling"];
+        };
+        TaxFilingCreate: {
+            /** @enum {string} */
+            kind: "910.00" | "300.00";
+            /**
+             * Format: uuid
+             * @description 910.00 needs a snr_simplified calculation, 300.00 a vat one (422 kind_mismatch otherwise); must belong to the caller's organization
+             */
+            calculation_id: string;
+            /** @description Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. ALLOWLISTED — only the fields the database cannot hold may appear: director, accountant, tax_words (910.00); director, accountant, balance_words (300.00). Any other key — the org identity, the period, and every amount including the ФНО 300.00 revenue turnover `sales_tenge`, which is derived from the calculation's own snapshot — is rejected 422 not_allowed_override naming that field, before the merge happens. Left open here (additionalProperties) because the accepted set depends on `kind`; the server is the authority */
+            document_input?: {
+                [key: string]: unknown;
+            };
+        };
+        TaxFilingCreateResponse: {
+            /** Format: uuid */
+            filing_id: string;
+            /** @description false if the XML could not be written to object storage — the filing row still exists, in status draft with a null xml_s3_key */
+            xml_ready: boolean;
+            /** @description false if the docgen.render job could not be enqueued — the document row still exists as draft */
+            render_queued: boolean;
+        };
+        FilingDownloadUrlResponse: {
+            /** @description Presigned S3 GET URL, TTL 300s */
+            url: string;
+            /** @enum {string} */
+            artifact: "xml" | "pdf";
+            /** @description The object key the URL points at — different per artifact */
+            key: string;
         };
     };
     responses: never;

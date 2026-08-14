@@ -7,58 +7,58 @@ import { z } from 'zod';
  */
 
 export const loginSchema = z.object({
-  email: z.string().min(1, 'Email is required').email('Invalid email'),
-  password: z.string().min(1, 'Password is required'),
+  email: z.string().min(1, 'Укажите email').email('Некорректный email'),
+  password: z.string().min(1, 'Укажите пароль'),
 });
 
 export const registerSchema = z
   .object({
-    email: z.string().min(1, 'Email is required').email('Invalid email'),
+    email: z.string().min(1, 'Укажите email').email('Некорректный email'),
     password: z
       .string()
-      .min(8, 'Password must be at least 8 characters')
-      .max(128, 'Password is too long'),
+      .min(8, 'Пароль должен быть не короче 8 символов')
+      .max(128, 'Пароль слишком длинный'),
     password_confirm: z.string(),
-    first_name: z.string().max(64).optional(),
-    last_name: z.string().max(64).optional(),
+    first_name: z.string().max(64, 'Не более 64 символов').optional(),
+    last_name: z.string().max(64, 'Не более 64 символов').optional(),
   })
   .refine((d) => d.password === d.password_confirm, {
     path: ['password_confirm'],
-    message: 'Passwords must match',
+    message: 'Пароли должны совпадать',
   });
 
 export const requestResetSchema = z.object({
-  email: z.string().min(1, 'Email is required').email('Invalid email'),
+  email: z.string().min(1, 'Укажите email').email('Некорректный email'),
 });
 
 export const resetPasswordSchema = z
   .object({
     new_password: z
       .string()
-      .min(8, 'Password must be at least 8 characters')
-      .max(128, 'Password is too long'),
+      .min(8, 'Пароль должен быть не короче 8 символов')
+      .max(128, 'Пароль слишком длинный'),
     new_password_confirm: z.string(),
   })
   .refine((d) => d.new_password === d.new_password_confirm, {
     path: ['new_password_confirm'],
-    message: 'Passwords must match',
+    message: 'Пароли должны совпадать',
   });
 
 export const changePasswordSchema = z
   .object({
-    old_password: z.string().min(1, 'Current password is required'),
+    old_password: z.string().min(1, 'Укажите текущий пароль'),
     new_password: z
       .string()
-      .min(8, 'Password must be at least 8 characters')
-      .max(128, 'Password is too long'),
+      .min(8, 'Пароль должен быть не короче 8 символов')
+      .max(128, 'Пароль слишком длинный'),
     new_password_confirm: z.string(),
   })
   .refine((d) => d.new_password === d.new_password_confirm, {
     path: ['new_password_confirm'],
-    message: 'Passwords must match',
+    message: 'Пароли должны совпадать',
   });
 
 export const changeEmailSchema = z.object({
-  new_email: z.string().min(1, 'Email is required').email('Invalid email'),
-  password: z.string().min(1, 'Password is required'),
+  new_email: z.string().min(1, 'Укажите email').email('Некорректный email'),
+  password: z.string().min(1, 'Укажите пароль'),
 });

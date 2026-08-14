@@ -53,6 +53,66 @@ export const qk = {
   docTemplates: {
     all: () => ['docTemplates', 'all'] as const,
   },
+  employees: {
+    all: (page?: number) =>
+      page === undefined ? (['employees', 'all'] as const) : (['employees', 'all', page] as const),
+    detail: (id: string) => ['employees', 'detail', id] as const,
+  },
+  /**
+   * HR orders / labor contracts / vacations, keyed by the active
+   * `employee_id` filter ('' = "every employee", which only hr-orders and
+   * vacations support — labor-contracts REQUIRES an employee_id, see
+   * HrController.hpp). Calling a factory with no argument yields the bare
+   * prefix, which still matches every filtered variant for invalidation
+   * after a create. hr-orders and vacations are paginated
+   * (parse_page_params(50, 200)) — usePagedQuery appends the page number on
+   * top, same as journal.entries/documents.all above. labor-contracts stays
+   * unpaginated (always scoped to one employee_id).
+   */
+  hr: {
+    orders: (employeeId?: string) =>
+      employeeId === undefined
+        ? (['hr', 'orders'] as const)
+        : (['hr', 'orders', employeeId] as const),
+    contracts: (employeeId?: string) =>
+      employeeId === undefined
+        ? (['hr', 'contracts'] as const)
+        : (['hr', 'contracts', employeeId] as const),
+    vacations: (employeeId?: string) =>
+      employeeId === undefined
+        ? (['hr', 'vacations'] as const)
+        : (['hr', 'vacations', employeeId] as const),
+  },
+  /**
+   * Payroll runs and their payslips. `runs` is keyed by the active ?year
+   * filter ('' = every year); the bare prefix still matches every variant,
+   * so a calculate/approve/post invalidation hits them all. usePagedQuery
+   * appends the page number on top.
+   */
+  payroll: {
+    runs: (year?: string) =>
+      year === undefined ? (['payroll', 'runs'] as const) : (['payroll', 'runs', year] as const),
+    payslips: (runId?: string) =>
+      runId === undefined
+        ? (['payroll', 'payslips'] as const)
+        : (['payroll', 'payslips', runId] as const),
+  },
+  /**
+   * Tax reference data, calculations, alerts and ФНО filings. `rates`,
+   * `deadlines` and `alerts` take no argument: the pages always ask for
+   * "today", which is the server's own default for `?on`.
+   */
+  tax: {
+    rates: () => ['tax', 'rates'] as const,
+    deadlines: () => ['tax', 'deadlines'] as const,
+    alerts: () => ['tax', 'alerts'] as const,
+    calculations: (kind?: string) =>
+      kind === undefined
+        ? (['tax', 'calculations'] as const)
+        : (['tax', 'calculations', kind] as const),
+    filings: (kind?: string) =>
+      kind === undefined ? (['tax', 'filings'] as const) : (['tax', 'filings', kind] as const),
+  },
   admin: {
     users: (page?: number) =>
       page === undefined ? (['admin', 'users'] as const) : (['admin', 'users', page] as const),

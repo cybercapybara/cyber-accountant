@@ -16,8 +16,9 @@
     },
     "nlohmann-json",
     "json-schema-validator",
-    "gtest"
+    "gtest",
+    "pugixml"
   ],
-  "$comment": "libsodium and libcurl come from the OS (apt: libsodium-dev, libcurl4-openssl-dev) — vcpkg's libsodium port fails to build on arm64-linux. inja is fetched header-only via CMake FetchContent (see CMakeLists.txt). Both choices keep the docker build green on x86_64 and arm64.",
+  "$comment": "libsodium and libcurl come from the OS (apt: libsodium-dev, libcurl4-openssl-dev) — vcpkg's libsodium port fails to build on arm64-linux. inja is fetched header-only via CMake FetchContent (see CMakeLists.txt). Both choices keep the docker build green on x86_64 and arm64. pugixml is test-only (tests/unit/test_fno910_xml.cpp) — it independently parses Tax::Fno910::build_xml's hand-rolled string output to verify well-formedness; production code (src/tax/FnoXml.hpp, src/tax/Fno910.hpp) has no XML-library dependency, see their file headers for why (no official XSD to validate against — see P2 task-7-brief.md Step 1).",
   "builtin-baseline": "c4aad2868cfbe7c364192d5de82385647f8425b1"
 }

@@ -21,7 +21,7 @@ export function UnconfirmedPage() {
     setError(null);
     const { error: e } = await api.POST('/api/v1/account/confirm-resend');
     if (e) {
-      setError('Could not resend the confirmation email. Try again later.');
+      setError('Не удалось отправить письмо повторно. Попробуйте позже.');
       return;
     }
     setResent(true);
@@ -31,16 +31,16 @@ export function UnconfirmedPage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Confirm your email</CardTitle>
+          <CardTitle>Подтвердите email</CardTitle>
           <CardDescription>
-            We sent a confirmation link to {user?.email ?? 'your email address'}. Click it to
-            unlock the rest of the app.
+            Мы отправили ссылку для подтверждения на {user?.email ?? 'ваш email'}. Перейдите по ней,
+            чтобы открыть доступ ко всему приложению.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {resent && (
             <Alert variant="success">
-              <AlertDescription>A new confirmation link is on its way.</AlertDescription>
+              <AlertDescription>Новая ссылка для подтверждения уже отправлена.</AlertDescription>
             </Alert>
           )}
           {error && (
@@ -49,7 +49,7 @@ export function UnconfirmedPage() {
             </Alert>
           )}
           <Button onClick={resend} className="w-full" variant="outline">
-            Resend confirmation email
+            Отправить письмо повторно
           </Button>
         </CardContent>
       </Card>

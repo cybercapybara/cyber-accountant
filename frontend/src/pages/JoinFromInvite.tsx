@@ -32,7 +32,7 @@ export async function submitJoinFromInvite(
   if (error) {
     return {
       ok: false,
-      error: apiErrorMessage(error, 'This invitation link is invalid or has expired.'),
+      error: apiErrorMessage(error, 'Эта ссылка-приглашение недействительна или истёк её срок.'),
     };
   }
   return { ok: true };
@@ -61,39 +61,39 @@ export function JoinFromInvitePage() {
     <div className="container mx-auto max-w-md py-8">
       <Card>
         <CardHeader>
-          <CardTitle>Set your password</CardTitle>
+          <CardTitle>Придумайте пароль</CardTitle>
         </CardHeader>
         <CardContent>
           {done ? (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Account ready. You can log in now.
+                Аккаунт готов. Теперь вы можете войти.
               </p>
               <Button asChild className="w-full">
-                <Link to="/login">Continue to log in</Link>
+                <Link to="/login">Перейти ко входу</Link>
               </Button>
             </div>
           ) : (
             <form className="space-y-4" onSubmit={onSubmit}>
               <p className="text-sm text-muted-foreground">
-                Accept your invitation by choosing a password for your new account.
+                Примите приглашение, задав пароль для нового аккаунта.
               </p>
               <FormField
                 id="new_password"
                 type="password"
-                label="Password"
+                label="Пароль"
                 error={errors.new_password?.message}
                 {...register('new_password')}
               />
               <FormField
                 id="new_password_confirm"
                 type="password"
-                label="Confirm password"
+                label="Подтверждение пароля"
                 error={errors.new_password_confirm?.message}
                 {...register('new_password_confirm')}
               />
               <Button type="submit" className="w-full" disabled={isSubmitting}>
-                Set password
+                Задать пароль
               </Button>
             </form>
           )}

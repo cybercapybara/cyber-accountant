@@ -10,8 +10,8 @@ export const createOrganizationSchema = z.object({
   bin: z
     .string()
     .trim()
-    .regex(/^[0-9]{12}$/, 'BIN/IIN must be exactly 12 digits'),
-  name: z.string().trim().min(1, 'Name is required'),
+    .regex(/^[0-9]{12}$/, 'БИН/ИИН должен состоять ровно из 12 цифр'),
+  name: z.string().trim().min(1, 'Укажите название'),
   tax_regime: z.enum(['snr_simplified', 'standard']),
   vat_payer: z.boolean(),
 });
@@ -23,7 +23,7 @@ export type CreateOrganizationValues = z.infer<typeof createOrganizationSchema>;
 // ::addMember) — the UI only ever offers the email path, since there is
 // nowhere for an owner to discover a member's raw user_id.
 export const addOrgMemberByEmailSchema = z.object({
-  email: z.string().trim().email('Enter a valid email address'),
+  email: z.string().trim().email('Введите корректный email'),
   role: z.enum(['owner', 'accountant', 'viewer']),
 });
 
