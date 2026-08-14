@@ -389,6 +389,24 @@ TEST_F(LedgerDocumentsApiTest, UploadsInvalidDocTypeRejected) {
     EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "doc_type");
 }
 
+// Fix round 2 regression: a genuinely malformed body (missing field) must
+// still be a 400, not swept into the same 422 path as a semantic failure —
+// this is what separating startUpload()'s structural/semantic Errors
+// collectors into two phases has to keep working.
+TEST_F(LedgerDocumentsApiTest, UploadsMissingFieldRejected) {
+    auto org = seed_org("444240000024", "Uploads Missing Field Org LLP");
+    auto accountant = member("accountant7@example.com", org.id, "accountant");
+
+    auto req = authed_json(accountant, {{"filename", "invoice.pdf"}, {"mime", "application/pdf"}});  // no doc_type
+    HttpResponsePtr resp;
+    ctrl.startUpload(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k400BadRequest);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "doc_type");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "missing");
+}
+
 // Security: filename must be a plain file name, checked BEFORE it ever
 // reaches Files::org_key() — see LedgerDocumentsController.hpp's Security
 // note. A traversal-shaped filename is rejected outright...
@@ -513,6 +531,45 @@ TEST_F(LedgerDocumentsApiTest, ConfirmUploadCrossOrgNotFound) {
         req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
+}
+
+// Fix round 2: checksum_sha256 present and a string (structural checks
+// pass), but the wrong shape (not 64 lowercase hex chars) — a semantic
+// failure, must be 422, not 400. Before the fix this was indistinguishable
+// from a missing/wrong-type field.
+TEST_F(LedgerDocumentsApiTest, ConfirmUploadInvalidChecksumFormatRejected) {
+    auto org = seed_org("444240000025", "Confirm Bad Checksum Org LLP");
+    Ledger::DocumentRepository repo;
+    auto created = repo.create(org.id, "invoice", "uploaded", "draft");
+    auto accountant = member("accountant8@example.com", org.id, "accountant");
+
+    auto req = authed_json(accountant, {{"size_bytes", 10}, {"checksum_sha256", "not-a-valid-checksum"}});
+    HttpResponsePtr resp;
+    ctrl.confirmUpload(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "checksum_sha256");
+}
+
+// Fix round 2 regression (structural side): a genuinely malformed body
+// (missing field) on confirm-upload must still be 400.
+TEST_F(LedgerDocumentsApiTest, ConfirmUploadMissingFieldRejected) {
+    auto org = seed_org("444240000026", "Confirm Missing Field Org LLP");
+    Ledger::DocumentRepository repo;
+    auto created = repo.create(org.id, "invoice", "uploaded", "draft");
+    auto accountant = member("accountant9@example.com", org.id, "accountant");
+
+    auto req = authed_json(accountant, {{"checksum_sha256", std::string(64, 'a')}});  // no size_bytes
+    HttpResponsePtr resp;
+    ctrl.confirmUpload(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k400BadRequest);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "size_bytes");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "missing");
 }
 
 // ── Full round trip: uploads -> (client PUT via curl) -> confirm-upload ->

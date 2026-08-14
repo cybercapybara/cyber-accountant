@@ -59,6 +59,21 @@
  * `input_snapshot` as `{"original_filename": ...}` for source='uploaded'
  * rows; see Document.hpp's doc comment for that column, updated to note
  * this one exception to its "docgen reproducibility only" rule.
+ *
+ * Fix round 2: `startUpload`/`confirmUpload` used to dump BOTH structural
+ * (missing/wrong-type field — 400) and semantic (allowlist/format/range —
+ * 422) errors into one `Errors` collector dispatched through a single
+ * `Validation::response_400(errs)` call, which meant a semantic failure
+ * (an unlisted `doc_type`, a traversal-shaped `filename`, a malformed
+ * `checksum_sha256`) always came back 400 even though this file's own
+ * comments (and the tests) already said 422. Each handler now runs two
+ * SEPARATE `Errors` collectors — structural first (dispatched via
+ * `Validation::response_400`, returning early), then semantic (dispatched
+ * via the new `Validation::response_422(const Errors&)` multi-field
+ * overload) — so a value read past phase 1 is already guaranteed
+ * present + correctly typed, matching the split
+ * `CounterpartiesController::validate_and_fill` already used for
+ * `identifier`'s check-digit check.
  */
 
 #pragma once
@@ -153,12 +168,12 @@ public:
                 status_filter = status_param;
         }
         if (errs.any()) {
-            // Query-param filters, not a JSON body — same 422
-            // Api::Validation shape as the identifier checks elsewhere in
-            // this task, built directly via ErrorResponse::make (there is
-            // no request body for Validation::response_400 to describe).
-            callback(ErrorResponse::make(
-                {drogon::k422UnprocessableEntity, "validation_failed", "", json{{"errors", errs.errors_json()}}}));
+            // Query-param filters, not a JSON body, but the same semantic-
+            // validation split as everywhere else in this file: an
+            // unlisted type/status VALUE is a 422 (Validation::response_422),
+            // not a 400 — there's no missing/wrong-type case here at all
+            // since these are plain query strings, not a typed JSON body.
+            callback(Validation::response_422(errs));
             return;
         }
 
@@ -245,19 +260,36 @@ public:
         if (!Validation::parse_body(req, body, callback))
             return;
 
+        // Phase 1 — structural (missing / wrong-type field): 400. Checked
+        // BEFORE any semantic check touches these fields' VALUES, so a
+        // caller that sends e.g. {"doc_type": 5} gets "not_string" (400),
+        // never "not_allowed" (422) for the same field in the same request.
         Validation::Errors errs;
         Validation::require(errs, body, "filename");
         Validation::require(errs, body, "mime");
         Validation::require(errs, body, "doc_type");
         if (body.contains("filename") && !body["filename"].is_string())
             errs.add("filename", "not_string", "must be a string");
-        else if (body.contains("filename") && !is_plain_filename(body["filename"].get<std::string>()))
-            errs.add("filename", "invalid_filename", "must be a plain file name");
         if (body.contains("mime") && !body["mime"].is_string())
             errs.add("mime", "not_string", "must be a string");
-        Validation::one_of(errs, body, "doc_type", allowed_doc_types());
+        if (body.contains("doc_type") && !body["doc_type"].is_string())
+            errs.add("doc_type", "not_string", "must be a string");
         if (errs.any()) {
             callback(Validation::response_400(errs));
+            return;
+        }
+
+        // Phase 2 — semantic (right type, present, VALUE fails a domain
+        // rule): 422. Every field read here is already confirmed present +
+        // string-typed by phase 1, so `.get<std::string>()` is safe, and
+        // one_of()'s own internal not_string branch can never fire again —
+        // only its "not_allowed" branch is reachable from this point on.
+        Validation::Errors semantic_errs;
+        if (!is_plain_filename(body["filename"].get<std::string>()))
+            semantic_errs.add("filename", "invalid_filename", "must be a plain file name");
+        Validation::one_of(semantic_errs, body, "doc_type", allowed_doc_types());
+        if (semantic_errs.any()) {
+            callback(Validation::response_422(semantic_errs));
             return;
         }
 
@@ -322,17 +354,34 @@ public:
         if (!Validation::parse_body(req, body, callback))
             return;
 
+        // Phase 1 — structural (missing / wrong-type field): 400. Same
+        // split as startUpload() above — see this file's header and
+        // Api::Validation::response_422's doc comment.
         Validation::Errors errs;
         Validation::require(errs, body, "size_bytes");
         Validation::require(errs, body, "checksum_sha256");
+        if (body.contains("size_bytes") && !body["size_bytes"].is_number_integer())
+            errs.add("size_bytes", "not_integer", "must be an integer");
+        if (body.contains("checksum_sha256") && !body["checksum_sha256"].is_string())
+            errs.add("checksum_sha256", "not_string", "must be a string");
+        if (errs.any()) {
+            callback(Validation::response_400(errs));
+            return;
+        }
+
+        // Phase 2 — semantic (right type, present, VALUE fails a domain
+        // rule): 422. size_bytes/checksum_sha256 are already confirmed
+        // integer/string by phase 1, so int_range()/regex_match()'s own
+        // internal type-check branches can never fire again here.
+        Validation::Errors semantic_errs;
         // 10 GiB ceiling: a sane upper bound for accounting-document
         // attachments, not a spec'd limit — big enough to never legitimately
         // trip, small enough to reject an obviously wrong value.
-        Validation::int_range(errs, body, "size_bytes", 0, 10LL * 1024 * 1024 * 1024);
+        Validation::int_range(semantic_errs, body, "size_bytes", 0, 10LL * 1024 * 1024 * 1024);
         static const std::regex kSha256Hex(R"(^[0-9a-f]{64}$)");
-        Validation::regex_match(errs, body, "checksum_sha256", kSha256Hex, "64 lowercase hex characters");
-        if (errs.any()) {
-            callback(Validation::response_400(errs));
+        Validation::regex_match(semantic_errs, body, "checksum_sha256", kSha256Hex, "64 lowercase hex characters");
+        if (semantic_errs.any()) {
+            callback(Validation::response_422(semantic_errs));
             return;
         }
 

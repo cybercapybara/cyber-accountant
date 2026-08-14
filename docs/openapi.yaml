@@ -1479,6 +1479,7 @@ paths:
         '403': { description: No org context, or caller's role is viewer }
         '404': { description: Not found (including a document belonging to another organization) }
         '409': { description: No upload was started for this document, or the object was not found in storage }
+        '422': { description: 'size_bytes out of range, or checksum_sha256 is not 64 lowercase hex characters' }
         '503': { description: Object storage is not configured }
 
   /api/v1/journal-entries:

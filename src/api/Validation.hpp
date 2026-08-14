@@ -222,6 +222,26 @@ inline drogon::HttpResponsePtr response_422(const std::string& field,
 }
 
 /**
+ * @brief Multi-field 422 — the semantic-validation counterpart to
+ *        response_400(const Errors&) above, for a handler that runs several
+ *        semantic checks (an allowlist, a regex format, a numeric range, ...)
+ *        into ONE @c Errors collector and needs to report all of them at
+ *        once rather than one field at a time (response_422(field, code,
+ *        message) covers that single-field case). Same body shape as
+ *        response_400() — only the status code differs — so callers that
+ *        run structural checks (require/type) into one collector and
+ *        semantic checks into a second, separate collector can dispatch
+ *        each with the matching one of these two functions (Task 12 fix
+ *        round 2: LedgerDocumentsController::startUpload/confirmUpload,
+ *        CounterpartiesController::validate_and_fill's identifier check,
+ *        LedgerDocumentsController::list's type/status filter checks).
+ */
+inline drogon::HttpResponsePtr response_422(const Errors& errs) {
+    return ErrorResponse::make(
+        {drogon::k422UnprocessableEntity, "validation_failed", "", json{{"errors", errs.errors_json()}}});
+}
+
+/**
  * @brief Parse the request body as JSON. Returns true on success and fills
  *        @p out; on failure invokes @p cb with a 400 response and returns false.
  *        Eliminates the 5-line try/catch boilerplate in every mutating handler.

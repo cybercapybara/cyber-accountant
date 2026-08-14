@@ -168,9 +168,9 @@ private:
      *        uses for `tax_regime`/`vat_payer`.
      *
      *        `identifier`'s check-digit failure is reported as a SEPARATE
-     *        422 (its own `Api::Validation`-shaped errors array, built and
-     *        sent via ErrorResponse::make directly) rather than folded into
-     *        the 400 `errs` collector above — mirrors
+     *        422 (`Validation::response_422(field, code, message)` — the
+     *        single-field semantic-validation helper) rather than folded
+     *        into the 400 `errs` collector above — mirrors
      *        OrganizationsController::createOrganization's `bin` handling:
      *        missing/wrong-type is a 400, a syntactically fine value that
      *        fails a semantic check is a 422.
@@ -203,10 +203,7 @@ private:
 
         const std::string identifier = body["identifier"].get<std::string>();
         if (!Ledger::is_valid_bin_iin(identifier)) {
-            Validation::Errors id_errs;
-            id_errs.add("identifier", "invalid_identifier", "BIN/IIN check digit is invalid");
-            callback(ErrorResponse::make(
-                {drogon::k422UnprocessableEntity, "validation_failed", "", json{{"errors", id_errs.errors_json()}}}));
+            callback(Validation::response_422("identifier", "invalid_identifier", "BIN/IIN check digit is invalid"));
             return false;
         }
 
