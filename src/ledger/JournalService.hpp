@@ -193,8 +193,16 @@ inline long long parse_tiyn(const std::string& amount) {
  * have a zero bucket; only journal_lines.amount itself carries a DB-level
  * `CHECK (amount > 0)`, which JournalService::create_draft's own validation
  * mirrors before this formatter is ever involved).
+ *
+ * @throws std::invalid_argument if @p tiyn is negative — the doc comment
+ * above documented this as an assumption but nothing enforced it (Fix round
+ * 1, code review), so a caller bug upstream (a subtraction gone the wrong
+ * way) would have silently produced a mangled string like "-1.-50" instead
+ * of failing loudly at the one place that knows the invariant was broken.
  */
 inline std::string format_tiyn(long long tiyn) {
+    if (tiyn < 0)
+        throw std::invalid_argument("format_tiyn: amount must be non-negative, got " + std::to_string(tiyn));
     const long long whole = tiyn / 100;
     const long long frac = tiyn % 100;
     char buf[32];

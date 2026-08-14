@@ -277,6 +277,10 @@ TEST_F(PayrollServiceTest, PostToJournalBalances) {
     ASSERT_EQ(p.opvr, 1750000);
     ASSERT_EQ(p.social_tax, 2640000);
 
+    // post_to_journal now requires 'approved' (Fix round 1) — a still-draft
+    // run's figures could be silently invalidated by a later recalculation.
+    ASSERT_TRUE(svc.approve(org_id, run.id));
+
     auto entry_id = svc.post_to_journal(org_id, run.id, user_id);
     EXPECT_FALSE(entry_id.empty());
 
@@ -329,6 +333,63 @@ TEST_F(PayrollServiceTest, PostToJournalBalances) {
     EXPECT_EQ(credit_3210, "22500.00");   // so
     EXPECT_EQ(credit_3230, "25000.00");   // osms + vosms = 1,500,000 + 1,000,000
     EXPECT_EQ(credit_3150, "26400.00");   // social_tax
+
+    // The run itself now records what it was posted to.
+    Payroll::PayrollRepository repo;
+    auto reloaded = repo.find_in_org(run.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(reloaded);
+    ASSERT_TRUE(reloaded->journal_entry_id);
+    EXPECT_EQ(*reloaded->journal_entry_id, entry_id);
+    EXPECT_TRUE(reloaded->posted_at);
+}
+
+TEST_F(PayrollServiceTest, PostToJournalRequiresApproved) {
+    Payroll::PayrollService svc;
+    Hr::EmployeeRepository employees;
+    auto org_id = make_org("111280000110", "standard");
+    auto user_id = seed_user("payroll-post-draft@example.com");
+    employees.create(org_id, make_draft_employee("111122334412", 50000000));
+
+    auto run = svc.calculate_run(org_id, 2026, 7);
+    ASSERT_EQ(run.status, "draft");
+
+    EXPECT_THROW(svc.post_to_journal(org_id, run.id, user_id), Payroll::InvalidRunState);
+
+    // Nothing was posted — no entry, no journal_entry_id.
+    Ledger::JournalRepository journal;
+    EXPECT_EQ(journal.count_in_org(org_id), 0);
+    Payroll::PayrollRepository repo;
+    auto reloaded = repo.find_in_org(run.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(reloaded);
+    EXPECT_FALSE(reloaded->journal_entry_id);
+}
+
+TEST_F(PayrollServiceTest, PostToJournalTwiceRejected) {
+    Payroll::PayrollService svc;
+    Hr::EmployeeRepository employees;
+    auto org_id = make_org("111280000111", "standard");
+    auto user_id = seed_user("payroll-post-twice@example.com");
+    employees.create(org_id, make_draft_employee("111122334413", 50000000));
+
+    auto run = svc.calculate_run(org_id, 2026, 7);
+    ASSERT_TRUE(svc.approve(org_id, run.id));
+
+    auto first_entry_id = svc.post_to_journal(org_id, run.id, user_id);
+    EXPECT_FALSE(first_entry_id.empty());
+
+    // A second call — whether a caller retry or a genuine bug — must NOT
+    // create a second, duplicate journal entry (the exact financial error
+    // Fix round 1 closes).
+    EXPECT_THROW(svc.post_to_journal(org_id, run.id, user_id), Payroll::InvalidRunState);
+
+    Ledger::JournalRepository journal;
+    EXPECT_EQ(journal.count_in_org(org_id), 1);  // exactly one entry, not two
+
+    Payroll::PayrollRepository repo;
+    auto reloaded = repo.find_in_org(run.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(reloaded);
+    ASSERT_TRUE(reloaded->journal_entry_id);
+    EXPECT_EQ(*reloaded->journal_entry_id, first_entry_id);  // still points at the first (only) entry
 }
 
 TEST_F(PayrollServiceTest, PostToJournalOmitsZeroSocialTaxLineOnSnrSimplified) {
@@ -341,6 +402,7 @@ TEST_F(PayrollServiceTest, PostToJournalOmitsZeroSocialTaxLineOnSnrSimplified) {
     auto run = svc.calculate_run(org_id, 2026, 7);
     ASSERT_EQ(run.payslips.size(), 1u);
     EXPECT_EQ(run.payslips[0].social_tax, 0);
+    ASSERT_TRUE(svc.approve(org_id, run.id));
 
     auto entry_id = svc.post_to_journal(org_id, run.id, user_id);
 

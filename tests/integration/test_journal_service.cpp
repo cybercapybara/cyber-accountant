@@ -379,4 +379,8 @@ TEST(FormatTiyn, WholeAmountGetsZeroCents) {
     EXPECT_EQ(Ledger::format_tiyn(100), "1.00");
 }
 
+TEST(FormatTiyn, RejectsNegativeInput) {
+    EXPECT_THROW(Ledger::format_tiyn(-1), std::invalid_argument);
+}
+
 }  // namespace

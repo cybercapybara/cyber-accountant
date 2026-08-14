@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -105,6 +106,12 @@ struct PayrollRun {
     std::string status;  // 'draft' | 'approved' — CHECK in migrations/013_payroll.sql
     std::string calculated_at;
     nlohmann::json rates_snapshot = nlohmann::json::object();
+    // NULL until PayrollService::post_to_journal succeeds; set together in
+    // the same statement — journal_entry_id having a value IS "this run has
+    // been posted", the guard PayrollService::post_to_journal's
+    // compare-and-swap reads (see that method's Doxygen, Fix round 1).
+    std::optional<std::string> journal_entry_id;
+    std::optional<std::string> posted_at;
     std::string created_at;
     std::string updated_at;
     std::vector<Payslip> payslips;  // NOT populated by from_row — see file header
@@ -123,6 +130,10 @@ struct PayrollRun {
         } catch (...) {
             r.rates_snapshot = nlohmann::json::object();
         }
+        if (!row["journal_entry_id"].is_null())
+            r.journal_entry_id = row["journal_entry_id"].template as<std::string>();
+        if (!row["posted_at"].is_null())
+            r.posted_at = row["posted_at"].template as<std::string>();
         r.created_at = row["created_at"].template as<std::string>();
         r.updated_at = row["updated_at"].template as<std::string>();
         return r;
@@ -138,6 +149,8 @@ inline void to_json(nlohmann::json& j, const PayrollRun& r) {
         {"status", r.status},
         {"calculated_at", r.calculated_at},
         {"rates_snapshot", r.rates_snapshot},
+        {"journal_entry_id", r.journal_entry_id ? nlohmann::json(*r.journal_entry_id) : nlohmann::json(nullptr)},
+        {"posted_at", r.posted_at ? nlohmann::json(*r.posted_at) : nlohmann::json(nullptr)},
         {"created_at", r.created_at},
         {"updated_at", r.updated_at},
         {"payslips", r.payslips},

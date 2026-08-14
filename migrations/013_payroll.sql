@@ -23,6 +23,17 @@
 -- новые (см. PayrollService::calculate_run), поэтому это ограничение никогда
 -- не должно сработать в штатном пути, но остаётся защитой от гонки/бага.
 --
+-- payroll_runs.journal_entry_id / posted_at (Fix round 1, code review):
+-- record WHICH journal entry a run was posted to and WHEN, so
+-- PayrollService::post_to_journal can atomically refuse a second post
+-- (journal_entry_id already set) instead of creating a second, fully
+-- balanced, duplicate journal entry for the same period — see that method's
+-- Doxygen for the exact compare-and-swap. Plain (non-composite) FK onto
+-- journal_entries(id), no ON DELETE — same trust-the-caller posture as
+-- hr_orders.document_id (migrations/012_hr.sql): PayrollService always
+-- writes an entry_id it just created for this SAME org, so there is no
+-- cross-org row to defend against here.
+--
 -- NOTE: MigrationRunner wraps this file in ONE transaction (under an
 -- advisory lock) and records schema_migrations in that same transaction.
 -- Do NOT add BEGIN/COMMIT here.
@@ -37,6 +48,12 @@ CREATE TABLE IF NOT EXISTS payroll_runs (
     -- Used rates/constants (kind/key -> value), snapshotted at calculation
     -- time — see PayrollService::calculate_run and file header above.
     rates_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- NULL until PayrollService::post_to_journal succeeds; both are set
+    -- together in the same statement, and journal_entry_id IS NULL is the
+    -- CAS guard that makes a second post_to_journal() call a no-op-turned-409
+    -- instead of a duplicate ledger entry — see file header above.
+    journal_entry_id UUID REFERENCES journal_entries (id),
+    posted_at      TIMESTAMPTZ,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, period_year, period_month),

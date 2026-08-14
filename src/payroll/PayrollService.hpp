@@ -26,6 +26,37 @@
  * from under an already-approved (and possibly already posted-to-journal)
  * run is not offered — the caller has to know what it's asking for.
  *
+ * `post_to_journal()` requires the run to be 'approved' (→ InvalidRunState
+ * otherwise — posting a draft's still-mutable figures would let a later
+ * calculate_run() silently invalidate an already-posted entry) and refuses a
+ * SECOND post of the same run: `payroll_runs.journal_entry_id` starts NULL
+ * and is set, together with `posted_at`, in the very statement that records
+ * which entry a run was posted to (Fix round 1, code review — the earlier
+ * version had neither the 'approved' gate nor this guard, so calling it
+ * twice created a second, fully balanced, duplicate journal entry). The
+ * guard is checked twice: once up front (`journal_entry_id` already set →
+ * InvalidRunState("already_posted") before wasting a journal entry on a
+ * request that's going to be rejected anyway) and once as a
+ * compare-and-swap on the final UPDATE (`... AND journal_entry_id IS NULL
+ * RETURNING id`, zero rows → the same error) — the same
+ * check-then-CAS shape as approve()'s draft→approved transition. The CAS is
+ * the actual source of truth; the up-front check is an optimization. Because
+ * Ledger::JournalService owns every write to `journal_entries` internally
+ * (see that file's header — create_draft() and post() each commit their own
+ * transaction, by design, so no caller can extend that transaction), this
+ * CAS necessarily runs in a transaction of its own, AFTER the entry is
+ * created and posted, not literally inside the same transaction as the
+ * INSERT — under a true concurrent double-call (two requests racing between
+ * the up-front check and the CAS) the loser's already-posted entry would
+ * become a real, un-referenced duplicate in the ledger, same as the
+ * winner's. That residual window is not closed here: closing it would mean
+ * JournalService accepting a caller-supplied transaction, a change to P1
+ * code out of scope for this fix. In practice, the request path serializes
+ * on the same run_id well before this matters, so the everyday risk this fix
+ * closes — a caller (or a retried request) calling post_to_journal twice in
+ * sequence for a run that already has an entry — cannot ever create a second
+ * entry: the up-front check alone stops it.
+ *
  * `post_to_journal()` sums every payslip's fields across the whole run and
  * posts ONE journal entry via Ledger::JournalService::create_draft + post:
  *   - debit  7210 (административные расходы) for gross + opvr + so + osms +
@@ -111,13 +142,21 @@ public:
      *        employee in a single transaction. See file header for the
      *        exact replace-on-recalculate / reject-on-approved contract.
      * @throws InvalidRunState if a run already exists for this period and is
-     *         'approved'.
+     *         'approved' — checked up front AND as a compare-and-swap on the
+     *         UPDATE itself (Fix round 1, code review: the earlier version
+     *         only checked up front, before the transaction opened, so a
+     *         concurrent approve() landing in between could recalculate an
+     *         already-approved run — the same TOCTOU approve() itself avoids
+     *         via its own `AND status = 'draft'` CAS).
      */
     PayrollRun calculate_run(const std::string& org_id, int period_year, int period_month) {
         const std::string effective_date = last_day_of_month(period_year, period_month);
         const Rates rates = build_rates(org_id, effective_date);
         const auto employees = employees_.list_active(org_id);
-        const auto existing = payroll_.find_by_period(org_id, period_year, period_month);
+        // from_primary=true: this read feeds the CAS below, so it must never
+        // observe a lagging replica's stale 'draft' when the primary already
+        // committed 'approved' (e.g. this same run, just approved).
+        const auto existing = payroll_.find_by_period(org_id, period_year, period_month, /*from_primary=*/true);
         if (existing && existing->status == "approved")
             throw InvalidRunState("cannot recalculate an approved payroll run");
 
@@ -126,13 +165,21 @@ public:
         return Database::get().execute_write([&](auto& txn) -> PayrollRun {
             PayrollRun run;
             if (existing) {
+                // CAS: `AND status = 'draft'` closes the TOCTOU window
+                // between the pre-transaction check above and this UPDATE —
+                // a concurrent approve() that committed in between makes
+                // this affect zero rows instead of silently overwriting an
+                // approved run's figures (same shape as approve()'s own
+                // `AND status = 'draft'` guard below).
                 auto rr = txn.exec_params(
                     "UPDATE payroll_runs SET rates_snapshot = $3::jsonb, calculated_at = now() "
-                    "WHERE id = $1 AND org_id = $2 RETURNING " +
+                    "WHERE id = $1 AND org_id = $2 AND status = 'draft' RETURNING " +
                         std::string(PayrollRepository::kColumns),
                     existing->id,
                     org_id,
                     snapshot.dump());
+                if (rr.empty())
+                    throw InvalidRunState("cannot recalculate an approved payroll run");
                 run = PayrollRun::from_row(rr[0]);
                 // Recalculation replaces every payslip of this run — see
                 // file header. Scoped by BOTH run_id and org_id even though
@@ -238,6 +285,10 @@ public:
      * @return the new entry's id.
      * @throws Repositories::NotFoundError("payroll_run") if no such run is
      *         visible to @p org_id.
+     * @throws InvalidRunState if the run is not 'approved' yet, or has
+     *         already been posted (`journal_entry_id` already set) — see
+     *         file header for the exact check-then-CAS shape and its
+     *         documented residual limitation under true concurrency.
      * @throws std::runtime_error if the run has no payslips yet (nothing to
      *         post — calculate_run() must run first).
      */
@@ -245,6 +296,10 @@ public:
         auto run = payroll_.find_in_org(run_id, org_id, /*from_primary=*/true);
         if (!run)
             throw Repositories::NotFoundError("payroll_run");
+        if (run->status != "approved")
+            throw InvalidRunState("cannot post a payroll run in status '" + run->status + "' — approve it first");
+        if (run->journal_entry_id)
+            throw InvalidRunState("already_posted");
 
         const auto payslips = payroll_.list_payslips(*run, /*from_primary=*/true);
         if (payslips.empty())
@@ -289,6 +344,24 @@ public:
 
         auto entry = journal_.create_draft(org_id, user_id, entry_date, description, std::move(lines));
         journal_.post(org_id, entry.id);
+
+        // CAS: claim this run as posted-to-`entry`, but only if nothing else
+        // claimed it first. Zero rows means a concurrent call already set
+        // journal_entry_id between the up-front check above and here — see
+        // file header for why this is a second (not the only) line of
+        // defense, and its documented residual gap under true concurrency.
+        auto claimed = Database::get().execute_write([&](auto& txn) -> bool {
+            auto r = txn.exec_params(
+                "UPDATE payroll_runs SET journal_entry_id = $3, posted_at = now() "
+                "WHERE id = $1 AND org_id = $2 AND journal_entry_id IS NULL RETURNING id",
+                run_id,
+                org_id,
+                entry.id);
+            return !r.empty();
+        });
+        if (!claimed)
+            throw InvalidRunState("already_posted");
+
         return entry.id;
     }
 
