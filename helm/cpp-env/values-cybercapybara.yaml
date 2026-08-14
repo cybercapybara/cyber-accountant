@@ -1,0 +1,117 @@
+# ═══════════════════════════════════════════════════════════════
+# CYBERCAPYBARA cluster preset for the cpp-env umbrella (Task 11, P0).
+#
+# Target: Talos on Hetzner, KUBECONFIG=../cluster/kubeconfig, namespace
+# `cyber-accountant` (created in Task 10). Minimal profile per the P0 brief:
+# Kafka/Mailpit/Jaeger OFF, single-instance CNPG Postgres, chart-default
+# ephemeral Redis (master + Sentinel). No S3 wiring — storage.backend stays
+# at the chart default `local` (see docs/adr/0007-s3-backend.md; the
+# `s3-credentials` secret doesn't exist yet, and P1 is when it's consumed).
+#
+# Cluster survey (2026-08-14, see task-11-report.md for the full log):
+#   - ingressclass: `nginx` (ingress-nginx present) — kept as className below,
+#     but the domain is NOT wired to a real cybercapybara.kz subdomain this
+#     phase (see NOTE under `ingress`/`baseDomain`).
+#   - CNPG operator: already installed cluster-wide (`cnpg-system` ns,
+#     ghcr.io/cloudnative-pg/cloudnative-pg:1.29.1, newer than the brief's
+#     1.24.1) — clusters.postgresql.cnpg.io CRD present. No operator install
+#     needed for this task.
+#   - storageclass: `longhorn` (default, replicated) and
+#     `longhorn-single-replica`. Nearly every existing stateful workload in
+#     this cluster (namespaces `db`, `monitoring`) deliberately uses the
+#     single-replica class to fit a 3-node control-plane-only cluster
+#     (docs/adr/0007-s3-backend.md Context) — matched below for the same
+#     resource-budget reason; flip to "" (cluster default, replicated) if the
+#     owner wants volume-level HA instead once this is a real environment.
+#   - nodes: 3x amd64 (talos-fsn1-control-plane-{1,2,3}) — matches the
+#     chart's default `nodeSelector: kubernetes.io/arch: amd64`, not
+#     overridden here.
+#   - pod resource requests/limits: left at the umbrella chart's own
+#     defaults (100m/128Mi requests, 1 CPU/384Mi limits per app pod) — ADR
+#     0007's node survey found only 11-27% CPU/mem requested cluster-wide, so
+#     no need to shrink further for this minimal profile; not inflated
+#     either since this is still a P0 skeleton, not production load.
+#
+# imagePullSecret: ghcr.io/cybercapybara/* packages are PRIVATE and no PAT is
+# available to this task. `ghcr-pull` is referenced below so the values file
+# is "one command away" from a working install — but the secret does NOT
+# exist in-cluster yet. Until the owner does ONE of:
+#   (a) makes the three GHCR packages public, or
+#   (b) creates the secret with a `read:packages` PAT:
+#
+#     KUBECONFIG=../cluster/kubeconfig kubectl -n cyber-accountant \
+#       create secret docker-registry ghcr-pull \
+#       --docker-server=ghcr.io \
+#       --docker-username=<gh-username-or-org> \
+#       --docker-password=<PAT-with-read:packages-scope> \
+#       --docker-email=<any-email>
+#
+# ...pods will sit in ImagePullBackOff (expected — see task-11-report.md).
+# No re-install needed afterwards: Kubernetes retries image pulls on its own
+# once the secret exists (or once the packages go public), though a manual
+# `kubectl -n cyber-accountant rollout restart deploy/api deploy/worker deploy/web`
+# speeds that up.
+#
+# Deploy:
+#   helm dependency build ./helm/cpp-env   # only if helm/cpp-env/charts/*.tgz are stale
+#   KUBECONFIG=../cluster/kubeconfig helm upgrade --install cyber-accountant ./helm/cpp-env \
+#     -n cyber-accountant -f helm/cpp-env/values-cybercapybara.yaml
+# ═══════════════════════════════════════════════════════════════
+
+env: cybercapybara
+# Placeholder — no real domain assigned in this phase (see cluster survey
+# above). Ingress objects still render (the chart has no top-level ingress
+# disable switch), pointing at *.cybercapybara.example.com, which nobody
+# owns; cert-manager's Certificate for them will sit Pending/failed. That is
+# expected and harmless — self-contained to this namespace. Smoke this phase
+# is via `kubectl port-forward`, not through ingress.
+baseDomain: example.com
+
+ingress:
+  className: nginx                     # ingress-nginx IS present in-cluster
+  clusterIssuer: letsencrypt-prod       # real cluster-wide issuer; harmless no-op against a domain we don't own
+  wildcardTlsSecret: ""
+  externalDnsTarget: ""                 # "" → no external-dns annotation, no real DNS record created
+
+# ── Minimal profile (per P0 brief): Kafka/Mailpit/Jaeger off ──
+kafka:
+  enabled: false
+jaeger:
+  enabled: false
+mailpit:
+  enabled: false
+postgres:
+  instances: 1                          # single primary, no read replica (per brief's minimal profile)
+  storageSize: 2Gi
+  storageClass: longhorn-single-replica # matches this cluster's existing stateful-workload convention (see survey above)
+
+cyber-accountant:
+  image:
+    repository: ghcr.io/cybercapybara/cyber-accountant
+    tag: v0.1.0
+  imagePullSecrets:
+    - name: ghcr-pull
+  externalKafka:
+    enabled: false
+  tracing:
+    enabled: false                      # no Jaeger to export to
+
+cyber-accountant-worker:
+  image:
+    repository: ghcr.io/cybercapybara/cyber-accountant-worker
+    tag: v0.1.0
+  imagePullSecrets:
+    - name: ghcr-pull
+  tracing:
+    enabled: false
+  # Placeholder — same "no real domain yet" note as baseDomain above. Only
+  # affects links inside outbound email bodies (mail is off this phase too).
+  app:
+    baseUrl: "https://app.cybercapybara.example.com"
+
+cpp-frontend:
+  image:
+    repository: ghcr.io/cybercapybara/cyber-accountant-frontend
+    tag: v0.1.0
+  imagePullSecrets:
+    - name: ghcr-pull
