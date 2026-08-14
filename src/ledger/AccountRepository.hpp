@@ -77,9 +77,9 @@ public:
     /// chart via a NULL-safe caller of its own).
     std::vector<Account> list_visible(const std::string& org_id) {
         return Database::get().execute_read([&](auto& txn) {
-            auto r = txn.exec_params("SELECT " + std::string(kColumns) +
-                                         " FROM accounts WHERE org_id IS NULL OR org_id = $1 ORDER BY code",
-                                     org_id);
+            auto r = txn.exec_params(
+                "SELECT " + std::string(kColumns) + " FROM accounts WHERE org_id IS NULL OR org_id = $1 ORDER BY code",
+                org_id);
             std::vector<Account> out;
             out.reserve(r.size());
             for (const auto& row : r)
