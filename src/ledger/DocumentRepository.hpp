@@ -117,8 +117,22 @@ public:
      * confirm-upload's later set_file() call fills in the rest once the
      * object is verified to exist (Storage::exists()).
      *
-     * @return false if no row matches (id, org_id) both — same
-     *         "wrong org is indistinguishable from missing" contract as
+     * Invariant (fix round 1): a pending-upload key may only be written
+     * while the document is still 'draft'. Without this guard, calling
+     * set_pending_upload() on an already-'final' (or any non-draft)
+     * document would silently overwrite its real, confirmed s3_key/mime
+     * with a fresh presigned-but-unconfirmed pair — today's only caller
+     * (LedgerDocumentsController::startUpload, right after repo.create()
+     * with status='draft') never does this, but nothing enforced it, which
+     * is exactly the kind of implicit invariant a future caller (e.g. a
+     * re-upload/replace-file feature) could violate by accident. The
+     * `AND status = 'draft'` below makes that violation a no-op (returns
+     * false) instead of a silent data-loss bug.
+     *
+     * @return false if no row matches (id, org_id, status='draft') all
+     *         three — a wrong org, a missing id, and a non-draft document
+     *         are all indistinguishable from each other here, same
+     *         "can't tell why, only that nothing was written" contract as
      *         set_file()/set_status() below.
      */
     bool set_pending_upload(const std::string& org_id,
@@ -127,7 +141,8 @@ public:
                             const std::string& mime) {
         return Database::get().execute_write([&](auto& txn) {
             auto r = txn.exec_params(
-                "UPDATE documents SET s3_key = $3, mime = $4 WHERE id = $1 AND org_id = $2 RETURNING id",
+                "UPDATE documents SET s3_key = $3, mime = $4 WHERE id = $1 AND org_id = $2 AND status = 'draft' "
+                "RETURNING id",
                 id,
                 org_id,
                 s3_key,

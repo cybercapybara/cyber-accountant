@@ -33,6 +33,7 @@
 #include "api/LedgerDocumentsController.hpp"
 #include "domain/Role.hpp"
 #include "domain/User.hpp"
+#include "files/FileKeys.hpp"
 #include "jobs/Job.hpp"
 #include "ledger/DocumentRepository.hpp"
 #include "repositories/RoleRepository.hpp"
@@ -335,6 +336,32 @@ TEST_F(LedgerDocumentsApiTest, DownloadUrlCrossOrgNotFound) {
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
 
+// Positive counterpart to the RBAC tests elsewhere in this file: download-url
+// is read-only (mints a URL, writes nothing), so it deliberately does NOT
+// carry the viewer-mutation gate the other mutating routes do — this fixes
+// that exception in place as an explicit, asserted behavior rather than
+// something only visible by the ABSENCE of a 403 test.
+TEST_F(LedgerDocumentsApiTest, DownloadUrlViewerAllowed) {
+    auto org = seed_org("444240000022", "Viewer DL Allowed Org LLP");
+    Ledger::DocumentRepository repo;
+    auto created = repo.create(org.id, "invoice", "generated", "draft");
+    ASSERT_TRUE(repo.set_file(org.id,
+                              created.id,
+                              Files::org_key(org.id, "generated", "report.pdf"),
+                              std::string(64, 'b'),
+                              "application/pdf",
+                              42));
+
+    auto viewer = member("viewerdl@example.com", org.id, "viewer");
+    HttpResponsePtr resp;
+    ctrl.downloadUrl(
+        authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k200OK);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_FALSE(body["url"].get<std::string>().empty());
+}
+
 // ── POST /api/v1/documents/uploads ──────────────────────────────────────────
 
 TEST_F(LedgerDocumentsApiTest, UploadsViewerForbidden) {
@@ -405,6 +432,34 @@ TEST_F(LedgerDocumentsApiTest, UploadsUnicodeFilenameAccepted) {
     ASSERT_TRUE(found.has_value());
     ASSERT_TRUE(found->input_snapshot.has_value());
     EXPECT_EQ((*found->input_snapshot)["original_filename"].get<std::string>(), "отчёт (1).pdf");
+}
+
+// Fix round 1 (repository-level regression): DocumentRepository::
+// set_pending_upload() must refuse to write on a non-draft document — see
+// that method's doc comment in DocumentRepository.hpp for the data-loss
+// scenario this guards against (a future re-upload/replace-file caller
+// clobbering an already-confirmed, 'final' document's real s3_key/mime with
+// a fresh presigned-but-unconfirmed pair). Exercised directly against the
+// repository, not through the controller — LedgerDocumentsController never
+// calls set_pending_upload() on anything but a document it just created as
+// 'draft', so this invariant has no controller-level route to reach today.
+TEST_F(LedgerDocumentsApiTest, SetPendingUploadGuardedToDraftStatus) {
+    auto org = seed_org("444240000023", "Guard Org LLP");
+    Ledger::DocumentRepository repo;
+    auto created = repo.create(org.id, "invoice", "generated", "draft");
+    const std::string confirmed_key = Files::org_key(org.id, "generated", "confirmed.pdf");
+    ASSERT_TRUE(repo.set_file(org.id, created.id, confirmed_key, std::string(64, 'a'), "application/pdf", 123));
+    ASSERT_TRUE(repo.set_status(org.id, created.id, "final"));
+
+    EXPECT_FALSE(repo.set_pending_upload(
+        org.id, created.id, Files::org_key(org.id, "inbox", "malicious.bin"), "application/octet-stream"));
+
+    auto after = repo.find_in_org(created.id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(after.has_value());
+    EXPECT_EQ(after->status, "final");
+    ASSERT_TRUE(after->s3_key.has_value());
+    EXPECT_EQ(*after->s3_key, confirmed_key);
+    EXPECT_EQ(after->mime.value_or(""), "application/pdf");
 }
 
 // ── POST /api/v1/documents/{id}/confirm-upload ──────────────────────────────
