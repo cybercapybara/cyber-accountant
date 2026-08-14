@@ -57,6 +57,11 @@
 #   KUBECONFIG=../cluster/kubeconfig helm upgrade --install cyber-accountant ./helm/cpp-env \
 #     -n cyber-accountant -f helm/cpp-env/values-cybercapybara.yaml
 # ═══════════════════════════════════════════════════════════════
+#
+# Update 2026-08-14 — owner decision: use the SHARED Postgres/Redis already
+# running in namespace `db`, instead of the umbrella's own bundled CNPG
+# Postgres + Redis/Sentinel. See "Shared db-namespace services" below.
+# ═══════════════════════════════════════════════════════════════
 
 env: cybercapybara
 # Placeholder — no real domain assigned in this phase (see cluster survey
@@ -80,10 +85,38 @@ jaeger:
   enabled: false
 mailpit:
   enabled: false
+# ── Shared db-namespace services (owner decision, 2026-08-14) ──
+#
+# The umbrella normally bootstraps its OWN per-env CNPG Postgres cluster
+# ("pg") and its OWN Redis+Sentinel deployment (see helm/cpp-env/templates/
+# postgres.yaml, redis.yaml). The owner decided cyber-accountant should
+# instead reuse the Postgres/Redis ALREADY running cluster-wide in namespace
+# `db` — same rationale as the MinIO decision in docs/adr/0007-s3-backend.md:
+# keep data/cost inside services the cluster already runs instead of paying
+# for a duplicate stateful workload on an already-constrained 3-node
+# control-plane-only cluster.
+#
+# redis.enabled: false actually suppresses the umbrella's bundled
+# redis+redis-sentinel Deployments (templates/redis.yaml is guarded by
+# `{{- if .Values.redis.enabled }}`) — no leftover objects expected after
+# `helm upgrade`.
+#
+# postgres.* has NO such guard: helm/cpp-env/templates/postgres.yaml
+# unconditionally renders a CNPG `Cluster` (name "pg") + `pg-app` Secret,
+# regardless of any value here. There is no values-only way to suppress it
+# (a template fix is out of scope for this change — this file only). The
+# leftover `pg` Cluster CR (and its PVC) is deleted by hand after
+# `helm upgrade`; it will reappear on the NEXT `helm upgrade` unless/until
+# the template itself gets an `enabled` guard — flagged as a follow-up.
+# `postgres.instances` etc. below are therefore inert (nothing reads them
+# once the CR is deleted) but left in place rather than removed, since they
+# do no harm and document the chart's own default shape.
 postgres:
-  instances: 1                          # single primary, no read replica (per brief's minimal profile)
+  instances: 1
   storageSize: 2Gi
-  storageClass: longhorn-single-replica # matches this cluster's existing stateful-workload convention (see survey above)
+  storageClass: longhorn-single-replica
+redis:
+  enabled: false   # suppresses templates/redis.yaml entirely (master + 3 Sentinels)
 
 cyber-accountant:
   image:
@@ -95,6 +128,73 @@ cyber-accountant:
     enabled: false
   tracing:
     enabled: false                      # no Jaeger to export to
+  # ── Shared Postgres (namespace `db`, CNPG cluster "postgresql") ──
+  # IMPORTANT: NOT the pre-existing `postgresql-cybercapybara` role/db the
+  # task brief pointed at — that role (comment: "cybercapybara.kz site db
+  # user") and its `cybercapybara` database are live production data for the
+  # unrelated cybercapybara.kz marketing site (namespace `www`, verified
+  # running and using that exact role+db+password today). Reusing it would
+  # have put this app's own schema/migrations in the SAME database as that
+  # site's — a real collision risk (this template's migrations create
+  # tables like `organizations`; a same-named or conflicting table in an
+  # unrelated app's schema is exactly the kind of thing that breaks in
+  # production). Instead, a NEW dedicated role+database was provisioned on
+  # the SAME shared CNPG cluster (still "the existing shared service", just
+  # with its own identity — the same pattern as the MinIO decision:
+  # shared infra, scoped-not-shared credentials):
+  #   - Role `cyber_accountant` added to the `postgresql` Cluster's
+  #     `spec.managed.roles` (namespace db), password in Secret
+  #     `postgresql-cyber-accountant` (namespace db, kubernetes.io/basic-auth).
+  #   - Database `cyber_accountant` created via a CNPG `Database` CR
+  #     (databases.postgresql.cnpg.io/cyber-accountant, namespace db),
+  #     owner `cyber_accountant`.
+  #   - Verified: connects, owns/creates tables in `cyber_accountant`; has
+  #     zero visible objects in the `cybercapybara` database (CONNECT alone
+  #     grants nothing without object-level grants — confirmed empirically).
+  # password is intentionally blank here — real value supplied via
+  # `--set cyber-accountant.externalDatabase.password=...` at `helm upgrade`
+  # time (see deploy notes at the top of this file), never committed.
+  externalDatabase:
+    host: postgresql-rw.db.svc.cluster.local
+    port: 5432
+    name: cyber_accountant
+    user: cyber_accountant
+    password: ""
+    poolSize: 5
+    replicaHost: postgresql-ro.db.svc.cluster.local
+    migrationsEnabled: false   # chart default; migrations run via the init container (migrations.runAsInitContainer, chart default true)
+  # ── Shared Redis + Sentinel (namespace `db`, Helm release "redis",
+  # bitnami-style: 3-node StatefulSet, each pod running redis+sentinel,
+  # master set "mymaster") ──
+  # Same single shared instance the `www` site already uses (same
+  # `redis-password` — Redis has one instance-wide AUTH password; there is
+  # no per-app credential the way CNPG/MinIO support, so this is the only
+  # way to connect at all, not a scoping choice).
+  #
+  # KNOWN GAP, flagged rather than silently accepted: this template's Redis
+  # keys are NOT namespaced per app (src/jobs/Job.hpp: "jobs:queue:...",
+  # "jobs:dlq:...", src/security/RateLimit.hpp: "rl:sw:...", "rl:auth:...",
+  # auth cookie revocation: "auth:refresh:...") and there is no Redis
+  # DB-index selection in src/cache/Cache.hpp (parse_redis_url only reads
+  # host:port; ConnectionOptions.db is never set, always DB 0). Sharing this
+  # Redis instance with `www` is safe RIGHT NOW only because this profile
+  # keeps jobs/rate-limiting/auth-cookies OFF (see defaults — none of those
+  # keys are set true below), so no queue/rate-limit/session key can
+  # collide with `www`'s. The moment any of those features gets turned on
+  # here, it WILL share keyspace with `www` (e.g. "jobs:queue:mail" would be
+  # the literal same Redis key for both apps). Needs either a REDIS_DB /
+  # key-prefix config addition (src/cache/Cache.hpp, out of scope for this
+  # values-only change) or a fully separate Redis before those features go
+  # live — tracked as a follow-up, not fixed here.
+  # password intentionally blank — supplied via
+  # `--set cyber-accountant.externalRedis.password=...` at upgrade time.
+  externalRedis:
+    url: "tcp://redis.db.svc.cluster.local:6379"
+    password: ""
+    useSentinel: true
+    masterName: mymaster
+    sentinelNodes: "redis-node-0.redis-headless.db.svc.cluster.local:26379,redis-node-1.redis-headless.db.svc.cluster.local:26379,redis-node-2.redis-headless.db.svc.cluster.local:26379"
+    poolSize: 5
 
 cyber-accountant-worker:
   image:
@@ -108,6 +208,26 @@ cyber-accountant-worker:
   # affects links inside outbound email bodies (mail is off this phase too).
   app:
     baseUrl: "https://app.cybercapybara.example.com"
+  # Same shared Postgres/Redis as the `cyber-accountant` block above — see
+  # those comments for the full rationale (dedicated role/db, not
+  # `postgresql-cybercapybara`; Redis key-namespacing gap). migrationsEnabled
+  # stays false here (chart default) — the api's init container owns schema
+  # migrations, not the worker.
+  externalDatabase:
+    host: postgresql-rw.db.svc.cluster.local
+    port: 5432
+    name: cyber_accountant
+    user: cyber_accountant
+    password: ""
+    poolSize: 5
+    replicaHost: postgresql-ro.db.svc.cluster.local
+  externalRedis:
+    url: "tcp://redis.db.svc.cluster.local:6379"
+    password: ""
+    useSentinel: true
+    masterName: mymaster
+    sentinelNodes: "redis-node-0.redis-headless.db.svc.cluster.local:26379,redis-node-1.redis-headless.db.svc.cluster.local:26379,redis-node-2.redis-headless.db.svc.cluster.local:26379"
+    poolSize: 5
 
 cpp-frontend:
   image:
