@@ -93,9 +93,36 @@ default.
   latency or egress.
 - **−** Bucket creation and S3 key generation are manual, Console-only steps
   (no Terraform/hcloud-CLI coverage for Hetzner Object Storage today) — see
-  the MANUAL STEP in the task-10 report for the exact instructions.
+  "Manual provisioning" below for the exact steps.
 - **−** Adds an external dependency (Hetzner Object Storage API/uptime)
   instead of keeping storage inside the already-provisioned cluster.
+
+## Manual provisioning
+
+Bucket creation and S3 key generation cannot be done from this repo's tooling
+(`hcloud` CLI has no Object Storage support, see Context) — an owner with
+Hetzner Console access must:
+
+1. **Hetzner Console → Object Storage** (same project as the cluster): create
+   a bucket named `cyber-accountant-prod` in region `fsn1`, then generate an
+   S3 access key + secret key scoped to it.
+2. **Create the cluster secret** (namespace `cyber-accountant`, created by
+   this task):
+
+   ```bash
+   KUBECONFIG=../cluster/kubeconfig kubectl -n cyber-accountant create secret generic s3-credentials \
+     --from-literal=S3_ENDPOINT=<fsn1-endpoint-from-console> \
+     --from-literal=S3_BUCKET=cyber-accountant-prod \
+     --from-literal=S3_REGION=fsn1 \
+     --from-literal=S3_ACCESS_KEY=<access-key-from-console> \
+     --from-literal=S3_SECRET_KEY=<secret-key-from-console>
+   ```
+
+   `S3_ENDPOINT` is the actual `fsn1` Object Storage host Hetzner shows in the
+   console (of the form `https://<region>.your-objectstorage.com`) — confirm
+   it there rather than guessing. The angle-bracket placeholders above are
+   documentation only; no placeholder or real key material is ever committed
+   — the secret lives solely in the cluster.
 
 ## Not adopted (deferred)
 
