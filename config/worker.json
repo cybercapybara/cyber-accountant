@@ -18,6 +18,7 @@
     "use_sentinel": false,
     "url": "tcp://${REDIS_HOST:-127.0.0.1}:${REDIS_PORT:-6379}",
     "password": "${REDIS_PASSWORD:-}",
+    "db": "${REDIS_DB:-0}",
     "pool_size": 10,
     "sentinel": {
       "password": "${REDIS_SENTINEL_PASSWORD:-}",

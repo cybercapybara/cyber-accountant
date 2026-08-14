@@ -36,6 +36,7 @@ data:
         "use_sentinel": {{ .Values.externalRedis.useSentinel }},
         "url": {{ .Values.externalRedis.url | quote }},
         "password": "${REDIS_PASSWORD:-}",
+        "db": {{ .Values.externalRedis.db | default 0 }},
         "pool_size": {{ .Values.externalRedis.poolSize }},
         "sentinel": {
           "master_name": {{ .Values.externalRedis.masterName | quote }},

@@ -180,21 +180,30 @@ cyber-accountant:
   # no per-app credential the way CNPG/MinIO support, so this is the only
   # way to connect at all, not a scoping choice).
   #
-  # KNOWN GAP, flagged rather than silently accepted: this template's Redis
-  # keys are NOT namespaced per app (src/jobs/Job.hpp: "jobs:queue:...",
+  # FIXED 2026-08-14 (T13b), was a KNOWN GAP: this template's Redis keys are
+  # NOT namespaced per app (src/jobs/Job.hpp: "jobs:queue:...",
   # "jobs:dlq:...", src/security/RateLimit.hpp: "rl:sw:...", "rl:auth:...",
-  # auth cookie revocation: "auth:refresh:...") and there is no Redis
-  # DB-index selection in src/cache/Cache.hpp (parse_redis_url only reads
-  # host:port; ConnectionOptions.db is never set, always DB 0). Sharing this
-  # Redis instance with `www` is safe RIGHT NOW only because this profile
-  # keeps jobs/rate-limiting/auth-cookies OFF (see defaults — none of those
-  # keys are set true below), so no queue/rate-limit/session key can
-  # collide with `www`'s. The moment any of those features gets turned on
-  # here, it WILL share keyspace with `www` (e.g. "jobs:queue:mail" would be
-  # the literal same Redis key for both apps). Needs either a REDIS_DB /
-  # key-prefix config addition (src/cache/Cache.hpp, out of scope for this
-  # values-only change) or a fully separate Redis before those features go
-  # live — tracked as a follow-up, not fixed here.
+  # auth cookie revocation: "auth:refresh:...") — confirmed live that this
+  # is a real collision, not a theoretical one: with mail.viaJobs=true, a
+  # reset-password-request enqueued into the shared Redis was immediately
+  # dequeued and dropped by `www`'s OWN worker, because both workers BRPOP
+  # the identical "jobs:queue:*" list key on DB 0. `db: 1` below (wired to
+  # REDIS_DB, applied via ConnectionOptions.db — see src/cache/Cache.hpp) is
+  # the fix: it gives this app its own logical keyspace on the SAME shared
+  # Redis instance, so `jobs:queue:mail` on DB 1 is a completely different
+  # key from `www`'s `jobs:queue:mail` on DB 0. This is now the mechanism
+  # that makes mail.viaJobs=false (see below) no longer strictly required
+  # for correctness — kept at false anyway pending a deliberate follow-up to
+  # re-enable it, since this task's charter was isolation, not re-enabling
+  # queued mail.
+  #
+  # DB-index choice verified non-conflicting, not assumed: `kubectl -n db
+  # exec redis-node-0 -c redis -- redis-cli -a <redis-password secret> INFO
+  # keyspace` shows only `db0:keys=18,...` — `www` (and everything else on
+  # this shared instance) uses DB 0 exclusively, nothing else is on DB 1+.
+  # DB 1 is picked for both api and worker below (they MUST match — the
+  # worker's BRPOP client has to poll the same DB the api LPUSHes into).
+  #
   # password intentionally blank — supplied via
   # `--set cyber-accountant.externalRedis.password=...` at upgrade time.
   externalRedis:
@@ -204,6 +213,7 @@ cyber-accountant:
     masterName: mymaster
     sentinelNodes: "redis-node-0.redis-headless.db.svc.cluster.local:26379,redis-node-1.redis-headless.db.svc.cluster.local:26379,redis-node-2.redis-headless.db.svc.cluster.local:26379"
     poolSize: 5
+    db: 1   # REDIS_DB — isolates our keyspace from `www` (DB 0). See comment above.
   # Real public URL now that buh.cybercapybara.kz exists
   # (deploy/ingress/buh-cybercapybara-kz.yaml) — was the unused
   # app.cybercapybara.example.com placeholder. Matters now that mail is on
@@ -274,9 +284,9 @@ cyber-accountant-worker:
     baseUrl: "https://buh.cybercapybara.kz"
   # Same shared Postgres/Redis as the `cyber-accountant` block above — see
   # those comments for the full rationale (dedicated role/db, not
-  # `postgresql-cybercapybara`; Redis key-namespacing gap). migrationsEnabled
-  # stays false here (chart default) — the api's init container owns schema
-  # migrations, not the worker.
+  # `postgresql-cybercapybara`; Redis key-namespacing — FIXED via db: 1, T13b).
+  # migrationsEnabled stays false here (chart default) — the api's init
+  # container owns schema migrations, not the worker.
   externalDatabase:
     host: postgresql-rw.db.svc.cluster.local
     port: 5432
@@ -292,6 +302,7 @@ cyber-accountant-worker:
     masterName: mymaster
     sentinelNodes: "redis-node-0.redis-headless.db.svc.cluster.local:26379,redis-node-1.redis-headless.db.svc.cluster.local:26379,redis-node-2.redis-headless.db.svc.cluster.local:26379"
     poolSize: 5
+    db: 1   # REDIS_DB — MUST match the api block's db above (BRPOP must poll the same DB the api LPUSHes into).
   # Same shared Brevo SMTP relay as the `cyber-accountant` block above —
   # see those comments for the full rationale, including why viaJobs is
   # false (confirmed live: the shared Redis job queue isn't namespaced per

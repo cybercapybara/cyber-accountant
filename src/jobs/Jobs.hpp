@@ -94,38 +94,51 @@ public:
      * @brief Dedicated standalone Redis client for blocking BRPOP. The Cache
      *        pool has too tight a socket_timeout for blocking ops; this one
      *        uses (brpop_timeout + 2s) so the socket doesn't trip first.
+     * @param db Logical Redis DB index (REDIS_DB / cache.db) — MUST match the
+     *           Cache module's db (see Cache.hpp's file-level note). This is
+     *           the connection that actually issues BRPOP against
+     *           `jobs:queue:*` — the exact key another app's worker on the
+     *           same Redis instance (db 0) would otherwise dequeue and drop
+     *           (T13b: this is what isolates our queue from `www`'s).
      */
     void init_blocking_client(const std::string& host,
                               int port,
                               long brpop_timeout_sec,
                               const std::string& password = "",
-                              int pool_size = 4) {
+                              int pool_size = 4,
+                              int db = 0) {
         const auto sock_to = std::chrono::milliseconds((brpop_timeout_sec + 2) * 1000);
         // One blocking connection is held per concurrent worker thread for the
         // duration of its BRPOP — size the pool to concurrency or threads beyond
         // the 4th stall waiting for a connection (silent throughput cliff).
-        blocking_client_ = Cache::make_standalone_client(host, port, pool_size, password, sock_to, sock_to);
+        blocking_client_ = Cache::make_standalone_client(host, port, pool_size, password, sock_to, sock_to, db);
         blocking_client_->ping();
-        spdlog::info(
-            "Jobs blocking Redis client initialized ({}:{}, socket_timeout={}s)", host, port, brpop_timeout_sec + 2);
+        spdlog::info("Jobs blocking Redis client initialized ({}:{}, db={}, socket_timeout={}s)",
+                     host,
+                     port,
+                     db,
+                     brpop_timeout_sec + 2);
     }
 
     /**
      * @brief Dedicated Sentinel-aware Redis client for blocking BRPOP.
+     * @param db Logical Redis DB index — see init_blocking_client's db note.
      */
     void init_blocking_client_sentinel(const std::string& master_name,
                                        const std::vector<std::pair<std::string, int>>& sentinels,
                                        long brpop_timeout_sec,
                                        const std::string& password = "",
                                        const std::string& sentinel_password = "",
-                                       int pool_size = 4) {
+                                       int pool_size = 4,
+                                       int db = 0) {
         const auto sock_to = std::chrono::milliseconds((brpop_timeout_sec + 2) * 1000);
         // Size to worker concurrency — see init_blocking_client.
         blocking_client_ = Cache::make_sentinel_client(
-            master_name, sentinels, pool_size, password, sentinel_password, sock_to, sock_to);
+            master_name, sentinels, pool_size, password, sentinel_password, sock_to, sock_to, db);
         blocking_client_->ping();
-        spdlog::info("Jobs blocking Redis client initialized via Sentinel (master: {}, socket_timeout={}s)",
+        spdlog::info("Jobs blocking Redis client initialized via Sentinel (master: {}, db={}, socket_timeout={}s)",
                      master_name,
+                     db,
                      brpop_timeout_sec + 2);
     }
 

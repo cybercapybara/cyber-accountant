@@ -415,6 +415,12 @@ int main(int argc, char* argv[]) {
             std::string sentinel_password =
                 config.get<std::string>("cache.sentinel.password", "REDIS_SENTINEL_PASSWORD", redis_password);
             bool use_sentinel = config.get<bool>("cache.use_sentinel", "REDIS_USE_SENTINEL", false);
+            // Logical Redis DB index (T13b) — MUST match Core::init_cache_'s
+            // redis_db so the worker's blocking BRPOP client dequeues from the
+            // same isolated DB the API enqueues into. This is the piece that
+            // was silently dequeuing (and dropping) another app's jobs when
+            // both shared db 0 on the same Redis instance.
+            int redis_db = config.get<int>("cache.db", "REDIS_DB", 0);
 
             if (use_sentinel) {
                 // Use Sentinel to discover the master — avoids connecting to a read replica.
@@ -448,12 +454,17 @@ int main(int argc, char* argv[]) {
                                                           brpop_timeout,
                                                           redis_password,
                                                           sentinel_password,
-                                                          /*pool_size=*/std::max(concurrency, 4));
+                                                          /*pool_size=*/std::max(concurrency, 4),
+                                                          redis_db);
             } else {
                 std::string redis_url = config.get<std::string>("cache.url", "REDIS_URL", "tcp://127.0.0.1:6379");
                 const Cache::RedisAddress addr = Cache::parse_redis_url(redis_url);
-                Jobs::get().init_blocking_client(
-                    addr.host, addr.port, brpop_timeout, redis_password, /*pool_size=*/std::max(concurrency, 4));
+                Jobs::get().init_blocking_client(addr.host,
+                                                 addr.port,
+                                                 brpop_timeout,
+                                                 redis_password,
+                                                 /*pool_size=*/std::max(concurrency, 4),
+                                                 redis_db);
             }
         }
 

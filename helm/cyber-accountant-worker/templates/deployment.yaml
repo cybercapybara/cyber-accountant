@@ -115,6 +115,11 @@ spec:
             {{- end }}
             - name: CACHE_POOL_SIZE
               value: {{ .Values.externalRedis.poolSize | quote }}
+            # Logical Redis DB index (T13b) — must equal the api release's
+            # REDIS_DB, or the worker's BRPOP client and the api's LPUSH end
+            # up on different logical DBs and jobs never get picked up.
+            - name: REDIS_DB
+              value: {{ .Values.externalRedis.db | default 0 | quote }}
             # Jobs
             - name: JOBS_ENABLED
               value: {{ .Values.jobs.enabled | quote }}

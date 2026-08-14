@@ -172,7 +172,8 @@ externalDatabase:
 # ---------------------------------------------------------------
 # External Redis / Sentinel connection
 # Env vars set: REDIS_URL, REDIS_PASSWORD, REDIS_USE_SENTINEL,
-#               REDIS_MASTER_NAME, REDIS_SENTINEL_NODES, CACHE_POOL_SIZE
+#               REDIS_MASTER_NAME, REDIS_SENTINEL_NODES, CACHE_POOL_SIZE,
+#               REDIS_DB
 # ---------------------------------------------------------------
 externalRedis:
   url: "tcp://redis.example.svc.cluster.local:6379"
@@ -181,6 +182,11 @@ externalRedis:
   masterName: mymaster
   sentinelNodes: "redis-node-0.redis-headless.example.svc.cluster.local:26379,redis-node-1.redis-headless.example.svc.cluster.local:26379,redis-node-2.redis-headless.example.svc.cluster.local:26379"
   poolSize: 10
+  # Logical Redis DB index (T13b) — MUST match the cyber-accountant (api)
+  # release's value: the worker's blocking BRPOP client has to dequeue from
+  # the same DB the api enqueues into. See cyber-accountant/values.yaml's
+  # externalRedis.db comment.
+  db: 0
 
 # ---------------------------------------------------------------
 # Application configuration

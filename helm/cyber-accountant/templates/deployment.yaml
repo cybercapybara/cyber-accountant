@@ -157,6 +157,12 @@ spec:
             {{- end }}
             - name: CACHE_POOL_SIZE
               value: {{ .Values.externalRedis.poolSize | quote }}
+            # Logical Redis DB index (T13b) — isolates this app's keyspace
+            # (jobs:queue:*, rl:*, auth:refresh:*, cache) when the Redis
+            # instance is shared with another app. See externalRedis.db in
+            # values.yaml / values-cybercapybara.yaml.
+            - name: REDIS_DB
+              value: {{ .Values.externalRedis.db | default 0 | quote }}
             # Kafka / Messaging
             - name: MESSAGING_ENABLED
               value: {{ .Values.externalKafka.enabled | quote }}

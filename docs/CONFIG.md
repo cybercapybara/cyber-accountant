@@ -148,6 +148,7 @@ handlers **plus** the worker, even when replicas absorb the bulk of reads.
 |---|---|---|---|---|
 | `REDIS_URL` | `cache.url` | string | `tcp://127.0.0.1:6379` | Standalone mode |
 | `REDIS_PASSWORD` | `cache.password` | string | — | |
+| `REDIS_DB` | `cache.db` | int | `0` | Logical Redis DB index (`SELECT n`, via `ConnectionOptions.db`). **Set this whenever the Redis instance is shared with another application** — job-queue (`jobs:queue:*`), rate-limit (`rl:*`), idempotency, and refresh-token-revocation (`auth:refresh:*`) keys aren't prefixed per app, so two apps on the same DB with the same key names collide (confirmed live: another app's worker dequeued and dropped this app's `account_email` job — see `helm/cpp-env/values-cybercapybara.yaml` `externalRedis` comment). Applies to standalone AND Sentinel connections, and to the worker's separate blocking-BRPOP client (`Jobs::init_blocking_client*`) — both must be set to the same value or the API and worker end up on different logical DBs. **Priority:** `REDIS_DB`/`cache.db` is authoritative; `parse_redis_url()` does NOT parse a trailing `/N` path segment out of `REDIS_URL` (this codebase never used redis-plus-plus's native `redis://host/N` URI form), so a `/N` accidentally appended to `REDIS_URL` is silently ignored — use `REDIS_DB`, not the URL, to select a non-default DB. |
 | `CACHE_POOL_SIZE` | `cache.pool_size` | int | `10` | |
 | `REDIS_USE_SENTINEL` | `cache.use_sentinel` | bool | `false` | |
 | `REDIS_MASTER_NAME` | `cache.sentinel.master_name` | string | `mymaster` | |

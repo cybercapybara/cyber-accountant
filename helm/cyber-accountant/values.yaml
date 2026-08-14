@@ -199,7 +199,8 @@ migrations:
 # ---------------------------------------------------------------
 # External Redis / Sentinel connection
 # Env vars set: REDIS_URL, REDIS_PASSWORD, REDIS_USE_SENTINEL,
-#               REDIS_MASTER_NAME, REDIS_SENTINEL_NODES, CACHE_POOL_SIZE
+#               REDIS_MASTER_NAME, REDIS_SENTINEL_NODES, CACHE_POOL_SIZE,
+#               REDIS_DB
 # ---------------------------------------------------------------
 externalRedis:
   url: "tcp://redis.example.svc.cluster.local:6379"  # Fallback if sentinel disabled
@@ -210,6 +211,12 @@ externalRedis:
   # sentinel service.
   sentinelNodes: "redis-node-0.redis-headless.example.svc.cluster.local:26379,redis-node-1.redis-headless.example.svc.cluster.local:26379,redis-node-2.redis-headless.example.svc.cluster.local:26379"
   poolSize: 10
+  # Logical Redis DB index (T13b). 0 = chart default, safe when this Redis
+  # instance isn't shared with another app. MUST be set (and match the
+  # cyber-accountant-worker release's value) whenever it is — see
+  # values-cybercapybara.yaml's externalRedis comment for the incident this
+  # fixes.
+  db: 0
 
 # ---------------------------------------------------------------
 # External Kafka (optional messaging)
