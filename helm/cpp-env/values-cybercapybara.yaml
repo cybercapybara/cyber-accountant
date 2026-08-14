@@ -130,7 +130,7 @@ redis:
 cyber-accountant:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant
-    tag: "0.2.1"  # member-management hotfix — NOT "v0.2.1" (release.yml strips the `v` prefix); confirmed present via /v2/.../tags/list before use
+    tag: "0.2.2"  # public S3 presign endpoint — NOT "v0.2.2" (release.yml strips the `v` prefix); confirmed present via /v2/.../tags/list before use
   imagePullSecrets:
     - name: ghcr-pull
   externalKafka:
@@ -279,11 +279,19 @@ cyber-accountant:
       bucket: cyber-accountant-prod
       accessKey: ""
       secretKey: ""
+      # Public ingress the api's presign() signs download URLs against —
+      # browsers can't resolve minio.minio.svc.cluster.local (in-cluster
+      # DNS), so presigned links need a real, internet-routable host.
+      # s3.cybercapybara.kz is the same MinIO instance's existing public
+      # ingress (docs, CORS and body-size prepped for this in the ops task
+      # ahead of this code fix — see deploy/ notes), kept private (no
+      # anonymous bucket listing/reads — presigned signature required).
+      publicEndpoint: "https://s3.cybercapybara.kz"
 
 cyber-accountant-worker:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-worker
-    tag: "0.2.1"  # see note above — unprefixed tag, member-management hotfix
+    tag: "0.2.2"  # see note above — unprefixed tag, public S3 presign endpoint
   imagePullSecrets:
     - name: ghcr-pull
   tracing:
@@ -342,10 +350,11 @@ cyber-accountant-worker:
       bucket: cyber-accountant-prod
       accessKey: ""
       secretKey: ""
+      publicEndpoint: "https://s3.cybercapybara.kz"   # see the cyber-accountant block's comment above
 
 cpp-frontend:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-frontend
-    tag: "0.2.1"  # see note above — unprefixed tag, member-management hotfix
+    tag: "0.2.2"  # see note above — unprefixed tag, public S3 presign endpoint
   imagePullSecrets:
     - name: ghcr-pull
