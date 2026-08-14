@@ -130,7 +130,7 @@ redis:
 cyber-accountant:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant
-    tag: "0.2.2"  # public S3 presign endpoint — NOT "v0.2.2" (release.yml strips the `v` prefix); confirmed present via /v2/.../tags/list before use
+    tag: "0.3.0"  # P2 taxes, payroll and HR — NOT "v0.3.0" (release.yml strips the `v` prefix); confirmed present via /v2/.../tags/list before use
   imagePullSecrets:
     - name: ghcr-pull
   externalKafka:
@@ -291,7 +291,7 @@ cyber-accountant:
 cyber-accountant-worker:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-worker
-    tag: "0.2.2"  # see note above — unprefixed tag, public S3 presign endpoint
+    tag: "0.3.0"  # see note above — unprefixed tag, P2 taxes, payroll and HR
   imagePullSecrets:
     - name: ghcr-pull
   tracing:
@@ -355,6 +355,6 @@ cyber-accountant-worker:
 cpp-frontend:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-frontend
-    tag: "0.2.2"  # see note above — unprefixed tag, public S3 presign endpoint
+    tag: "0.3.0"  # see note above — unprefixed tag, P2 taxes, payroll and HR
   imagePullSecrets:
     - name: ghcr-pull
