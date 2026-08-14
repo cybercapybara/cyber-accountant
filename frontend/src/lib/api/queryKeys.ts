@@ -35,6 +35,23 @@ export const qk = {
         : (['journal', 'entries', JSON.stringify(filters)] as const),
     entry: (id: string) => ['journal', 'entry', id] as const,
   },
+  documents: {
+    /**
+     * `filters` (type/status) is serialised into the key, same pattern as
+     * journal.entries above — a changed filter is a fresh cache entry,
+     * while the bare prefix (['documents','all']) still matches every
+     * variant for invalidation after upload/confirm-upload/generate.
+     * usePagedQuery appends the page number on top.
+     */
+    all: (filters?: Record<string, string>) =>
+      filters === undefined
+        ? (['documents', 'all'] as const)
+        : (['documents', 'all', JSON.stringify(filters)] as const),
+    detail: (id: string) => ['documents', 'detail', id] as const,
+  },
+  docTemplates: {
+    all: () => ['docTemplates', 'all'] as const,
+  },
   admin: {
     users: (page?: number) =>
       page === undefined ? (['admin', 'users'] as const) : (['admin', 'users', page] as const),

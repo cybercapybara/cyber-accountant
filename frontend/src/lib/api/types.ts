@@ -35,6 +35,11 @@ export type JournalLine = Schemas['JournalLine'];
 export type JournalLineWrite = Schemas['JournalLineWrite'];
 export type JournalEntry = Schemas['JournalEntry'];
 export type JournalEntryCreate = Schemas['JournalEntryCreate'];
+export type Document = Schemas['Document'];
+export type DocTemplate = Schemas['DocTemplate'];
+export type DocumentUploadCreate = Schemas['DocumentUploadCreate'];
+export type DocumentConfirmUpload = Schemas['DocumentConfirmUpload'];
+export type GenerateDocumentCreate = Schemas['GenerateDocumentCreate'];
 
 /** GET /api/auth/me, POST /api/auth/login, POST /api/auth/refresh — { user }. */
 export type MeResponse = Schemas['MeResponse'];
@@ -72,3 +77,15 @@ export type AccountDetailResponse = Schemas['AccountDetailResponse'];
 export type JournalEntryListResponse = Schemas['JournalEntryListResponse'];
 /** GET/POST /api/v1/journal-entries[/{id}[/post|/reverse]] — { data: JournalEntry }. */
 export type JournalEntryDetailResponse = Schemas['JournalEntryDetailResponse'];
+/** GET /api/v1/documents — { data: Document[], total, limit, offset }. */
+export type DocumentListResponse = Schemas['DocumentListResponse'];
+/** GET /api/v1/documents/{id}, POST .../confirm-upload — { data: Document }. */
+export type DocumentDetailResponse = Schemas['DocumentDetailResponse'];
+/** POST /api/v1/documents/uploads — { data: Document, upload_url }. */
+export type DocumentUploadResponse = Schemas['DocumentUploadResponse'];
+/** POST /api/v1/documents/{id}/download-url — { url }. */
+export type DownloadUrlResponse = Schemas['DownloadUrlResponse'];
+/** GET /api/v1/doc-templates — { data: DocTemplate[] }. */
+export type DocTemplateListResponse = Schemas['DocTemplateListResponse'];
+/** POST /api/v1/documents/generate — 202 { document_id, render_queued }. */
+export type GenerateDocumentResponse = Schemas['GenerateDocumentResponse'];

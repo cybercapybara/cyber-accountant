@@ -35,3 +35,22 @@ export function formatTiyn(tiyn: number): string {
   const frac = abs % 100;
   return `${sign}${whole}.${String(frac).padStart(2, '0')}`;
 }
+
+/**
+ * Render a signed tiyn integer as a "12 345,67"-style string — the money
+ * format the docgen LaTeX templates expect for `price`/`amount`/`total`/etc
+ * (see the schema.json and basic.json fixtures under templates/latex/ for
+ * each template version: space-grouped thousands, comma decimal separator).
+ * Manual digit-grouping
+ * rather than `toLocaleString('ru-RU')` — Intl's ru-RU grouping separator is
+ * U+00A0 (NBSP), an extra normalization step for no real benefit here, and
+ * ICU locale data availability varies by runtime.
+ */
+export function formatTiynRu(tiyn: number): string {
+  const sign = tiyn < 0 ? '-' : '';
+  const abs = Math.abs(Math.trunc(tiyn));
+  const whole = Math.floor(abs / 100);
+  const frac = abs % 100;
+  const grouped = String(whole).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return `${sign}${grouped},${String(frac).padStart(2, '0')}`;
+}
