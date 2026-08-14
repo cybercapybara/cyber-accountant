@@ -54,7 +54,9 @@ gates by construction. Hand-rolled versions usually don't.
 7. `make ci-local` — full local reproduction of CI
 
 CI additionally runs clang-tidy, ASan+UBSan (+TSAN), gitleaks, Trivy,
-helm-render and the OpenAPI-drift gate.
+helm-render and the OpenAPI-drift gate. `template-render` smoke-renders every
+LaTeX template on the worker image; it triggers on changes under
+`templates/**`, `src/docgen/**`, or `docker/Dockerfile`.
 
 ## Don'ts
 

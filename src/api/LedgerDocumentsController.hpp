@@ -74,6 +74,16 @@
  * present + correctly typed, matching the split
  * `CounterpartiesController::validate_and_fill` already used for
  * `identifier`'s check-digit check.
+ *
+ * Final pre-merge fix: `confirmUpload` used to trust size_bytes/
+ * checksum_sha256 for ANY document it could find, so calling it on a
+ * source='generated' document (docgen's own reproducible checksum/mime/
+ * size) — or on an already-'final' uploaded one — would let the client
+ * overwrite that real audit metadata with unverified values. `confirmUpload`
+ * now 409s (`invalid_state`) unless the document is `source='uploaded'` AND
+ * `status='draft'`, checked before the s3_key/Storage::exists() checks
+ * (a generated document already has a real s3_key and an existing object,
+ * so those alone would not have caught this).
  */
 
 #pragma once
@@ -398,6 +408,24 @@ public:
             auto found = repo.find_in_org(id, ctx.org_id, /*from_primary=*/true);
             if (!found) {
                 callback(ErrorResponse::not_found("document"));
+                return;
+            }
+            // Lifecycle guard: confirm-upload is only meaningful for a
+            // document THIS endpoint's own startUpload() created — a
+            // source='uploaded' row still sitting in 'draft'. Without this
+            // check, calling confirm-upload on a source='generated' document
+            // (docgen's own s3_key already set and its checksum/mime/size
+            // already the true, reproducible values of the rendered PDF) or
+            // on an already-'final' uploaded document would let the CLIENT's
+            // reported size_bytes/checksum_sha256 below overwrite that real
+            // audit metadata with unverified values — a document-integrity
+            // hole, not just a wasted call. Checked BEFORE the s3_key/
+            // Storage::exists() checks that follow, since a generated
+            // document already has a (real) s3_key and an existing object,
+            // so those checks alone would not catch this.
+            if (found->source != "uploaded" || found->status != "draft") {
+                callback(ErrorResponse::conflict("invalid_state",
+                                                 "confirm-upload is only valid for draft uploaded documents"));
                 return;
             }
             if (!found->s3_key || found->s3_key->empty()) {

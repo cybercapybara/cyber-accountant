@@ -534,6 +534,76 @@ TEST_F(LedgerDocumentsApiTest, ConfirmUploadCrossOrgNotFound) {
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
 
+// Final pre-merge fix: lifecycle guard — confirm-upload must refuse anything
+// that isn't a draft, uploaded document, checked BEFORE the s3_key/
+// Storage::exists() checks (a generated document already has a real s3_key
+// and an existing object, so those alone would not catch this). Without the
+// guard, this would let the client's reported size_bytes/checksum_sha256
+// overwrite docgen's real, reproducible audit metadata.
+TEST_F(LedgerDocumentsApiTest, ConfirmUploadRejectedForGeneratedDocument) {
+    auto org = seed_org("444240000027", "Confirm Generated Org LLP");
+    Ledger::DocumentRepository repo;
+    auto created = repo.create(org.id, "invoice", "generated", "draft");
+    auto accountant = member("accountant11@example.com", org.id, "accountant");
+
+    auto req = authed_json(accountant, {{"size_bytes", 42}, {"checksum_sha256", std::string(64, 'e')}});
+    HttpResponsePtr resp;
+    ctrl.confirmUpload(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k409Conflict);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["error"].get<std::string>(), "invalid_state");
+}
+
+// Same guard, the other lifecycle edge: an uploaded document that was ALREADY
+// confirmed once (now 'final') must reject a second confirm-upload — proven
+// end-to-end through a real startUpload -> curl PUT -> confirm (success) ->
+// confirm again (rejected) sequence, not by hand-setting the row.
+TEST_F(LedgerDocumentsApiTest, ConfirmUploadRejectedForFinalizedUpload) {
+    auto org = seed_org("444240000028", "Confirm Twice Org LLP");
+    auto accountant = member("accountant12@example.com", org.id, "accountant");
+
+    auto start_req =
+        authed_json(accountant, {{"filename", "twice.pdf"}, {"mime", "application/pdf"}, {"doc_type", "invoice"}});
+    HttpResponsePtr start_resp;
+    ctrl.startUpload(start_req, [&](const HttpResponsePtr& r) { start_resp = r; });
+    ASSERT_EQ(start_resp->statusCode(), k201Created);
+    auto start_body = json::parse(std::string(start_resp->body()));
+    const std::string doc_id = start_body["data"]["id"].get<std::string>();
+    const std::string upload_url = start_body["upload_url"].get<std::string>();
+
+    const std::string payload = "twice-bytes-" + Jobs::generate_uuid();
+    const auto tmp_path = std::filesystem::temp_directory_path() / ("docapi-twice-" + Jobs::generate_uuid() + ".bin");
+    {
+        std::ofstream f(tmp_path, std::ios::binary);
+        f << payload;
+    }
+    const std::string put_code = run_capture("curl -s -o /dev/null -w '%{http_code}' -X PUT --data-binary @'" +
+                                             tmp_path.string() + "' '" + upload_url + "'");
+    std::filesystem::remove(tmp_path);
+    ASSERT_EQ(put_code, "200");
+
+    const json confirm_body = {{"size_bytes", static_cast<long long>(payload.size())},
+                               {"checksum_sha256", Utils::Crypto::sha256_hex(payload)}};
+
+    // First confirm — succeeds (document flips draft -> final).
+    HttpResponsePtr first_resp;
+    ctrl.confirmUpload(
+        authed_json(accountant, confirm_body), [&](const HttpResponsePtr& r) { first_resp = r; }, doc_id);
+    ASSERT_NE(first_resp, nullptr);
+    ASSERT_EQ(first_resp->statusCode(), k200OK);
+
+    // Second confirm — same document, now 'final' — must be rejected.
+    HttpResponsePtr second_resp;
+    ctrl.confirmUpload(
+        authed_json(accountant, confirm_body), [&](const HttpResponsePtr& r) { second_resp = r; }, doc_id);
+    ASSERT_NE(second_resp, nullptr);
+    EXPECT_EQ(second_resp->statusCode(), k409Conflict);
+    auto body = json::parse(std::string(second_resp->body()));
+    EXPECT_EQ(body["error"].get<std::string>(), "invalid_state");
+}
+
 // Fix round 2: checksum_sha256 present and a string (structural checks
 // pass), but the wrong shape (not 64 lowercase hex chars) — a semantic
 // failure, must be 422, not 400. Before the fix this was indistinguishable
