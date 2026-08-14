@@ -19,6 +19,8 @@ import { api } from '@/lib/api/client';
 import { getSelectedOrgId, setSelectedOrgId } from '@/lib/api/orgSession';
 import { qk } from '@/lib/api/queryKeys';
 import type {
+  MembersListResponse,
+  MemberWithEmail,
   MineOrganizationsResponse,
   Organization,
   OrganizationDetailResponse,
@@ -28,7 +30,12 @@ import type {
   SwitchResponse,
 } from '@/lib/api/types';
 import { userIsAdmin } from '@/lib/auth/permissions';
-import { createOrganizationSchema, type CreateOrganizationValues } from '@/lib/schemas/orgs';
+import {
+  addOrgMemberByEmailSchema,
+  createOrganizationSchema,
+  type AddOrgMemberByEmailValues,
+  type CreateOrganizationValues,
+} from '@/lib/schemas/orgs';
 
 const PER_PAGE = 20;
 const ORG_ROLES = ['owner', 'accountant', 'viewer'] as const;
@@ -313,9 +320,11 @@ function CreateOrganizationForm({
 }
 
 /**
- * Member management (add / change role / remove). docs/openapi.yaml has no
- * "list members" endpoint yet, so this can only act on a user id the caller
- * already knows — there is nothing to browse.
+ * Member management: roster (GET /orgs/{id}/members, email + role per row,
+ * inline role-select -> PATCH, remove -> DELETE) plus an add-by-email form
+ * (POST /orgs/{id}/members with {email, role} — resolved server-side via
+ * Repositories::UserRepository::find_by_email, 404 if nobody's registered
+ * with that address yet).
  *
  * Gate (mirrors OrganizationsController's require_admin_or_org_owner,
  * fail-closed by design): a full admin can manage any organization's
@@ -365,8 +374,7 @@ function MemberManagementCard({
       <CardHeader>
         <CardTitle>Manage members</CardTitle>
         <CardDescription>
-          Add, re-role, or remove a member by user id. There is no member list endpoint yet (P1) —
-          actions target a user id you already have.
+          View the roster, add someone by email, re-role, or remove a member.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -395,19 +403,25 @@ function MemberManagementCard({
 
 function MemberActions({ orgId }: { orgId: string }) {
   const toast = useToast();
-  const [addUserId, setAddUserId] = useState('');
+
+  const rosterQ = useQuery({
+    queryKey: qk.orgs.members(orgId),
+    queryFn: () => api.getJson<MembersListResponse>(`/api/v1/orgs/${orgId}/members`),
+  });
+
+  const [addEmail, setAddEmail] = useState('');
   const [addRole, setAddRole] = useState<OrgRole>('viewer');
-  const [roleUserId, setRoleUserId] = useState('');
-  const [roleValue, setRoleValue] = useState<OrgRole>('viewer');
-  const [removeUserId, setRemoveUserId] = useState('');
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
+  const [emailError, setEmailError] = useState<string | undefined>(undefined);
+  const [removingMember, setRemovingMember] = useState<MemberWithEmail | null>(null);
 
   const addMember = useApiMutation(
-    (vars: { user_id: string; role: OrgRole }) =>
+    (vars: AddOrgMemberByEmailValues) =>
       api.postJson<OrgMemberDetailResponse>(`/api/v1/orgs/${orgId}/members`, { body: vars }),
     {
+      invalidate: [qk.orgs.members(orgId)],
       onSuccess: () => {
-        setAddUserId('');
+        setAddEmail('');
+        setAddRole('viewer');
         toast.success('Member added.');
       },
     },
@@ -417,41 +431,97 @@ function MemberActions({ orgId }: { orgId: string }) {
       api.patchJson<OrgMemberDetailResponse>(`/api/v1/orgs/${orgId}/members/${vars.userId}`, {
         body: { role: vars.role },
       }),
-    { onSuccess: () => toast.success('Role updated.') },
+    {
+      invalidate: [qk.orgs.members(orgId)],
+      onSuccess: () => toast.success('Role updated.'),
+    },
   );
   const removeMember = useApiMutation(
     (userId: string) => api.deleteJson(`/api/v1/orgs/${orgId}/members/${userId}`),
     {
+      invalidate: [qk.orgs.members(orgId)],
       onSuccess: () => {
-        setRemoveUserId('');
-        setConfirmingRemove(false);
+        setRemovingMember(null);
         toast.success('Member removed.');
       },
     },
   );
+  // 404 user_not_found on the add-by-email path surfaces here too — the
+  // backend's message ("No user with this email — ask them to register
+  // first") rides straight through apiErrorMessage into the toast.
   useErrorToast(addMember.error ?? changeRole.error ?? removeMember.error);
 
   const handleAdd = (e: FormEvent) => {
     e.preventDefault();
-    if (!addUserId.trim()) return;
-    addMember.mutate({ user_id: addUserId.trim(), role: addRole });
+    const parsed = addOrgMemberByEmailSchema.safeParse({ email: addEmail, role: addRole });
+    if (!parsed.success) {
+      setEmailError(parsed.error.issues[0]?.message ?? 'Invalid email');
+      return;
+    }
+    setEmailError(undefined);
+    addMember.mutate(parsed.data);
   };
-  const handleChangeRole = (e: FormEvent) => {
-    e.preventDefault();
-    if (!roleUserId.trim()) return;
-    changeRole.mutate({ userId: roleUserId.trim(), role: roleValue });
-  };
+
+  const columns: Column<MemberWithEmail>[] = [
+    { header: 'Email', className: 'font-medium', cell: (m) => m.email },
+    {
+      header: 'Role',
+      cell: (m) => (
+        <select
+          aria-label={`Role for ${m.email}`}
+          className="flex h-9 rounded-md border border-input bg-background px-2 py-1 text-sm capitalize"
+          value={m.role}
+          disabled={changeRole.isPending}
+          onChange={(e) =>
+            changeRole.mutate({ userId: m.user_id, role: e.target.value as OrgRole })
+          }
+        >
+          {ORG_ROLES.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+      ),
+    },
+    {
+      header: '',
+      className: 'text-right',
+      cell: (m) => (
+        <Button size="sm" variant="destructive" onClick={() => setRemovingMember(m)}>
+          Remove
+        </Button>
+      ),
+    },
+  ];
 
   return (
     <div className="space-y-6">
+      <div>
+        <h3 className="mb-2 text-sm font-medium">Members</h3>
+        <DataTable
+          columns={columns}
+          rows={rosterQ.data?.data}
+          rowKey={(m) => m.user_id}
+          isLoading={rosterQ.isLoading}
+          error={rosterQ.error}
+          emptyText="No members yet."
+        />
+      </div>
+
       <form className="space-y-3" onSubmit={handleAdd}>
         <h3 className="text-sm font-medium">Add member</h3>
         <div className="flex flex-wrap items-end gap-3">
           <FormField
-            id="add-user-id"
-            label="User id (UUID)"
-            value={addUserId}
-            onChange={(e) => setAddUserId(e.target.value)}
+            id="add-email"
+            label="Email"
+            type="email"
+            value={addEmail}
+            error={emailError}
+            onChange={(e) => {
+              setAddEmail(e.target.value);
+              if (emailError) setEmailError(undefined);
+            }}
             className="max-w-xs"
           />
           <div className="space-y-2">
@@ -469,73 +539,21 @@ function MemberActions({ orgId }: { orgId: string }) {
               ))}
             </select>
           </div>
-          <Button type="submit" disabled={addMember.isPending || !addUserId.trim()}>
-            Add
+          <Button type="submit" disabled={addMember.isPending || !addEmail.trim()}>
+            {addMember.isPending ? 'Adding…' : 'Add'}
           </Button>
         </div>
       </form>
 
-      <form className="space-y-3" onSubmit={handleChangeRole}>
-        <h3 className="text-sm font-medium">Change role</h3>
-        <div className="flex flex-wrap items-end gap-3">
-          <FormField
-            id="role-user-id"
-            label="User id (UUID)"
-            value={roleUserId}
-            onChange={(e) => setRoleUserId(e.target.value)}
-            className="max-w-xs"
-          />
-          <div className="space-y-2">
-            <Label htmlFor="role-value">New role</Label>
-            <select
-              id="role-value"
-              className="flex h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
-              value={roleValue}
-              onChange={(e) => setRoleValue(e.target.value as OrgRole)}
-            >
-              {ORG_ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </div>
-          <Button type="submit" disabled={changeRole.isPending || !roleUserId.trim()}>
-            Update
-          </Button>
-        </div>
-      </form>
-
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium">Remove member</h3>
-        <div className="flex flex-wrap items-end gap-3">
-          <FormField
-            id="remove-user-id"
-            label="User id (UUID)"
-            value={removeUserId}
-            onChange={(e) => setRemoveUserId(e.target.value)}
-            className="max-w-xs"
-          />
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={!removeUserId.trim()}
-            onClick={() => setConfirmingRemove(true)}
-          >
-            Remove
-          </Button>
-        </div>
-      </div>
-
-      {confirmingRemove && (
+      {removingMember && (
         <ConfirmDialog
           title="Remove member"
-          description={`Remove user ${removeUserId} from this organization? This cannot be undone.`}
+          description={`Remove ${removingMember.email} from this organization? This cannot be undone.`}
           confirmLabel="Remove member"
           destructive
           busy={removeMember.isPending}
-          onConfirm={() => removeMember.mutate(removeUserId.trim())}
-          onClose={() => setConfirmingRemove(false)}
+          onConfirm={() => removeMember.mutate(removingMember.user_id)}
+          onClose={() => setRemovingMember(null)}
         />
       )}
     </div>

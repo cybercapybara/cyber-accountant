@@ -17,3 +17,14 @@ export const createOrganizationSchema = z.object({
 });
 
 export type CreateOrganizationValues = z.infer<typeof createOrganizationSchema>;
+
+// POST /api/v1/orgs/{id}/members — email variant. Mirrors the backend's
+// email-or-user_id acceptance (Api::Validation::email / OrganizationsController
+// ::addMember) — the UI only ever offers the email path, since there is
+// nowhere for an owner to discover a member's raw user_id.
+export const addOrgMemberByEmailSchema = z.object({
+  email: z.string().trim().email('Enter a valid email address'),
+  role: z.enum(['owner', 'accountant', 'viewer']),
+});
+
+export type AddOrgMemberByEmailValues = z.infer<typeof addOrgMemberByEmailSchema>;

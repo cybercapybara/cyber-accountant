@@ -12,6 +12,7 @@ export const qk = {
     all: (page?: number) =>
       page === undefined ? (['orgs', 'all'] as const) : (['orgs', 'all', page] as const),
     mine: () => ['orgs', 'mine'] as const,
+    members: (orgId: string) => ['orgs', 'members', orgId] as const,
   },
   counterparties: {
     all: (page?: number) =>
