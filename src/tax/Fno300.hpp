@@ -192,6 +192,11 @@ public:
         // notice-triggered (dt_notice) filing, same scope limitation Fno910
         // documents for its own dt_regular field.
         sheet += FnoXml::field("dt_regular", std::string("true"));
+        // Each amount is rounded to whole tenge independently from its raw
+        // tiyn value, so `012 - 023` may differ from `030_01` by up to one
+        // tenge. That is deliberate and matches how tax forms are filled:
+        // every reported line is the rounding of its own exact amount, not a
+        // recomputation from already-rounded neighbours.
         sheet += FnoXml::field("field_300_00_012", FnoXml::round_half_up_to_tenge(accrued_tiyn));
         sheet += FnoXml::field("field_300_00_023", FnoXml::round_half_up_to_tenge(deductible_tiyn));
         sheet += FnoXml::field("field_300_00_030_01", FnoXml::round_half_up_to_tenge(to_pay_tiyn));
