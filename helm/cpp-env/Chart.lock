@@ -1,0 +1,12 @@
+dependencies:
+- name: cyber-accountant
+  repository: file://../cyber-accountant
+  version: 0.1.0
+- name: cyber-accountant-worker
+  repository: file://../cyber-accountant-worker
+  version: 0.1.0
+- name: cpp-frontend
+  repository: file://../cpp-frontend
+  version: 0.1.0
+digest: sha256:61736129572a6a7b676319244936be0d6d643170cc099d02438c15471a2d4e1d
+generated: "2026-08-14T04:28:02.037899+05:00"
