@@ -17,6 +17,7 @@ import {
   snapshotTiyn,
   taxCalculationSchema,
   DEADLINE_WARNING_DAYS,
+  type Fno300DocumentValues,
 } from './tax';
 
 describe('calculationPeriod', () => {
@@ -162,22 +163,36 @@ describe('buildFno910DocumentInput', () => {
 });
 
 describe('buildFno300DocumentInput', () => {
-  it('sends the four fields fno_300 requires and no derived ones', () => {
+  it('sends the three fields fno_300 allows, trimmed, and no derived ones', () => {
     const input = buildFno300DocumentInput({
       director: 'Смирнов С.С.',
       accountant: 'Иванова И.И.',
-      balance_words: 'сто тысяч тенге 00 тиын',
-      sales_tenge: ' 4500000.00 ',
+      balance_words: ' сто тысяч тенге 00 тиын ',
     });
     expect(input).toEqual({
       director: 'Смирнов С.С.',
       accountant: 'Иванова И.И.',
       balance_words: 'сто тысяч тенге 00 тиын',
-      sales_tenge: '4500000.00',
     });
-    expect(Object.keys(input)).not.toContain('org');
-    expect(Object.keys(input)).not.toContain('period');
-    expect(Object.keys(input)).not.toContain('balance_tenge');
+    expect(Object.keys(input).sort()).toEqual(['accountant', 'balance_words', 'director']);
+  });
+
+  it('NEVER sends sales_tenge — the turnover is derived from the ledger server-side', () => {
+    // The regression this guards: `sales_tenge` was client-supplied until
+    // the server started snapshotting the turnover
+    // (result_snapshot.income_tiyn) and deriving the field from it. Sending
+    // it now is a 422 not_allowed_override, and — worse — it was a hole
+    // that let an accountant declare any revenue turnover they liked on a
+    // legal tax filing. A stray extra key here breaks every 300.00 filing.
+    const input = buildFno300DocumentInput({
+      director: 'Смирнов С.С.',
+      accountant: 'Иванова И.И.',
+      balance_words: 'сто тысяч тенге 00 тиын',
+      // A caller that still holds a turnover value must not smuggle it
+      // through the builder.
+      sales_tenge: '9999999.00',
+    } as Fno300DocumentValues);
+    expect(input).not.toHaveProperty('sales_tenge');
   });
 });
 
@@ -191,25 +206,30 @@ describe('the ФНО document schemas', () => {
       fno910DocumentSchema.safeParse({ director: 'С.С.', accountant: 'И.И.', tax_words: '  ' })
         .success,
     ).toBe(false);
+    expect(
+      fno300DocumentSchema.safeParse({ director: 'С.С.', accountant: '', balance_words: 'сто' })
+        .success,
+    ).toBe(false);
+    expect(
+      fno300DocumentSchema.safeParse({ director: 'С.С.', accountant: 'И.И.', balance_words: ' ' })
+        .success,
+    ).toBe(false);
   });
 
-  it('accept sales_tenge only as a decimal string with at most 2 places, above zero', () => {
-    const base = {
-      director: 'С.С.',
-      accountant: 'И.И.',
-      balance_words: 'сто тысяч тенге 00 тиын',
-    };
-    expect(fno300DocumentSchema.safeParse({ ...base, sales_tenge: '4500000.00' }).success).toBe(
-      true,
-    );
-    expect(fno300DocumentSchema.safeParse({ ...base, sales_tenge: '4500000' }).success).toBe(true);
-    expect(fno300DocumentSchema.safeParse({ ...base, sales_tenge: '4500000.000' }).success).toBe(
-      false,
-    );
-    expect(fno300DocumentSchema.safeParse({ ...base, sales_tenge: '4 500 000,00' }).success).toBe(
-      false,
-    );
-    expect(fno300DocumentSchema.safeParse({ ...base, sales_tenge: '0.00' }).success).toBe(false);
+  it('declare EXACTLY the fields the server allowlists, and no others', () => {
+    // TaxController::fno_910_allowed_extra_fields() / fno_300_… — the
+    // server rejects any other key with a 422 not_allowed_override, so
+    // these two shapes must not drift.
+    expect(Object.keys(fno910DocumentSchema.shape).sort()).toEqual([
+      'accountant',
+      'director',
+      'tax_words',
+    ]);
+    expect(Object.keys(fno300DocumentSchema.shape).sort()).toEqual([
+      'accountant',
+      'balance_words',
+      'director',
+    ]);
   });
 });
 

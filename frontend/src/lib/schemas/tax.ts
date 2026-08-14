@@ -6,7 +6,6 @@ import type {
   TaxFiling,
   TaxFilingCreate,
 } from '@/lib/api/types';
-import { toTiyn } from '@/lib/money';
 
 /**
  * Form schemas, request-body builders and pure derivations for the
@@ -35,13 +34,20 @@ import { toTiyn } from '@/lib/money';
  *     treat a repeat as normal rather than as a duplicate.
  *
  *  4. The ФНО print templates require free-text fields no column holds —
- *     `director`, `accountant`, and the amount in words
- *     (`tax_words` for 910.00, `balance_words` for 300.00). fno_300
- *     additionally needs `sales_tenge`: TaxService::calculate_vat sums the
- *     realized `vat_amount` per line and never records the underlying
- *     turnover, so that figure genuinely is not on file either. The two
+ *     `director`, `accountant`, and the amount in words (`tax_words` for
+ *     910.00, `balance_words` for 300.00). Those THREE per form are the
+ *     server's entire allowlist (TaxController's
+ *     fno_910_allowed_extra_fields()/fno_300_allowed_extra_fields()), and it
+ *     is a strict one: any other key in `document_input` is a
+ *     `422 not_allowed_override`, not a silently ignored field. The two
  *     builders below emit exactly those allowlists — everything else is
  *     derived server-side and deep-merged underneath (RFC 7396).
+ *
+ *     `sales_tenge` (the revenue turnover on line 001 of 300.00) used to be
+ *     supplied here. It no longer is, and must not be re-added: the server
+ *     snapshots the turnover into `result_snapshot.income_tiyn` and derives
+ *     the field from it, because a caller may not declare their own revenue
+ *     turnover on a legal tax filing.
  *
  * NOTHING here hardcodes a rate, threshold, МРП or МЗП: every such number
  * on the screen comes from `GET /tax/rates` or from a calculation's own
@@ -263,28 +269,16 @@ const SIGNATORY_FIELDS = {
   accountant: z.string().trim().min(1, 'Укажите ФИО бухгалтера'),
 };
 
-/**
- * Decimal-string money, e.g. "4500000.00" — the same client-side contract
- * lib/schemas/hr.ts uses for an оклад, and the exact shape
- * Ledger::format_tiyn produces for every other amount in the ФНО input.
- */
-const tengeSchema = z
-  .string()
-  .trim()
-  .regex(/^\d+(\.\d{1,2})?$/, 'Не более 2 знаков после запятой, например 4500000.00')
-  .refine((v) => toTiyn(v) > 0, 'Сумма должна быть больше нуля');
-
-/** templates/latex/fno_910/v1/schema.json — what the DB cannot supply. */
+/** The 910.00 allowlist: two signatories plus the tax amount in words. */
 export const fno910DocumentSchema = z.object({
   ...SIGNATORY_FIELDS,
   tax_words: z.string().trim().min(1, 'Укажите сумму налога прописью'),
 });
 
-/** templates/latex/fno_300/v1/schema.json — same, plus the turnover. */
+/** The 300.00 allowlist: the same shape, with the balance amount in words. */
 export const fno300DocumentSchema = z.object({
   ...SIGNATORY_FIELDS,
   balance_words: z.string().trim().min(1, 'Укажите сумму к уплате/возврату прописью'),
-  sales_tenge: tengeSchema,
 });
 
 export type Fno910DocumentValues = z.infer<typeof fno910DocumentSchema>;
@@ -303,7 +297,6 @@ export function buildFno300DocumentInput(values: Fno300DocumentValues): Record<s
     director: values.director.trim(),
     accountant: values.accountant.trim(),
     balance_words: values.balance_words.trim(),
-    sales_tenge: values.sales_tenge.trim(),
   };
 }
 

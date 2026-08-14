@@ -831,7 +831,7 @@ function FilingForm({
   });
   const form300 = useForm<Fno300DocumentValues>({
     resolver: zodResolver(fno300DocumentSchema),
-    defaultValues: { director: '', accountant: '', balance_words: '', sales_tenge: '' },
+    defaultValues: { director: '', accountant: '', balance_words: '' },
   });
 
   const intro = (
@@ -912,27 +912,13 @@ function FilingForm({
           {...form300.register('accountant')}
         />
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <FormField
-          id="fno300-sales"
-          label="Оборот по реализации, ₸"
-          inputMode="decimal"
-          placeholder="4500000.00"
-          error={form300.formState.errors.sales_tenge?.message}
-          {...form300.register('sales_tenge')}
-        />
-        <FormField
-          id="fno300-balance-words"
-          label="Сумма к уплате (возврату) прописью"
-          placeholder="сто двадцать тысяч тенге 00 тиын"
-          error={form300.formState.errors.balance_words?.message}
-          {...form300.register('balance_words')}
-        />
-      </div>
-      <p className="text-sm text-muted-foreground">
-        Оборот по реализации не хранится в системе: расчёт НДС суммирует только сам налог по
-        проводкам, поэтому эту сумму нужно указать вручную.
-      </p>
+      <FormField
+        id="fno300-balance-words"
+        label="Сумма к уплате (возврату) прописью"
+        placeholder="сто двадцать тысяч тенге 00 тиын"
+        error={form300.formState.errors.balance_words?.message}
+        {...form300.register('balance_words')}
+      />
       {errorBlock}
       {buttons}
     </form>
