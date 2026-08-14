@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: guardrails-llm-filter-env
+  namespace: guardrails
+data:
+  GUARDRAILS_LOG_LEVEL: "info"
+  # Data-plane listen address clients point at (this is what cyber-accountant
+  # hits instead of api.anthropic.com directly).
+  GUARDRAILS_LISTEN_ADDR: ":8080"
+  # Our only upstream: Anthropic's Messages API. The proxy is transparent —
+  # the client's Authorization/x-api-key header passes through unchanged, so
+  # no Anthropic API key is stored here (cyber-accountant has none yet; the
+  # key travels with the request from whichever caller supplies it).
+  GUARDRAILS_UPSTREAM_BASE_URL: "https://api.anthropic.com"
+  # Single replica, nothing to share across pods yet.
+  GUARDRAILS_STORE_BACKEND: "in_memory"
+  GUARDRAILS_ENABLED: "true"
+  # 1 CREDENTIALS, 2 API_KEYS, 3 ACCESS_TOKENS, 4 IP_ADDRESSES, 5 PII, 6 CUSTOM.
+  # CUSTOM stays enabled even though we don't manage custom rules today, so
+  # nothing silently breaks if some are added later via the config API.
+  GUARDRAILS_DATA_TYPES: "1,2,3,4,5,6"
+  # Config API / web console (:9080) is unauthenticated and mutating by
+  # design (rule CRUD, enforce/shadow toggle). We don't operate it — leave it
+  # disabled rather than rely on network policy alone to keep it private.
+  GUARDRAILS_API_ADDR: ""

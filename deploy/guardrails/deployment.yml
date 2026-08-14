@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guardrails-llm-filter
+  namespace: guardrails
+  labels:
+    app: guardrails-llm-filter
+spec:
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: guardrails-llm-filter
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: guardrails-llm-filter
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: guardrails-llm-filter
+          # Pinned by tag AND digest — see README.md for how to check/update
+          # both when bumping the version.
+          image: ghcr.io/cloud-ru-tech/guardrails-llm-filter:0.1.2@sha256:4171df7af4bcae60be92ec19ccbd97d5731bd3e488c1cb5279c75258d42c90c4
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          envFrom:
+            - configMapRef:
+                name: guardrails-llm-filter-env
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: metrics
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
