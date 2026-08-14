@@ -24,12 +24,19 @@ protected:
         if (::testing::Test::IsSkipped())
             return;
         // Fixed BINs and seed_user_id() emails below are only unique within a
-        // single run; truncating up front (same pattern as
-        // AdminFlowTest::SetUp) keeps the suite idempotent when re-run
-        // against a persistent local Postgres instead of a fresh container.
-        // CASCADE on either table also clears org_members.
+        // single run; clearing up front (same pattern as AdminFlowTest::SetUp)
+        // keeps the suite idempotent when re-run against a persistent local
+        // Postgres instead of a fresh container.
+        // DELETE FROM organizations, not TRUNCATE ... CASCADE: accounts.org_id
+        // references organizations too (migration 008), and TRUNCATE CASCADE
+        // blanket-wipes the WHOLE referencing table — including the org_id IS
+        // NULL system chart-of-accounts seed — not just rows of deleted orgs.
+        // Row-level ON DELETE CASCADE still clears org_members (FK to both
+        // tables) and any org-scoped accounts. TRUNCATE users CASCADE is
+        // unaffected (no table on the accounts/organizations side references
+        // users).
         Database::get().execute_write([](auto& txn) {
-            txn.exec("TRUNCATE TABLE organizations CASCADE");
+            txn.exec("DELETE FROM organizations");
             txn.exec("TRUNCATE TABLE users CASCADE");
             return 0;
         });

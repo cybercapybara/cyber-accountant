@@ -22,9 +22,13 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        // CASCADE on organizations also clears counterparties (org_id FK).
+        // DELETE FROM organizations, not TRUNCATE ... CASCADE: accounts.org_id
+        // references organizations too (migration 008), and TRUNCATE CASCADE
+        // blanket-wipes the WHOLE referencing table — including the org_id IS
+        // NULL system chart-of-accounts seed — not just rows of deleted orgs.
+        // Row-level ON DELETE CASCADE still clears counterparties (org_id FK).
         Database::get().execute_write([](auto& txn) {
-            txn.exec("TRUNCATE TABLE organizations CASCADE");
+            txn.exec("DELETE FROM organizations");
             return 0;
         });
     }
