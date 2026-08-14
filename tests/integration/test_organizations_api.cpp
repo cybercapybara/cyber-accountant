@@ -46,6 +46,11 @@ protected:
     void config_overrides(json& cfg) override {
         cfg["auth"]["mode"] = "jwt";
         cfg["auth"]["jwt"]["secret"] = kSecret;
+        // Cookie mode on, same as AuthFlowTest::config_overrides — switchOrg
+        // must set the __Host-access cookie (fix round 1), so the suite
+        // needs to run under the same cookie config production does.
+        cfg["auth"]["cookies"]["enabled"] = true;
+        cfg["auth"]["cookies"]["secure"] = false;  // no https in the test container
         cfg["database"]["migrations_enabled"] = true;
         cfg["database"]["migrations_dir"] = "migrations";
     }
@@ -216,6 +221,22 @@ TEST_F(OrganizationsApiTest, SwitchIssuesOrgToken) {
     EXPECT_EQ((*claims).value("org", ""), org.id);
     EXPECT_EQ((*claims).value("sub", ""), user.user.id);
     EXPECT_EQ((*claims).value("typ", ""), "access");
+
+    // Fix round 1: cookie-mode clients read the access token from the
+    // HttpOnly __Host-access cookie, not the JSON body — switchOrg must set
+    // it or a browser session under cookies.enabled=true keeps sending the
+    // OLD access cookie and the switch silently doesn't take effect. Mirrors
+    // AuthFlowTest::loginSucceedsAndSetsCookies' idiom (resp->cookies(), one
+    // Set-Cookie line per entry via addCookie()). Exactly one cookie — the
+    // refresh cookie must stay untouched (empty refresh_token passed to
+    // set_session_cookies).
+    const auto& cookies = resp->cookies();
+    ASSERT_EQ(cookies.size(), 1u);
+    const auto& access_cookie_name = Security::Auth::get().config().cookies.access_name;
+    auto cookie_it = cookies.find(access_cookie_name);
+    ASSERT_NE(cookie_it, cookies.end()) << "missing cookie " << access_cookie_name;
+    EXPECT_EQ(cookie_it->second.value(), body["access"].get<std::string>());
+    EXPECT_TRUE(cookie_it->second.isHttpOnly());
 }
 
 TEST_F(OrganizationsApiTest, SwitchForbiddenForNonMember) {

@@ -238,7 +238,21 @@ public:
 
             const std::string access = Security::Auth::issue_hs256_jwt(access_claims, cfg.jwt_secret);
             Security::Audit::record(actor_of(req), "org.switch", "organization", id);
-            callback(Response::ok({{"access", access}}));
+
+            // Cookie-mode clients (SPA) read the access token from the
+            // HttpOnly __Host-access cookie, never from the JSON body — the
+            // body can't reach an HttpOnly cookie from JS. Without this, a
+            // browser session under cookies.enabled=true would keep sending
+            // the OLD access cookie on the next request and the switch would
+            // silently not take effect. Empty refresh_token leaves the
+            // refresh cookie untouched (set_session_cookies only overwrites
+            // it when non-empty — see SessionCookies.hpp); same call login
+            // and refresh make (AuthController.hpp), just without rotating
+            // the refresh side. The JSON body still carries `access` for
+            // Bearer-mode clients and tests.
+            auto http = Response::ok({{"access", access}});
+            Security::Auth::set_session_cookies(http, cfg.cookies, access, "");
+            callback(http);
         });
     }
 

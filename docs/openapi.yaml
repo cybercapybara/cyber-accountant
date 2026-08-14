@@ -898,6 +898,10 @@ paths:
         claim set to {id}. Requires a live membership row for the caller in
         {id}. The refresh token/cookie is untouched.
 
+        Sets the __Host-access cookie to the new token (cookie-mode clients
+        never see the body — it's HttpOnly), in addition to returning it in
+        the JSON body for Bearer-mode clients.
+
         Caveat for multi-org clients: after the next POST /api/v1/auth/refresh,
         the active org resets to mint_session's single-membership default
         (empty if the caller belongs to 0 or >1 organizations) — a client
@@ -908,7 +912,10 @@ paths:
       security: [{ BearerAuth: [] }]
       responses:
         '200':
-          description: New access token
+          description: New access token — Set-Cookie access (refresh cookie untouched)
+          headers:
+            Set-Cookie:
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SwitchResponse' }
