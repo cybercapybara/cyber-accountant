@@ -1,0 +1,40 @@
+\documentclass[a4paper,10pt]{article}
+\usepackage[margin=18mm]{geometry}
+\usepackage{fontspec}
+\setmainfont[Scale=0.92]{Noto Sans}
+\usepackage{polyglossia}\setmainlanguage{russian}
+\usepackage{tabularx,booktabs,array}
+\newcommand{\field}[1]{\textbf{#1}}
+\pagestyle{empty}
+\begin{document}
+\begin{center}\Large\bfseries Есеп-төлем парағы / Расчётный листок\\
+\normalsize {{ period_label }}\end{center}
+\vspace{4mm}
+\noindent\field{Жұмыс беруші / Работодатель:} {{ employer.name }}, БСН/БИН {{ employer.bin }}\\
+\noindent\field{Қызметкер / Работник:} {{ employee.full_name }}, ЖСН/ИИН {{ employee.iin }}\\
+\noindent\field{Лауазымы / Должность:} {{ employee.position }}
+\vspace{4mm}
+\noindent\begin{tabularx}{\textwidth}{@{}X r@{}}
+\toprule
+Көрсеткіш / Показатель & Сомасы, ₸ / Сумма, ₸ \\
+\midrule
+Есептелген жалақы (жалпы сома) / Начислено (гросс) & {{ gross_tenge }} \\
+\midrule
+Жеке табыс салығы (ИПН) / Индивидуальный подоходный налог (ИПН) & {{ ipn }} \\
+Міндетті зейнетақы жарналары (ОПВ) / Обязательные пенсионные взносы (ОПВ) & {{ opv }} \\
+Жұмыскердің ӘМСС жарнасы (ВОСМС) / Взнос работника на ОСМС (ВОСМС) & {{ vosms }} \\
+\midrule
+\bfseries Қолға берілетін сома / К выплате (нетто) & \bfseries {{ net }} \\
+\midrule
+Жұмыс беруші есебінен зейнетақы жарналары (ОПВР) / Взносы работодателя в ЕНПФ (ОПВР) & {{ opvr }} \\
+Әлеуметтік аударым (СО) / Социальные отчисления (СО) & {{ so }} \\
+Жұмыс берушінің ӘМСС жарнасы (ОСМС) / Взнос работодателя на ОСМС (ОСМС) & {{ osms }} \\
+Әлеуметтік салық / Социальный налог & {{ social_tax }} \\
+\bottomrule
+\end{tabularx}
+\vspace{3mm}
+\noindent Қолға берілетін сома: {{ net }} ₸\\
+({{ net_words }})
+\vspace{12mm}
+\noindent Бас бухгалтер / Гл. бухгалтер \hrulefill\qquad Қызметкер / Работник \hrulefill
+\end{document}

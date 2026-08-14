@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["period_label", "employer", "employee", "gross_tenge", "opv", "vosms", "ipn", "net", "opvr", "so", "osms", "social_tax", "net_words"],
+  "properties": {
+    "period_label": {"type": "string", "minLength": 1},
+    "employer": {"$ref": "#/definitions/employer"},
+    "employee": {"$ref": "#/definitions/employee"},
+    "gross_tenge": {"type": "string"},
+    "opv": {"type": "string"},
+    "vosms": {"type": "string"},
+    "ipn": {"type": "string"},
+    "net": {"type": "string"},
+    "opvr": {"type": "string"},
+    "so": {"type": "string"},
+    "osms": {"type": "string"},
+    "social_tax": {"type": "string"},
+    "net_words": {"type": "string"}
+  },
+  "definitions": {
+    "employer": {
+      "type": "object",
+      "required": ["name", "bin"],
+      "properties": {
+        "name": {"type": "string"}, "bin": {"type": "string"}
+      }
+    },
+    "employee": {
+      "type": "object",
+      "required": ["full_name", "iin", "position"],
+      "properties": {
+        "full_name": {"type": "string"}, "iin": {"type": "string"}, "position": {"type": "string"}
+      }
+    }
+  }
+}

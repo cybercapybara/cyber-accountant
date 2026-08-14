@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["number", "signed_on", "employer", "employee", "salary_tenge", "salary_words", "starts_on", "work_schedule"],
+  "properties": {
+    "number": {"type": "string", "minLength": 1},
+    "signed_on": {"type": "string", "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$"},
+    "employer": {"$ref": "#/definitions/employer"},
+    "employee": {"$ref": "#/definitions/employee"},
+    "salary_tenge": {"type": "string"},
+    "salary_words": {"type": "string"},
+    "starts_on": {"type": "string", "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$"},
+    "ends_on": {"type": "string"},
+    "probation_months": {"type": "string"},
+    "work_schedule": {"type": "string"}
+  },
+  "definitions": {
+    "employer": {
+      "type": "object",
+      "required": ["name", "bin", "director"],
+      "properties": {
+        "name": {"type": "string"}, "bin": {"type": "string"},
+        "address": {"type": "string"}, "director": {"type": "string"}
+      }
+    },
+    "employee": {
+      "type": "object",
+      "required": ["full_name", "iin", "position"],
+      "properties": {
+        "full_name": {"type": "string"}, "iin": {"type": "string"},
+        "address": {"type": "string"}, "position": {"type": "string"}
+      }
+    }
+  }
+}
