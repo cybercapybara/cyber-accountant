@@ -311,6 +311,172 @@ components:
       properties:
         access: { type: string, description: "New HS256 access JWT carrying an `org` claim set to {id}" }
 
+    # Mirrors Ledger::to_json(Counterparty) in src/ledger/Counterparty.hpp.
+    Counterparty:
+      type: object
+      required: [id, org_id, identifier, name, address, iik, bik, kbe, is_resident, vat_payer, contact_email, created_at, updated_at]
+      properties:
+        id:             { type: string, format: uuid }
+        org_id:         { type: string, format: uuid }
+        identifier:     { type: string, pattern: '^[0-9]{12}$', description: БИН/ИИН — check-digit validated (Ledger::is_valid_bin_iin) }
+        name:           { type: string }
+        address:        { type: string }
+        iik:            { type: string, description: 'IBAN KZ.. — format not validated in P1' }
+        bik:            { type: string }
+        kbe:            { type: string }
+        is_resident:    { type: boolean }
+        vat_payer:      { type: boolean }
+        contact_email:  { type: string }
+        created_at:     { type: string }
+        updated_at:     { type: string }
+
+    # Shared POST/PATCH request body — CounterpartiesController::validate_and_fill.
+    CounterpartyWrite:
+      type: object
+      required: [identifier, name]
+      properties:
+        identifier:    { type: string, pattern: '^[0-9]{12}$', description: 'БИН/ИИН, 12 digits + valid check digit' }
+        name:          { type: string }
+        address:       { type: string, default: '' }
+        iik:           { type: string, default: '' }
+        bik:           { type: string, default: '' }
+        kbe:           { type: string, default: '' }
+        is_resident:   { type: boolean, default: true }
+        vat_payer:     { type: boolean, default: false }
+        contact_email: { type: string, default: '' }
+
+    CounterpartyListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Counterparty' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    CounterpartyDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Counterparty' }
+
+    # Mirrors Ledger::to_json(Account) in src/ledger/Account.hpp.
+    Account:
+      type: object
+      required: [id, org_id, code, name_ru, name_kk, type, parent_code, currency_tracked, created_at, updated_at]
+      properties:
+        id:               { type: string, format: uuid }
+        org_id:           { type: ['string', 'null'], format: uuid, description: 'null = system row from the standard chart, visible to every org' }
+        code:             { type: string }
+        name_ru:          { type: string }
+        name_kk:          { type: string, description: 'Filled in P2 (bilingual ФНО forms); empty in P1' }
+        type:             { type: string, enum: [asset, liability, equity, income, expense] }
+        parent_code:      { type: ['string', 'null'] }
+        currency_tracked: { type: boolean }
+        created_at:       { type: string }
+        updated_at:       { type: string }
+
+    AccountListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Account' }
+
+    # POST /api/v1/accounts request body — AccountsController::create.
+    AccountCreate:
+      type: object
+      required: [code, name_ru, parent_code]
+      properties:
+        code:        { type: string, description: 'Must start with parent_code (subaccount-numbering convention)' }
+        name_ru:     { type: string }
+        name_kk:     { type: string, default: '' }
+        parent_code: { type: string, description: 'Code of a system or this org''s own visible parent account' }
+
+    AccountDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Account' }
+
+    # Mirrors Ledger::to_json(Document) in src/ledger/Document.hpp.
+    Document:
+      type: object
+      required: [id, org_id, doc_type, source, status, counterparty_id, s3_key, checksum_sha256, mime, size_bytes, template_slug, template_version, input_snapshot, created_at, updated_at]
+      properties:
+        id:               { type: string, format: uuid }
+        org_id:           { type: string, format: uuid }
+        doc_type:
+          type: string
+          enum: [invoice, avr, waybill, tax_invoice, reconciliation, power_of_attorney, incoming, bank_statement, hr, fno, other]
+        source:           { type: string, enum: [generated, uploaded, email] }
+        status:           { type: string, enum: [inbox, recognized, linked, archived, draft, final, sent] }
+        counterparty_id:  { type: ['string', 'null'], format: uuid }
+        s3_key:           { type: ['string', 'null'] }
+        checksum_sha256:  { type: ['string', 'null'], pattern: '^[0-9a-f]{64}$' }
+        mime:             { type: ['string', 'null'] }
+        size_bytes:       { type: ['integer', 'null'], format: int64 }
+        template_slug:    { type: ['string', 'null'] }
+        template_version: { type: ['string', 'null'] }
+        input_snapshot:   { type: ['object', 'null'], additionalProperties: true, description: 'Docgen input snapshot for source=generated rows; for source=uploaded rows via POST /documents/uploads it instead holds {"original_filename": "..."} — see Document.hpp' }
+        created_at:       { type: string }
+        updated_at:       { type: string }
+
+    DocumentListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Document' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    DocumentDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Document' }
+
+    # POST /api/v1/documents/uploads request body.
+    DocumentUploadCreate:
+      type: object
+      required: [filename, mime, doc_type]
+      properties:
+        filename: { type: string, maxLength: 255, description: 'Plain file name — no path separators, "..", leading dot, or control characters (422 invalid_filename otherwise); non-ASCII/spaces/parentheses are fine' }
+        mime:     { type: string }
+        doc_type:
+          type: string
+          enum: [invoice, avr, waybill, tax_invoice, reconciliation, power_of_attorney, incoming, bank_statement, hr, fno, other]
+
+    # POST /api/v1/documents/uploads response — the new draft document plus
+    # the presigned PUT URL the client uploads bytes to directly.
+    DocumentUploadResponse:
+      type: object
+      required: [data, upload_url]
+      properties:
+        data:       { $ref: '#/components/schemas/Document' }
+        upload_url: { type: string, description: 'Presigned S3 PUT URL, TTL 600s' }
+
+    # POST /api/v1/documents/{id}/confirm-upload request body.
+    DocumentConfirmUpload:
+      type: object
+      required: [size_bytes, checksum_sha256]
+      properties:
+        size_bytes:      { type: integer, format: int64, minimum: 0 }
+        checksum_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+
+    # POST /api/v1/documents/{id}/download-url response.
+    DownloadUrlResponse:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, description: 'Presigned S3 GET URL, TTL 300s' }
+
 # -----------------------------------------------------------------------------
 paths:
   /:
@@ -990,6 +1156,225 @@ paths:
         '403': { description: Not an admin or owner of this organization }
         '404': { description: Member not found }
         '409': { description: Cannot remove the last owner of an organization }
+
+  /api/v1/counterparties:
+    get:
+      summary: List counterparties for the caller's organization (paginated)
+      tags: [counterparties]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Counterparty page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyListResponse' }
+        '403': { description: No org context }
+    post:
+      summary: Create a counterparty (accountant/owner only)
+      tags: [counterparties]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CounterpartyWrite' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: No org context, or caller's role is viewer }
+        '409': { description: A counterparty with that identifier already exists in this organization }
+        '422': { description: identifier is the right shape (12 digits) but fails the BIN/IIN check digit }
+
+  /api/v1/counterparties/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Get a counterparty
+      tags: [counterparties]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Counterparty
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyDetailResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including a counterparty belonging to another organization) }
+    patch:
+      summary: Replace a counterparty (accountant/owner only) — every editable field is patched in one call
+      tags: [counterparties]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CounterpartyWrite' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CounterpartyDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: No org context, or caller's role is viewer }
+        '404': { description: Not found (including a counterparty belonging to another organization) }
+        '409': { description: The patched identifier collides with another counterparty in this organization }
+        '422': { description: identifier is the right shape (12 digits) but fails the BIN/IIN check digit }
+
+  /api/v1/accounts:
+    get:
+      summary: List accounts visible to the caller's organization (standard chart + this org's own subaccounts), unpaginated
+      tags: [accounts]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Visible accounts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountListResponse' }
+        '403': { description: No org context }
+    post:
+      summary: Create a subaccount under a visible parent (accountant/owner only)
+      tags: [accounts]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: No org context, or caller's role is viewer }
+        '409': { description: An account with that code already exists for this organization (or is a reserved system code) }
+        '422': { description: 'Parent not found/not visible, or code does not extend the parent''s code' }
+
+  /api/v1/documents:
+    get:
+      summary: List documents for the caller's organization (paginated, optional type/status filters)
+      tags: [documents]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: type, in: query, description: Filter by doc_type — must be one of the CHECK-listed values, schema: { type: string } }
+        - { name: status, in: query, description: Filter by status — must be one of the CHECK-listed values, schema: { type: string } }
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Document page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentListResponse' }
+        '403': { description: No org context }
+        '422': { description: type or status is not one of the registered values }
+
+  /api/v1/documents/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Get a document
+      tags: [documents]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentDetailResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including a document belonging to another organization) }
+
+  /api/v1/documents/{id}/download-url:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Mint a presigned download URL for this document's stored file
+      description: |
+        Read-only — mints a time-limited S3 GET URL (TTL 300s) and writes
+        nothing, so this route does NOT reject viewers the way the mutating
+        ledger routes do.
+      tags: [documents]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Presigned URL
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadUrlResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including a document belonging to another organization) }
+        '409': { description: This document has no stored file yet (empty s3_key) }
+        '503': { description: Presigning requires the S3 storage backend }
+
+  /api/v1/documents/uploads:
+    post:
+      summary: Start a client-driven upload (accountant/owner only)
+      description: |
+        Creates a draft document (source=uploaded, status=draft) and mints a
+        presigned S3 PUT URL (TTL 600s) the client uploads the file bytes to
+        directly. The document's s3_key is persisted immediately
+        (DocumentRepository::set_pending_upload) so a retried
+        confirm-upload reads back the SAME key. Call
+        POST /api/v1/documents/{id}/confirm-upload once the PUT completes.
+      tags: [documents]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DocumentUploadCreate' }
+      responses:
+        '201':
+          description: Draft document + presigned upload URL
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentUploadResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: No org context, or caller's role is viewer }
+        '422': { description: 'doc_type is not one of the registered values, or filename is not a plain file name' }
+        '503': { description: Presigning requires the S3 storage backend }
+
+  /api/v1/documents/{id}/confirm-upload:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Verify an uploaded object and finalize the document (accountant/owner only)
+      description: |
+        Checks Storage::exists(s3_key) before trusting the client's
+        reported size/checksum; on success calls
+        DocumentRepository::set_file() and flips status to 'final'.
+      tags: [documents]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DocumentConfirmUpload' }
+      responses:
+        '200':
+          description: Finalized document
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: No org context, or caller's role is viewer }
+        '404': { description: Not found (including a document belonging to another organization) }
+        '409': { description: No upload was started for this document, or the object was not found in storage }
+        '503': { description: Object storage is not configured }
 
   /api/v1/jobs:
     get:

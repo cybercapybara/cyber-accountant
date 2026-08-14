@@ -101,6 +101,96 @@ public:
     }
 
     /**
+     * @brief Task 12 addition: persist the s3_key (+ mime) a presigned PUT
+     *        was minted for, BEFORE the client's upload completes.
+     *
+     * Why this exists: `POST /documents/uploads` (LedgerDocumentsController)
+     * mints one presigned PUT URL and must hand back a document whose
+     * `s3_key` already matches that URL — a client that reloads the page, or
+     * retries `confirm-upload`, needs to read the SAME key back off the row,
+     * not regenerate it. But set_file() (below) requires checksum_sha256 AND
+     * size_bytes together with s3_key/mime, and neither is known until the
+     * client's PUT has actually finished — calling set_file() at upload-start
+     * time would force fabricating a checksum/size for bytes that don't
+     * exist yet. Splitting the write in two is the minimal fix: this method
+     * fills s3_key + mime only (checksum_sha256/size_bytes stay NULL), and
+     * confirm-upload's later set_file() call fills in the rest once the
+     * object is verified to exist (Storage::exists()).
+     *
+     * @return false if no row matches (id, org_id) both — same
+     *         "wrong org is indistinguishable from missing" contract as
+     *         set_file()/set_status() below.
+     */
+    bool set_pending_upload(const std::string& org_id,
+                            const std::string& id,
+                            const std::string& s3_key,
+                            const std::string& mime) {
+        return Database::get().execute_write([&](auto& txn) {
+            auto r = txn.exec_params(
+                "UPDATE documents SET s3_key = $3, mime = $4 WHERE id = $1 AND org_id = $2 RETURNING id",
+                id,
+                org_id,
+                s3_key,
+                mime);
+            return !r.empty();
+        });
+    }
+
+    /**
+     * @brief Task 12 addition: `list_in_org`/`count_in_org` (OrgCrudBase)
+     *        take no filters, but `GET /documents` needs allowlisted
+     *        `?type=&status=` filters WITH accurate pagination totals — an
+     *        in-memory filter-after-fetch would desync `total` from the
+     *        filtered page. @p doc_type / @p status are nullopt for "no
+     *        filter on this column"; the controller is responsible for
+     *        allowlisting them against migrations/010_documents.sql's CHECK
+     *        lists before calling this (see that file's header: this
+     *        repository trusts its caller on CHECK-shaped values).
+     */
+    std::vector<Document> list_filtered(const std::string& org_id,
+                                        const std::optional<std::string>& doc_type,
+                                        const std::optional<std::string>& status,
+                                        int limit,
+                                        int offset) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params("SELECT " + std::string(kColumns) +
+                                         " FROM documents WHERE org_id = $1 "
+                                         "AND ($2::text IS NULL OR doc_type = $2) "
+                                         "AND ($3::text IS NULL OR status = $3) "
+                                         "ORDER BY " +
+                                         std::string(kOrderBy) + " LIMIT $4 OFFSET $5",
+                                     org_id,
+                                     doc_type,
+                                     status,
+                                     limit,
+                                     offset);
+            std::vector<Document> out;
+            out.reserve(r.size());
+            for (const auto& row : r)
+                out.push_back(Document::from_row(row));
+            return out;
+        });
+    }
+
+    /// Total row count for the same (@p doc_type, @p status) filter
+    /// `list_filtered` uses — kept as a matching pair so `GET /documents`'s
+    /// pagination `total` always agrees with the filtered page it labels.
+    long count_filtered(const std::string& org_id,
+                        const std::optional<std::string>& doc_type,
+                        const std::optional<std::string>& status) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params(
+                "SELECT COUNT(*) FROM documents WHERE org_id = $1 "
+                "AND ($2::text IS NULL OR doc_type = $2) "
+                "AND ($3::text IS NULL OR status = $3)",
+                org_id,
+                doc_type,
+                status);
+            return r.at(0).at(0).template as<long>();
+        });
+    }
+
+    /**
      * @brief Attach S3 file metadata to a document already scoped to
      *        @p org_id.
      * @return false if no row matches (id, org_id) both — the standard

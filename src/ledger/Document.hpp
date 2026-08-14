@@ -24,6 +24,13 @@
  * DocumentRepository::create() via `nlohmann::json::dump()`), so a parse
  * failure there falls back to an empty object exactly like AuditEntry does,
  * rather than being treated as "absent".
+ *
+ * One documented exception to "docgen reproducibility only": Task 12's
+ * `POST /documents/uploads` (source='uploaded') has no dedicated column to
+ * keep the client's original, pre-sanitization filename on — the S3 key
+ * itself only carries a *sanitized* tail (Files::org_key) — so it stores
+ * `{"original_filename": "..."}` here instead. Readers that treat a non-null
+ * input_snapshot as "this went through docgen" must check `source` first.
  */
 
 #pragma once
