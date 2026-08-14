@@ -345,6 +345,10 @@ spec:
                   name: {{ include "cyber-accountant.fullname" . }}
                   key: s3-secret-key
             {{- end }}
+            {{- if .Values.storage.s3.publicEndpoint }}
+            - name: S3_PUBLIC_ENDPOINT
+              value: {{ .Values.storage.s3.publicEndpoint | quote }}
+            {{- end }}
             {{- end }}
           securityContext:
             readOnlyRootFilesystem: true

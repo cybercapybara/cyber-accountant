@@ -98,6 +98,7 @@ Set `CONFIG_FILE` to point at a different JSON file (e.g.
 | `STORAGE_BACKEND` | `storage.backend` | string | `local` | Only `local` is built in; any other value fails fast at boot |
 | `STORAGE_LOCAL_ROOT` | `storage.local.root` | string | `data/uploads` | Directory the local backend writes objects under (gitignored) |
 | `STORAGE_PUBLIC_BASE_URL` | `storage.public_base_url` | string | — | Prepended to a key by `url()` (e.g. a CDN base); empty → returns the bare key |
+| `S3_PUBLIC_ENDPOINT` | `storage.s3.public_endpoint` | string | — | `s3` backend only. Scheme+host `S3Storage::presign()` signs against and builds presigned GET/PUT URLs on (e.g. `https://s3.example.com`, a public ingress in front of a cluster-internal MinIO). SigV4 signs the `Host` header, so a presigned URL can't be minted against the internal `S3_ENDPOINT` and have its host swapped afterwards — the signature would no longer match. Not the same as `STORAGE_PUBLIC_BASE_URL` above: that one only affects the plain, unsigned `url()` locator. Empty → falls back to `S3_ENDPOINT` (presigned links point at the same host `put`/`get`/`remove`/`exists`/`list` use, today's behavior). |
 
 ## Observability
 

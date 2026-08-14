@@ -71,6 +71,7 @@
       "bucket": "${S3_BUCKET:-}",
       "access_key": "${S3_ACCESS_KEY:-}",
       "secret_key": "${S3_SECRET_KEY:-}",
+      "public_endpoint": "${S3_PUBLIC_ENDPOINT:-}",
       "timeout_sec": "${S3_TIMEOUT_SEC:-10}",
       "connect_timeout_sec": "${S3_CONNECT_TIMEOUT_SEC:-2}"
     }

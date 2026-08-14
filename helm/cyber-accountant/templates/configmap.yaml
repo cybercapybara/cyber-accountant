@@ -106,7 +106,8 @@ data:
           "region": {{ .Values.storage.s3.region | quote }},
           "bucket": {{ .Values.storage.s3.bucket | quote }},
           "access_key": {{ .Values.storage.s3.accessKey | quote }},
-          "secret_key": "${S3_SECRET_KEY:-}"
+          "secret_key": "${S3_SECRET_KEY:-}",
+          "public_endpoint": {{ .Values.storage.s3.publicEndpoint | quote }}
         }
       },
       "messaging": {

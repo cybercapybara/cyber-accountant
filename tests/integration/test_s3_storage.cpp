@@ -181,6 +181,58 @@ TEST_F(S3StorageTest, PresignedGetFetchesViaCurl) {
     storage_->remove(key);
 }
 
+TEST_F(S3StorageTest, PresignedGetWithPublicEndpointFetchesViaCurl) {
+    const std::string key = test_key("presign-public-endpoint");
+    const std::string body = "presigned-get-public-endpoint-body-" + Jobs::generate_uuid();
+    storage_->put(key, body, "text/plain");
+
+    // public_endpoint set explicitly (equal to the real MinIO endpoint here,
+    // since that's the only S3-compatible host reachable in this suite) —
+    // proves presign() signs the canonical request against public_host_ and
+    // still produces a signature MinIO accepts, not just that leaving
+    // public_endpoint unset happens to fall back correctly (that path is
+    // PresignedGetFetchesViaCurl above).
+    Storage::S3Storage::Config cfg;
+    cfg.endpoint = s3_endpoint();
+    cfg.region = s3_region();
+    cfg.bucket = s3_bucket();
+    cfg.access_key = s3_access_key();
+    cfg.secret_key = s3_secret_key();
+    cfg.public_endpoint = s3_endpoint();
+    Storage::S3Storage public_storage(cfg);
+
+    const std::string url = public_storage.presign(key, "GET", 60);
+    ASSERT_EQ(url.rfind(s3_endpoint(), 0), 0u) << "url=" << url;
+    const std::string fetched = run_capture("curl -s '" + url + "'");
+    EXPECT_EQ(fetched, body);
+
+    storage_->remove(key);
+}
+
+TEST_F(S3StorageTest, PresignedUrlUsesDistinctPublicEndpointHost) {
+    const std::string key = test_key("presign-distinct-public-host");
+    // Not a reachable host in this suite — this case only checks the URL
+    // string, not that curl can fetch through it (there's no live ingress
+    // in the test environment for a public MinIO domain). The
+    // signature-is-actually-valid case is covered above against the one
+    // S3-compatible endpoint the suite does have.
+    const std::string public_endpoint = "https://s3.cybercapybara.kz";
+
+    Storage::S3Storage::Config cfg;
+    cfg.endpoint = s3_endpoint();
+    cfg.region = s3_region();
+    cfg.bucket = s3_bucket();
+    cfg.access_key = s3_access_key();
+    cfg.secret_key = s3_secret_key();
+    cfg.public_endpoint = public_endpoint;
+    Storage::S3Storage public_storage(cfg);
+
+    const std::string url = public_storage.presign(key, "GET", 60);
+    EXPECT_EQ(url.rfind(public_endpoint, 0), 0u) << "url=" << url;
+    EXPECT_EQ(url.find(s3_endpoint()), std::string::npos) << "url leaked the internal endpoint: " << url;
+    EXPECT_NE(url.find("X-Amz-Signature="), std::string::npos);
+}
+
 TEST_F(S3StorageTest, PresignedPutUploads) {
     const std::string key = test_key("presignput");
     const std::string body = "presigned-put-body-" + Jobs::generate_uuid();
