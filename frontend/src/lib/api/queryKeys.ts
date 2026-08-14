@@ -59,12 +59,15 @@ export const qk = {
     detail: (id: string) => ['employees', 'detail', id] as const,
   },
   /**
-   * HR orders / labor contracts / vacations. All three list endpoints are
-   * unpaginated and keyed by the active `employee_id` filter ('' = "every
-   * employee", which only hr-orders and vacations support — labor-contracts
-   * REQUIRES an employee_id, see HrController.hpp). Calling a factory with
-   * no argument yields the bare prefix, which still matches every filtered
-   * variant for invalidation after a create.
+   * HR orders / labor contracts / vacations, keyed by the active
+   * `employee_id` filter ('' = "every employee", which only hr-orders and
+   * vacations support — labor-contracts REQUIRES an employee_id, see
+   * HrController.hpp). Calling a factory with no argument yields the bare
+   * prefix, which still matches every filtered variant for invalidation
+   * after a create. hr-orders and vacations are paginated
+   * (parse_page_params(50, 200)) — usePagedQuery appends the page number on
+   * top, same as journal.entries/documents.all above. labor-contracts stays
+   * unpaginated (always scoped to one employee_id).
    */
   hr: {
     orders: (employeeId?: string) =>

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link } from 'react-router-dom';
@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { FormField } from '@/components/FormField';
 import { GeneratedDocumentCard, type GeneratedDocument } from '@/components/GeneratedDocumentCard';
 import { PageHeader } from '@/components/PageHeader';
+import { PaginationFooter } from '@/components/PaginationFooter';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/toaster';
 import { useApiMutation } from '@/hooks/useApiMutation';
 import { useErrorToast } from '@/hooks/useErrorToast';
+import { usePagedQuery } from '@/hooks/usePagedQuery';
 import { ApiClientError, api, apiErrorMessage } from '@/lib/api/client';
 import { qk } from '@/lib/api/queryKeys';
 import type {
@@ -64,6 +66,11 @@ import {
 // small enough that one 200-row fetch beats a searchable combobox.
 const EMPLOYEE_FETCH_LIMIT = 200;
 
+// Приказы and отпуска are paginated (GET .../hr-orders and .../vacations,
+// both parse_page_params(50, 200)) — same PER_PAGE as every other paginated
+// list page (Employees.tsx, Journal.tsx, Documents.tsx, ...).
+const PER_PAGE = 20;
+
 const TABS = [
   { id: 'orders', label: 'Приказы' },
   { id: 'contracts', label: 'Трудовые договоры' },
@@ -77,8 +84,11 @@ type TabId = (typeof TABS)[number]['id'];
  * Three кадровые sections behind one employee filter, as tabs on a single
  * page: приказы (GET/POST /api/v1/hr-orders), трудовые договоры
  * (GET/POST /api/v1/labor-contracts) and отпуска (GET/POST
- * /api/v1/vacations). All three list endpoints are unpaginated, so there is
- * no PaginationFooter here.
+ * /api/v1/vacations). Приказы and отпуска are paginated
+ * (parse_page_params(50, 200)) and use the same usePagedQuery +
+ * PaginationFooter pattern as every other list page. Трудовые договоры
+ * stays unpaginated — GET /labor-contracts always scopes to one employee_id,
+ * so its result set is small by construction (docs/openapi.yaml).
  *
  * The employee filter is optional for приказы and отпуска but REQUIRED for
  * трудовые договоры — `GET /labor-contracts` has no "every employee" mode
@@ -290,13 +300,20 @@ function OrdersSection({
   const [generated, setGenerated] = useState<GeneratedDocument | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
 
-  const ordersQ = useQuery({
+  const { data, isLoading, error, isPlaceholderData, page, setPage, totalPages } = usePagedQuery({
     queryKey: qk.hr.orders(employeeId),
-    queryFn: () =>
+    queryFn: ({ limit, offset }) =>
       api.getJson<HrOrderListResponse>('/api/v1/hr-orders', {
-        query: employeeId ? { employee_id: employeeId } : {},
+        query: employeeId ? { employee_id: employeeId, limit, offset } : { limit, offset },
       }),
+    perPage: PER_PAGE,
   });
+
+  // Switching the employee filter changes the result set — land back on
+  // page 1 rather than risk requesting an offset past the new total.
+  useEffect(() => {
+    setPage(1);
+  }, [employeeId, setPage]);
 
   const create = useApiMutation(
     (values: HrOrderValues) =>
@@ -388,12 +405,21 @@ function OrdersSection({
         <CardContent className="overflow-x-auto">
           <DataTable
             columns={columns}
-            rows={ordersQ.data?.data}
+            rows={data?.data}
             rowKey={(o) => o.id}
-            isLoading={ordersQ.isLoading}
-            error={ordersQ.error}
+            isLoading={isLoading}
+            error={error}
             emptyText="Приказов пока нет."
+            isPlaceholder={isPlaceholderData}
           />
+          {data && (
+            <PaginationFooter
+              page={page}
+              totalPages={totalPages}
+              isPlaceholderData={isPlaceholderData}
+              onPageChange={setPage}
+            />
+          )}
         </CardContent>
         {creating && (
           <CardContent className="border-t pt-6">
@@ -1011,13 +1037,20 @@ function VacationsSection({
   const toast = useToast();
   const [creating, setCreating] = useState(false);
 
-  const vacationsQ = useQuery({
+  const { data, isLoading, error, isPlaceholderData, page, setPage, totalPages } = usePagedQuery({
     queryKey: qk.hr.vacations(employeeId),
-    queryFn: () =>
+    queryFn: ({ limit, offset }) =>
       api.getJson<VacationListResponse>('/api/v1/vacations', {
-        query: employeeId ? { employee_id: employeeId } : {},
+        query: employeeId ? { employee_id: employeeId, limit, offset } : { limit, offset },
       }),
+    perPage: PER_PAGE,
   });
+
+  // Switching the employee filter changes the result set — land back on
+  // page 1 rather than risk requesting an offset past the new total.
+  useEffect(() => {
+    setPage(1);
+  }, [employeeId, setPage]);
 
   const create = useApiMutation(
     (values: VacationValues) =>
@@ -1056,12 +1089,21 @@ function VacationsSection({
       <CardContent className="overflow-x-auto">
         <DataTable
           columns={columns}
-          rows={vacationsQ.data?.data}
+          rows={data?.data}
           rowKey={(v) => v.id}
-          isLoading={vacationsQ.isLoading}
-          error={vacationsQ.error}
+          isLoading={isLoading}
+          error={error}
           emptyText="Отпусков пока нет."
+          isPlaceholder={isPlaceholderData}
         />
+        {data && (
+          <PaginationFooter
+            page={page}
+            totalPages={totalPages}
+            isPlaceholderData={isPlaceholderData}
+            onPageChange={setPage}
+          />
+        )}
       </CardContent>
       {creating && (
         <CardContent className="border-t pt-6">

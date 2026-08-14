@@ -121,7 +121,7 @@ export type GenerateDocumentResponse = Schemas['GenerateDocumentResponse'];
 export type EmployeeListResponse = Schemas['EmployeeListResponse'];
 /** GET/POST/PATCH /api/v1/employees[/{id}[/dismiss]] — { data: Employee }. */
 export type EmployeeDetailResponse = Schemas['EmployeeDetailResponse'];
-/** GET /api/v1/hr-orders — { data: HrOrder[] }, unpaginated. */
+/** GET /api/v1/hr-orders — { data: HrOrder[], total, limit, offset }. */
 export type HrOrderListResponse = Schemas['HrOrderListResponse'];
 /** POST /api/v1/hr-orders — { data: HrOrder }. */
 export type HrOrderDetailResponse = Schemas['HrOrderDetailResponse'];
@@ -129,7 +129,7 @@ export type HrOrderDetailResponse = Schemas['HrOrderDetailResponse'];
 export type LaborContractListResponse = Schemas['LaborContractListResponse'];
 /** POST /api/v1/labor-contracts — { data: LaborContract }. */
 export type LaborContractDetailResponse = Schemas['LaborContractDetailResponse'];
-/** GET /api/v1/vacations — { data: Vacation[] }, unpaginated. */
+/** GET /api/v1/vacations — { data: Vacation[], total, limit, offset }. */
 export type VacationListResponse = Schemas['VacationListResponse'];
 /** POST /api/v1/vacations — { data: Vacation }. */
 export type VacationDetailResponse = Schemas['VacationDetailResponse'];
