@@ -25,6 +25,7 @@ import type {
   OrganizationListResponse,
   OrganizationWithRole,
   OrgMemberDetailResponse,
+  SwitchResponse,
 } from '@/lib/api/types';
 import { userIsAdmin } from '@/lib/auth/permissions';
 import { createOrganizationSchema, type CreateOrganizationValues } from '@/lib/schemas/orgs';
@@ -85,7 +86,7 @@ export function OrganizationsPage() {
   }, [activeOrgId, mineQ.data]);
 
   const switchOrg = useApiMutation(
-    (id: string) => api.postJson<{ access: string }>(`/api/v1/orgs/${id}/switch`),
+    (id: string) => api.postJson<SwitchResponse>(`/api/v1/orgs/${id}/switch`),
     {
       invalidate: [qk.orgs.mine()],
       onSuccess: (_data, id) => {
