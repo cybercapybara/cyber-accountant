@@ -200,6 +200,10 @@ export function AdminAuditPage() {
             rowProps={(e) => ({
               className: `cursor-pointer hover:bg-accent ${selected?.id === e.id ? 'bg-accent' : ''}`,
               onClick: () => setSelected(selected?.id === e.id ? null : e),
+              'aria-label':
+                selected?.id === e.id
+                  ? 'Скрыть подробности записи аудита'
+                  : 'Показать подробности записи аудита',
             })}
           />
           {data && (

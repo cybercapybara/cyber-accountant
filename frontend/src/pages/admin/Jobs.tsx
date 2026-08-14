@@ -171,6 +171,10 @@ function JobsTab() {
             rowProps={(j) => ({
               className: `cursor-pointer hover:bg-accent ${selected?.id === j.id ? 'bg-accent' : ''}`,
               onClick: () => setSelected(selected?.id === j.id ? null : j),
+              'aria-label':
+                selected?.id === j.id
+                  ? `Скрыть подробности задачи ${j.id}`
+                  : `Показать подробности задачи ${j.id}`,
             })}
           />
           {data && (

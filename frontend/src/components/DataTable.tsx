@@ -28,7 +28,13 @@ interface DataTableProps<Row> {
   emptyText?: string;
   /** Dim the body while showing previous-page placeholder data. */
   isPlaceholder?: boolean;
-  /** Per-row props (e.g. onClick / className) for selectable tables. */
+  /**
+   * Per-row props (e.g. onClick / className) for selectable tables. When
+   * returning an onClick, also pass an `aria-label` describing the action —
+   * the row keeps its native `row` role (no `role="button"` override, which
+   * would break screen-reader table navigation), so the label is what makes
+   * a clickable row discoverable non-visually.
+   */
   rowProps?: (row: Row) => React.HTMLAttributes<HTMLTableRowElement>;
 }
 
@@ -84,13 +90,16 @@ export function DataTable<Row>({
           const { className: extraClass, onClick, onKeyDown, ...restProps } = extra ?? {};
           // A row with an onClick (row-select tables in admin/Jobs, admin/Audit)
           // must also be reachable and activatable from the keyboard — a bare
-          // onClick on a <tr> is a mouse-only affordance otherwise. tabIndex=0 +
-          // role="button" put it in the tab order and announce it correctly;
-          // Enter/Space both trigger it, matching native button semantics.
+          // onClick on a <tr> is a mouse-only affordance otherwise. tabIndex=0
+          // puts it in the tab order and Enter/Space trigger it, matching
+          // native button semantics. Deliberately NOT role="button": that
+          // overrides the implicit `row` role and breaks screen-reader table/
+          // cell navigation (arrow keys, "row N of M" announcements). The row
+          // stays a row; restProps.aria-label (set by the caller) is what
+          // makes the click action discoverable non-visually instead.
           const keyboardProps = onClick
             ? {
                 tabIndex: 0,
-                role: 'button' as const,
                 onClick,
                 onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
                   onKeyDown?.(e);

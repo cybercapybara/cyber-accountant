@@ -1,25 +1,32 @@
 /**
- * Deterministic "ДД.ММ.ГГГГ, ЧЧ:ММ" timestamp formatter.
- *
- * Manual digit-padding rather than `Date#toLocaleString()` (with no locale
- * argument, or even `toLocaleString('ru-RU')`) — same rationale as
- * `formatTiynRu` in lib/money.ts: the no-argument form renders in the
- * *browser's* locale, so an en-US OS drops "8/14/2026, 3:00:00 PM" into an
- * otherwise all-Russian interface, and the exact separators/whether seconds
- * are included for an explicit locale are Intl-implementation-defined and
- * vary by runtime/ICU data availability. This is always the same 24-hour,
- * dot-separated shape regardless of the visitor's OS or browser.
- *
- * Uses the environment's local time zone (same as `toLocaleString()` would
- * have) — only the *formatting*, not the instant, is fixed.
+ * Kazakhstan runs a single fixed UTC+5 offset nationwide (the country
+ * dropped its former east/west split and any DST in March 2024). Because
+ * it's fixed and DST-free, we can hardcode the offset in milliseconds
+ * instead of pulling in a timezone database — every timestamp in this app
+ * renders in Kazakhstan time for every visitor, regardless of their own
+ * device's locale *or* timezone. Do not swap this for
+ * `toLocaleString(..., { timeZone: ... })`: the codebase's decision is
+ * manual formatting (see formatTiynRu in lib/money.ts for the same
+ * rationale applied to money).
+ */
+const KZ_OFFSET_MS = 5 * 60 * 60 * 1000;
+
+/**
+ * Deterministic "ДД.ММ.ГГГГ, ЧЧ:ММ" timestamp formatter, always rendered in
+ * Kazakhstan time (UTC+5) — never the browser's local timezone and never
+ * bare UTC. The instant is shifted by the fixed KZ offset and then read
+ * back out with the *UTC* getters, so nothing about the runtime's own
+ * timezone leaks into the result: shifting first and reading UTC after is
+ * what makes this deterministic across visitors and across CI runners.
  */
 export function formatDateTimeRu(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
-  const day = pad(date.getDate());
-  const month = pad(date.getMonth() + 1);
-  const year = date.getFullYear();
-  const hours = pad(date.getHours());
-  const minutes = pad(date.getMinutes());
+  const kz = new Date(date.getTime() + KZ_OFFSET_MS);
+  const day = pad(kz.getUTCDate());
+  const month = pad(kz.getUTCMonth() + 1);
+  const year = kz.getUTCFullYear();
+  const hours = pad(kz.getUTCHours());
+  const minutes = pad(kz.getUTCMinutes());
   return `${day}.${month}.${year}, ${hours}:${minutes}`;
 }
 
