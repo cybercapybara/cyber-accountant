@@ -53,6 +53,33 @@ export const qk = {
   docTemplates: {
     all: () => ['docTemplates', 'all'] as const,
   },
+  employees: {
+    all: (page?: number) =>
+      page === undefined ? (['employees', 'all'] as const) : (['employees', 'all', page] as const),
+    detail: (id: string) => ['employees', 'detail', id] as const,
+  },
+  /**
+   * HR orders / labor contracts / vacations. All three list endpoints are
+   * unpaginated and keyed by the active `employee_id` filter ('' = "every
+   * employee", which only hr-orders and vacations support — labor-contracts
+   * REQUIRES an employee_id, see HrController.hpp). Calling a factory with
+   * no argument yields the bare prefix, which still matches every filtered
+   * variant for invalidation after a create.
+   */
+  hr: {
+    orders: (employeeId?: string) =>
+      employeeId === undefined
+        ? (['hr', 'orders'] as const)
+        : (['hr', 'orders', employeeId] as const),
+    contracts: (employeeId?: string) =>
+      employeeId === undefined
+        ? (['hr', 'contracts'] as const)
+        : (['hr', 'contracts', employeeId] as const),
+    vacations: (employeeId?: string) =>
+      employeeId === undefined
+        ? (['hr', 'vacations'] as const)
+        : (['hr', 'vacations', employeeId] as const),
+  },
   admin: {
     users: (page?: number) =>
       page === undefined ? (['admin', 'users'] as const) : (['admin', 'users', page] as const),

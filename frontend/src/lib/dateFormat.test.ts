@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatDateTimeRu, formatEpochSecondsRu, formatIsoDateTimeRu } from './dateFormat';
+import {
+  formatDateTimeRu,
+  formatEpochSecondsRu,
+  formatIsoDateRu,
+  formatIsoDateTimeRu,
+} from './dateFormat';
 
 // Every instant below is built with Date.UTC so the test itself carries no
 // dependence on the host/CI runner's timezone — only formatDateTimeRu's own
@@ -43,6 +48,32 @@ describe('formatIsoDateTimeRu', () => {
 
   it('falls back to the raw input on an unparsable string', () => {
     expect(formatIsoDateTimeRu('not-a-date')).toBe('not-a-date');
+  });
+});
+
+describe('formatIsoDateRu', () => {
+  it('reformats a bare calendar date as ДД.ММ.ГГГГ', () => {
+    expect(formatIsoDateRu('2026-08-14')).toBe('14.08.2026');
+  });
+
+  it('does NOT shift a date-only value by the Kazakhstan offset', () => {
+    // The regression this guards: routing a date-only value through
+    // formatIsoDateTimeRu parses it as UTC midnight, and +5h would keep
+    // the day here but flip it for any offset that crosses midnight the
+    // other way. A calendar day is a calendar day — same in and out.
+    expect(formatIsoDateRu('2026-01-01')).toBe('01.01.2026');
+    expect(formatIsoDateRu('2026-12-31')).toBe('31.12.2026');
+  });
+
+  it('renders "—" for null, undefined and an empty string', () => {
+    expect(formatIsoDateRu(null)).toBe('—');
+    expect(formatIsoDateRu(undefined)).toBe('—');
+    expect(formatIsoDateRu('')).toBe('—');
+  });
+
+  it('falls back to the raw input on anything that is not YYYY-MM-DD', () => {
+    expect(formatIsoDateRu('not-a-date')).toBe('not-a-date');
+    expect(formatIsoDateRu('2026-08-14T10:00:00Z')).toBe('2026-08-14T10:00:00Z');
   });
 });
 

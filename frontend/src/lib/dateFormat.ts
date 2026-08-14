@@ -42,6 +42,27 @@ export function formatIsoDateTimeRu(iso: string): string {
 }
 
 /**
+ * Format a bare calendar date (`YYYY-MM-DD` — the shape of every `*_on`
+ * column in this API: `hired_on`, `issued_on`, `starts_on`, …) as
+ * `ДД.ММ.ГГГГ`.
+ *
+ * Deliberately NOT routed through `formatIsoDateTimeRu`: a date-only value
+ * denotes a calendar day, not an instant, so it must not be shifted by the
+ * Kazakhstan offset at all. `new Date('2026-08-14')` is read by JS as UTC
+ * midnight, and shifting that by +5h would render a time nobody asked for
+ * (and shifting the other way would flip the day). Reformatting the three
+ * components directly is both exact and deterministic. Anything that isn't
+ * a YYYY-MM-DD string falls back to the raw input, and a null/empty value
+ * renders as "—" — the same "never throw on a weird value" contract the
+ * other helpers in this module keep.
+ */
+export function formatIsoDateRu(date: string | null | undefined): string {
+  if (!date) return '—';
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.trim());
+  return match ? `${match[3]}.${match[2]}.${match[1]}` : date;
+}
+
+/**
  * Same, for a Unix epoch in seconds (the `Job.created_at`/`updated_at`
  * shape) — falsy/unparsable input renders as "—", matching the existing
  * admin/Jobs.tsx convention for "no timestamp yet".

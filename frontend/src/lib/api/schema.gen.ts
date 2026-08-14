@@ -3087,6 +3087,775 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/employees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List employees for the caller's organization (paginated, includes dismissed) */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Employee page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EmployeeListResponse"];
+                    };
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create an employee (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["EmployeeCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EmployeeDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description An employee with that IIN already exists in this organization */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description iin fails its check digit, salary fails to parse (Ledger::parse_tiyn), or hired_on is not a calendar-valid date */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/employees/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get an employee */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Employee */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EmployeeDetailResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including an employee belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch an employee's editable fields (accountant/owner only)
+         * @description Patches every field Hr::EmployeeRepository::update() allows in one
+         *     call — hired_on/status/dismissed_on are NOT among them.
+         *     Including any of those three (non-null) in the body is rejected with
+         *     422, not silently ignored: hired_on is immutable after hire, and
+         *     status/dismissed_on change only through
+         *     POST /employees/{id}/dismiss.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["EmployeeUpdate"];
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EmployeeDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including an employee belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The patched iin collides with another employee in this organization */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description iin fails its check digit, salary fails to parse, or hired_on/status/dismissed_on was included in the body */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/employees/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss an employee (accountant/owner only)
+         * @description Sets status='dismissed' and dismissed_on in one call — the only way
+         *     to change either field (Hr::EmployeeRepository::dismiss()). A wrong
+         *     org, a missing id, and an already-dismissed employee are all
+         *     indistinguishable 404s.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["EmployeeDismiss"];
+                };
+            };
+            responses: {
+                /** @description Dismissed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EmployeeDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description dismissed_on is not a calendar-valid date */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hr-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List HR orders for the caller's organization (unpaginated, optional ?employee_id filter) */
+        get: {
+            parameters: {
+                query?: {
+                    employee_id?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description HR orders */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrOrderListResponse"];
+                    };
+                };
+                /** @description employee_id is present but not a well-formed uuid */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create an HR order (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HrOrderCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HrOrderDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description kind is not one of the registered values, issued_on/effective_from/effective_to is not calendar-valid, or employee_id does not belong to this organization */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hr-orders/{id}/generate-document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate the hr_order document for an HR order (accountant/owner only)
+         * @description Builds the hr_order template input from the order + its employee +
+         *     the organization, deep-merges an optional request body on top for
+         *     the free-text fields not on file (director, reason, details, ...),
+         *     creates a draft document (doc_type='hr', source='generated'),
+         *     attaches it back onto the order (hr_orders.document_id), and
+         *     enqueues a docgen.render job — same async contract as
+         *     POST /documents/generate.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["GenerateHrDocumentExtra"];
+                };
+            };
+            responses: {
+                /** @description Accepted — render enqueued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GenerateDocumentResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including an HR order belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The merged input fails the hr_order template's JSON Schema (e.g. a required free-text field was not supplied) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Job queue not enabled */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/labor-contracts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List labor contracts for one employee (unpaginated; ?employee_id is required) */
+        get: {
+            parameters: {
+                query: {
+                    employee_id: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Labor contracts */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LaborContractListResponse"];
+                    };
+                };
+                /** @description employee_id is missing or not a well-formed uuid */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a labor contract (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LaborContractCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LaborContractDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description signed_on/starts_on/ends_on is not calendar-valid, or employee_id does not belong to this organization */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/labor-contracts/{id}/generate-document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate the labor_contract document for a labor contract (accountant/owner only)
+         * @description Same shape as the hr-orders variant, sourced from the contract + its
+         *     employee + the organization. labor_contracts has no document_id
+         *     column, so there is no attach-back step here.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["GenerateHrDocumentExtra"];
+                };
+            };
+            responses: {
+                /** @description Accepted — render enqueued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["GenerateDocumentResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a labor contract belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The merged input fails the labor_contract template's JSON Schema (e.g. a required free-text field was not supplied) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Job queue not enabled */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/vacations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List vacations for the caller's organization (unpaginated, optional ?employee_id filter) */
+        get: {
+            parameters: {
+                query?: {
+                    employee_id?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Vacations */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["VacationListResponse"];
+                    };
+                };
+                /** @description employee_id is present but not a well-formed uuid */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a vacation record (accountant/owner only) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["VacationCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["VacationDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or caller's role is viewer */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description starts_on/ends_on is not calendar-valid, ends_on is before starts_on, days is not positive, kind is not one of the registered values, or employee_id does not belong to this organization */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs": {
         parameters: {
             query?: never;
@@ -3756,6 +4525,203 @@ export interface components {
             document_id: string;
             /** @description false if the docgen.render job could not be enqueued (e.g. a transient Redis error) — the document row still exists as draft; an operator must re-enqueue it (Fix round 1: best-effort enqueue) */
             render_queued: boolean;
+        };
+        Employee: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** @description 12 digits + valid check digit */
+            iin: string;
+            last_name: string;
+            first_name: string;
+            middle_name: string | null;
+            position: string;
+            /**
+             * Format: int64
+             * @description Salary in tiyn (1/100 tenge)
+             */
+            salary_tiyn: number;
+            /** Format: date */
+            hired_on: string;
+            /** Format: date */
+            dismissed_on: string | null;
+            ipn_deduction_claimed: boolean;
+            opvr_exempt: boolean;
+            payout_iik: string;
+            /** @enum {string} */
+            status: "active" | "dismissed";
+            created_at: string;
+            updated_at: string;
+        };
+        EmployeeListResponse: {
+            data: components["schemas"]["Employee"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        EmployeeDetailResponse: {
+            data: components["schemas"]["Employee"];
+        };
+        EmployeeCreate: {
+            /** @description ИИН, 12 digits + valid check digit */
+            iin: string;
+            last_name: string;
+            first_name: string;
+            middle_name?: string;
+            position: string;
+            /** @description Decimal string in tenge, e.g. "300000.00" — parsed via Ledger::parse_tiyn, must be strictly positive */
+            salary: string;
+            /** @description Calendar-valid date; immutable after creation */
+            hired_on: string;
+            /** @default false */
+            ipn_deduction_claimed: boolean;
+            /** @default false */
+            opvr_exempt: boolean;
+            /** @default  */
+            payout_iik: string;
+        };
+        EmployeeUpdate: {
+            iin: string;
+            last_name: string;
+            first_name: string;
+            middle_name?: string;
+            position: string;
+            /** @description Decimal string in tenge, e.g. "300000.00" */
+            salary: string;
+            ipn_deduction_claimed?: boolean;
+            opvr_exempt?: boolean;
+            payout_iik?: string;
+        };
+        EmployeeDismiss: {
+            /** @description Calendar-valid date */
+            dismissed_on: string;
+        };
+        HrOrder: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** Format: uuid */
+            employee_id: string;
+            /** @enum {string} */
+            kind: "hire" | "dismiss" | "vacation" | "business_trip" | "salary_change";
+            number: string;
+            /** Format: date */
+            issued_on: string;
+            /** Format: date */
+            effective_from: string;
+            /** Format: date */
+            effective_to: string | null;
+            payload: {
+                [key: string]: unknown;
+            } | null;
+            /** Format: uuid */
+            document_id: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        HrOrderListResponse: {
+            data: components["schemas"]["HrOrder"][];
+        };
+        HrOrderDetailResponse: {
+            data: components["schemas"]["HrOrder"];
+        };
+        HrOrderCreate: {
+            /**
+             * Format: uuid
+             * @description Must belong to the caller's organization (422 foreign_employee otherwise)
+             */
+            employee_id: string;
+            /** @enum {string} */
+            kind: "hire" | "dismiss" | "vacation" | "business_trip" | "salary_change";
+            number: string;
+            issued_on: string;
+            effective_from: string;
+            effective_to?: string;
+            payload?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid */
+        GenerateHrDocumentExtra: {
+            [key: string]: unknown;
+        };
+        LaborContract: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** Format: uuid */
+            employee_id: string;
+            number: string;
+            /** Format: date */
+            signed_on: string;
+            /** Format: date */
+            starts_on: string;
+            /** Format: date */
+            ends_on: string | null;
+            terms_json: {
+                [key: string]: unknown;
+            } | null;
+            created_at: string;
+            updated_at: string;
+        };
+        LaborContractListResponse: {
+            data: components["schemas"]["LaborContract"][];
+        };
+        LaborContractDetailResponse: {
+            data: components["schemas"]["LaborContract"];
+        };
+        LaborContractCreate: {
+            /**
+             * Format: uuid
+             * @description Must belong to the caller's organization (422 foreign_employee otherwise)
+             */
+            employee_id: string;
+            number: string;
+            signed_on: string;
+            starts_on: string;
+            ends_on?: string;
+            terms_json?: {
+                [key: string]: unknown;
+            };
+        };
+        Vacation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** Format: uuid */
+            employee_id: string;
+            /** Format: date */
+            starts_on: string;
+            /** Format: date */
+            ends_on: string;
+            days: number;
+            /** @enum {string} */
+            kind: "annual" | "unpaid" | "sick";
+            created_at: string;
+            updated_at: string;
+        };
+        VacationListResponse: {
+            data: components["schemas"]["Vacation"][];
+        };
+        VacationDetailResponse: {
+            data: components["schemas"]["Vacation"];
+        };
+        VacationCreate: {
+            /**
+             * Format: uuid
+             * @description Must belong to the caller's organization (422 foreign_employee otherwise)
+             */
+            employee_id: string;
+            starts_on: string;
+            /** @description Must be on or after starts_on (422 before_starts_on otherwise) */
+            ends_on: string;
+            days: number;
+            /** @enum {string} */
+            kind: "annual" | "unpaid" | "sick";
         };
     };
     responses: never;

@@ -1,5 +1,14 @@
 import { lazy, type ReactElement } from 'react';
-import { Shield, ScrollText, Building2, Users, BookOpenText, FileText } from 'lucide-react';
+import {
+  Shield,
+  ScrollText,
+  Building2,
+  Users,
+  BookOpenText,
+  FileText,
+  UsersRound,
+  BriefcaseBusiness,
+} from 'lucide-react';
 
 import { Permission } from '@/lib/auth/permissions';
 
@@ -22,6 +31,8 @@ import { CounterpartiesPage } from '@/pages/Counterparties';
 import { JournalPage } from '@/pages/Journal';
 import { DocumentsPage } from '@/pages/Documents';
 import { GenerateDocumentPage } from '@/pages/GenerateDocument';
+import { EmployeesPage } from '@/pages/Employees';
+import { HrOrdersPage } from '@/pages/HrOrders';
 
 // Admin pages are code-split: a logged-out visitor on /login should not pull
 // the whole admin bundle. React.lazy needs a module with a `default` export,
@@ -180,6 +191,20 @@ export const routes: RouteEntry[] = [
   // No navLabel: reached from DocumentsPage's "Создать документ" button,
   // not a top-level nav destination.
   { path: '/documents/generate', element: <GenerateDocumentPage />, guard: 'confirmed' },
+  {
+    path: '/employees',
+    element: <EmployeesPage />,
+    guard: 'confirmed',
+    navLabel: 'Сотрудники',
+    navIcon: UsersRound,
+  },
+  {
+    path: '/hr',
+    element: <HrOrdersPage />,
+    guard: 'confirmed',
+    navLabel: 'Кадры',
+    navIcon: BriefcaseBusiness,
+  },
 ];
 
 /** The permission a guard implies, for nav-link filtering in Nav.tsx. */

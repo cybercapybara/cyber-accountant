@@ -41,6 +41,18 @@ export type DocTemplate = Schemas['DocTemplate'];
 export type DocumentUploadCreate = Schemas['DocumentUploadCreate'];
 export type DocumentConfirmUpload = Schemas['DocumentConfirmUpload'];
 export type GenerateDocumentCreate = Schemas['GenerateDocumentCreate'];
+export type Employee = Schemas['Employee'];
+export type EmployeeCreate = Schemas['EmployeeCreate'];
+export type EmployeeUpdate = Schemas['EmployeeUpdate'];
+export type EmployeeDismiss = Schemas['EmployeeDismiss'];
+export type HrOrder = Schemas['HrOrder'];
+export type HrOrderCreate = Schemas['HrOrderCreate'];
+export type LaborContract = Schemas['LaborContract'];
+export type LaborContractCreate = Schemas['LaborContractCreate'];
+export type Vacation = Schemas['Vacation'];
+export type VacationCreate = Schemas['VacationCreate'];
+/** Body of both …/generate-document endpoints — free-text fields only. */
+export type GenerateHrDocumentExtra = Schemas['GenerateHrDocumentExtra'];
 
 /** GET /api/auth/me, POST /api/auth/login, POST /api/auth/refresh — { user }. */
 export type MeResponse = Schemas['MeResponse'];
@@ -92,3 +104,19 @@ export type DownloadUrlResponse = Schemas['DownloadUrlResponse'];
 export type DocTemplateListResponse = Schemas['DocTemplateListResponse'];
 /** POST /api/v1/documents/generate — 202 { document_id, render_queued }. */
 export type GenerateDocumentResponse = Schemas['GenerateDocumentResponse'];
+/** GET /api/v1/employees — { data: Employee[], total, limit, offset }. */
+export type EmployeeListResponse = Schemas['EmployeeListResponse'];
+/** GET/POST/PATCH /api/v1/employees[/{id}[/dismiss]] — { data: Employee }. */
+export type EmployeeDetailResponse = Schemas['EmployeeDetailResponse'];
+/** GET /api/v1/hr-orders — { data: HrOrder[] }, unpaginated. */
+export type HrOrderListResponse = Schemas['HrOrderListResponse'];
+/** POST /api/v1/hr-orders — { data: HrOrder }. */
+export type HrOrderDetailResponse = Schemas['HrOrderDetailResponse'];
+/** GET /api/v1/labor-contracts — { data: LaborContract[] }, unpaginated. */
+export type LaborContractListResponse = Schemas['LaborContractListResponse'];
+/** POST /api/v1/labor-contracts — { data: LaborContract }. */
+export type LaborContractDetailResponse = Schemas['LaborContractDetailResponse'];
+/** GET /api/v1/vacations — { data: Vacation[] }, unpaginated. */
+export type VacationListResponse = Schemas['VacationListResponse'];
+/** POST /api/v1/vacations — { data: Vacation }. */
+export type VacationDetailResponse = Schemas['VacationDetailResponse'];
