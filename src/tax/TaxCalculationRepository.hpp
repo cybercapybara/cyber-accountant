@@ -82,14 +82,21 @@ public:
 
     /// The stored calculation for exactly one (org_id, kind, period_from,
     /// period_to), if one has ever been computed — the same key upsert()
-    /// writes against. Used by Tax::TaxService itself (to confirm the row
-    /// it just wrote) and by callers that want "the last SNR calculation for
+    /// writes against. For a caller that wants "the last SNR calculation for
     /// H1 2026" without listing everything for the org.
+    ///
+    /// @p from_primary mirrors OrgCrudBase::find_in_org's parameter of the
+    /// same name: pass true right after a write (e.g. confirming the row
+    /// upsert() just returned, or any other read-after-write caller) so a
+    /// lagging replica can't return a stale/missing row — same
+    /// read-after-write posture Tax::TaxService::sum_line_amount_tiyn takes
+    /// for its own aggregate reads.
     std::optional<Calculation> find_by_period(const std::string& org_id,
                                               const std::string& kind,
                                               const std::string& period_from,
-                                              const std::string& period_to) {
-        return Database::get().execute_read([&](auto& txn) -> std::optional<Calculation> {
+                                              const std::string& period_to,
+                                              bool from_primary = false) {
+        auto query = [&](auto& txn) -> std::optional<Calculation> {
             auto r = txn.exec_params("SELECT " + std::string(kColumns) +
                                          " FROM tax_calculations "
                                          "WHERE org_id = $1 AND kind = $2 AND period_from = $3 AND period_to = $4",
@@ -100,7 +107,8 @@ public:
             if (r.empty())
                 return std::nullopt;
             return Calculation::from_row(r[0]);
-        });
+        };
+        return from_primary ? Database::get().execute_read_primary(query) : Database::get().execute_read(query);
     }
 };
 

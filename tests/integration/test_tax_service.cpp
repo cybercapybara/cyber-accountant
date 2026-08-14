@@ -146,6 +146,39 @@ TEST_F(TaxServiceTest, SnrIgnoresDraftEntries) {
     EXPECT_EQ(calc.total_tiyn, 800000LL);                                            // 4% of 200,000 ₸
 }
 
+// Fix round 1: pins the existing `status = 'posted'` filter's behaviour
+// against a storno, not just an untouched draft (SnrIgnoresDraftEntries
+// above). After Ledger::JournalService::reverse(): the original entry
+// flips to 'reversed' (excluded by the filter directly) and its mirror
+// entry is posted but with sides FLIPPED (a DEBIT line on 6010, not
+// credit) — so it doesn't smuggle the income back in from the other side
+// either. Both the SNR income base and the VAT accrued/deductible bases
+// must see exactly zero once the whole pair has landed.
+TEST_F(TaxServiceTest, ReversedEntriesExcludedFromBase) {
+    Ledger::JournalService journal_svc;
+    Tax::TaxService tax_svc;
+    auto org_id = make_org("111280000009");
+    auto user_id = seed_user("reversed1@example.com");
+
+    auto entry =
+        journal_svc.create_draft(org_id,
+                                 user_id,
+                                 "2026-02-01",
+                                 "Income later reversed",
+                                 {line("1030", "debit", "1120.00"), line("6010", "credit", "1120.00", "120.00")});
+    ASSERT_TRUE(journal_svc.post(org_id, entry.id));
+    ASSERT_TRUE(journal_svc.reverse(org_id, entry.id, user_id));
+
+    auto snr = tax_svc.calculate_snr(org_id, "2026-01-01", "2026-06-30");
+    EXPECT_EQ(snr.result_snapshot.at("income_tiyn").get<long long>(), 0LL);
+    EXPECT_EQ(snr.total_tiyn, 0LL);
+
+    auto vat = tax_svc.calculate_vat(org_id, "2026-01-01", "2026-03-31");
+    EXPECT_EQ(vat.result_snapshot.at("accrued_tiyn").get<long long>(), 0LL);
+    EXPECT_EQ(vat.result_snapshot.at("deductible_tiyn").get<long long>(), 0LL);
+    EXPECT_EQ(vat.total_tiyn, 0LL);
+}
+
 TEST_F(TaxServiceTest, VatBalanceFromLineVatAmounts) {
     Ledger::JournalService journal_svc;
     Tax::TaxService tax_svc;

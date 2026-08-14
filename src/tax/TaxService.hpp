@@ -336,13 +336,24 @@ private:
     /// (rather than an array-typed bind parameter, which libpqxx as used
     /// elsewhere in this codebase has no established idiom for) carries no
     /// injection risk.
+    ///
+    /// Money-critical aggregate; read-after-write per docs/CONVENTIONS.md:56
+    /// ("Use execute_read_primary for read-after-write") — the normal
+    /// workflow is "post a journal entry, then immediately compute the tax
+    /// due on it", so this MUST read the primary, not a replica: every other
+    /// repository this file's neighbours use (Ledger::JournalRepository,
+    /// Payroll::PayrollRepository) exposes the same from_primary escape
+    /// hatch for exactly this reason. This is currently harmless only
+    /// because every shipped config has `replicas: []`; the moment a replica
+    /// is added, a lagging read here would silently understate income/VAT
+    /// with no error — a tax bug, not a crash.
     long long sum_line_amount_tiyn(const std::string& org_id,
                                    const std::vector<std::string>& accounts,
                                    const std::string& side,
                                    const std::string& period_from,
                                    const std::string& period_to,
                                    bool vat_only) {
-        return Database::get().execute_read([&](auto& txn) {
+        return Database::get().execute_read_primary([&](auto& txn) {
             const std::string column = vat_only ? "jl.vat_amount" : "jl.amount";
             const std::string vat_guard = vat_only ? " AND jl.vat_amount IS NOT NULL" : "";
             auto r = txn.exec_params("SELECT COALESCE(SUM(ROUND(" + column +
