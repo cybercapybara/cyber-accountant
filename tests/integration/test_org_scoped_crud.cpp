@@ -44,11 +44,15 @@ protected:
                 "CREATE TABLE IF NOT EXISTS test_widgets ("
                 "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
                 "org_id UUID NOT NULL, name TEXT NOT NULL)");
+            return 0;
         });
     }
 
     void TearDown() override {
-        Database::get().execute_write([](auto& txn) { txn.exec("DROP TABLE IF EXISTS test_widgets"); });
+        Database::get().execute_write([](auto& txn) {
+            txn.exec("DROP TABLE IF EXISTS test_widgets");
+            return 0;
+        });
         TestHelpers::CoreBackedTest::TearDown();
     }
 };
@@ -59,6 +63,7 @@ TEST_F(OrgScopedTest, RowsAreIsolatedByOrg) {
     auto b = orgs.create("111240000011", "Org B", "snr_simplified", false);
     Database::get().execute_write([&](auto& txn) {
         txn.exec_params("INSERT INTO test_widgets (org_id, name) VALUES ($1,'wa'),($2,'wb')", a.id, b.id);
+        return 0;
     });
 
     WidgetRepository repo;
