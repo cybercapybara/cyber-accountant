@@ -253,4 +253,36 @@ TEST_F(TemplateRegistryTest, RenderTexDoesNotMutateInput) {
     EXPECT_EQ(input, snapshot);
 }
 
+// Regression: every shipped template defines a one-arg LaTeX macro like
+// `\newcommand{\field}[1]{\textbf{#1}}` — inja's DEFAULT comment markers are
+// "{#"/"#}", so the literal `{#1}` in that macro body used to be parsed as
+// an unterminated comment ("expected comment close, got '<eof>'") and the
+// render failed outright. render_tex must handle this without throwing, and
+// the macro parameter marker must survive into the output unchanged (it's
+// plain LaTeX text, not inja syntax under the remapped markers).
+TEST_F(TemplateRegistryTest, RenderTexCoexistsWithLatexMacroParameters) {
+    write_version("greet", "v1", "\\newcommand{\\field}[1]{\\textbf{#1}}\n{{ name }}");
+    Docgen::TemplateRegistry registry(root_);
+    auto info = registry.latest("greet");
+    ASSERT_TRUE(info.has_value());
+
+    auto out = Docgen::render_tex(*info, json{{"name", "Ada"}});
+    EXPECT_EQ(out, "\\newcommand{\\field}[1]{\\textbf{#1}}\nAda");
+    EXPECT_NE(out.find("{#1}"), std::string::npos);
+}
+
+// render_tex's remapped comment markers — "((#" / "#))" — are still cut from
+// the output, same as inja's default "{# #}" would be, just spelled
+// differently so it can't collide with LaTeX macro parameters.
+TEST_F(TemplateRegistryTest, RenderTexCommentMarkersAreStripped) {
+    write_version("greet", "v1", "A((#hidden comment#))B");
+    Docgen::TemplateRegistry registry(root_);
+    auto info = registry.latest("greet");
+    ASSERT_TRUE(info.has_value());
+
+    auto out = Docgen::render_tex(*info, json::object());
+    EXPECT_EQ(out, "AB");
+    EXPECT_EQ(out.find("hidden"), std::string::npos);
+}
+
 }  // namespace

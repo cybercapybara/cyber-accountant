@@ -12,6 +12,19 @@
  * pass through untouched for inja to stringify normally. Templates use
  * inja's default `{{ }}` expression / `{% %}` statement delimiters — no
  * template author needs to know escaping happens at all.
+ *
+ * Comment delimiters are NOT the inja default, though: inja's `{# ... #}`
+ * collides head-on with plain LaTeX. Every shipped template defines
+ * `\newcommand{\field}[1]{\textbf{#1}}` (or similar), and `{#1}` in that
+ * macro body starts with the two characters `{#` — inja's default
+ * comment-open token — with no matching `#}` anywhere in the file, so the
+ * parser runs off the end looking for a close and the whole render fails
+ * with a parser_error at EOF. `#1`-style TeX macro parameters are routine
+ * and unavoidable in LaTeX-first templates, so the comment markers were
+ * moved instead: `((#` / `#))` (see `set_comment` below) — a sequence that
+ * cannot occur in valid LaTeX. `{% %}`/`{{ }}` stay untouched (see the
+ * exhaustive grep over every shipped `template.tex` in
+ * `templates/latex/README.md`: no literal, non-inja `{%` exists today).
  */
 
 #pragma once
@@ -71,6 +84,9 @@ inline std::string render_tex(const TemplateInfo& info, const json& input) {
 
     try {
         inja::Environment env;
+        // "((#" / "#))" — see the file header: inja's default "{#"/"#}"
+        // collides with `#1`-style LaTeX macro parameters (`{#1}`).
+        env.set_comment("((#", "#))");
         return env.render(tpl_source, escaped);
     } catch (const std::exception& e) {
         throw std::runtime_error("render_tex: inja render failed for " + info.slug + "/" + info.version_str + ": " +

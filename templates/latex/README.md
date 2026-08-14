@@ -36,6 +36,26 @@ templates/latex/<slug>/v<N>/
   `{% for %}` / `{% endif %}` / `{% endfor %}` for control flow. See
   [pantor/inja](https://github.com/pantor/inja) for the full syntax
   (a Jinja2 subset).
+- **Comments are `((# ... #))`, NOT inja's default `{# ... #}`.** Every
+  shipped template defines `\newcommand{\field}[1]{\textbf{#1}}` (or a
+  similar one-arg macro) — `#1`/`#2`/... macro parameters are routine and
+  unavoidable in LaTeX, and `{#1}` starts with the exact two characters
+  inja treats as "open comment" by default. With no matching `#}` in the
+  file, that silently turns the rest of the template into an unterminated
+  comment and the render fails with a parser error at EOF ("expected
+  comment close, got '<eof>'"). `Docgen::render_tex` (`src/docgen/Renderer.hpp`)
+  remaps the comment markers to `((#` / `#))` via inja's
+  `Environment::set_comment(open, close)` — a sequence that cannot occur in
+  valid LaTeX — specifically so template authors never have to dodge this.
+  Write `((# like this #))` for an inja-only comment that doesn't end up in
+  the rendered `.tex`; do not use `{# #}`, it is not special anymore.
+  (`{% %}` was checked too: every `template.tex` shipped as of this writing
+  was grepped for a literal, non-inja `{%` — LaTeX has no construct that
+  produces one on its own, since `%` starts a LaTeX line comment and would
+  need a `{` immediately before it to collide, which none of these
+  templates do — so `{% %}` was left at its inja default. If a future
+  template ever needs a literal `{%` in its LaTeX body, re-run that grep and
+  remap `set_statement` the same way.)
 - Every **string** value in the input JSON is automatically escaped for
   LaTeX (`Docgen::escape_latex`, `src/docgen/LatexEscape.hpp`) before
   substitution — `\ { } $ & # ^ _ % ~ < >` all become their safe LaTeX
