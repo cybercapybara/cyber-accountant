@@ -1,6 +1,44 @@
 # ADR 0007 — S3 backend: Hetzner Object Storage, not in-cluster MinIO
 
-Status: Accepted — 2026-08-14
+Status: Superseded by owner decision — 2026-08-14
+
+## Owner decision — 2026-08-14 (supersedes the decision below)
+
+The owner reversed this ADR's original conclusion the same day it was
+written: **production S3 backend is the existing in-cluster MinIO**, not
+Hetzner Object Storage. Reason given: keep both the data and the cost inside
+the already-provisioned cluster rather than adding an external paid service,
+accepting the SPOF/backup gaps noted in the Context below as a known,
+revisitable trade-off rather than a blocker.
+
+- **Endpoint**: `http://minio.minio.svc.cluster.local:9000` (in-cluster
+  MinIO, namespace `minio`, `quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z`
+  — the same instance the original Context section described and rejected).
+- **Bucket**: `cyber-accountant-prod`, created via a one-off `mc` pod against
+  MinIO's root credentials (`minio-root` secret in the `minio` namespace),
+  then deleted — no standing access to root credentials anywhere.
+- **Application access**: a dedicated, non-root MinIO user was created
+  (`mc admin user add` with a random access key/secret pair) with an
+  `mc admin policy` scoped to `s3:*` on `arn:aws:s3:::cyber-accountant-prod`
+  and `arn:aws:s3:::cyber-accountant-prod/*` only — verified to list/read/
+  write that bucket and to get `Access Denied` on the cluster's other
+  pre-existing buckets (`cybercapybara`, `loki`, `tempo`).
+- **Secret contract unchanged**: `s3-credentials` in the `cyber-accountant`
+  namespace still holds `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`,
+  `S3_ACCESS_KEY`, `S3_SECRET_KEY` — `S3Storage` needs no code change.
+  `S3_REGION=us-east-1` (MinIO doesn't enforce a real region; this is
+  `S3Storage`'s existing default, kept as-is since there's no `fsn1`-style
+  region concept for an in-cluster MinIO endpoint).
+- **Hetzner Object Storage remains documented below as the rejected
+  alternative** — the original Context/Decision/Consequences sections are
+  kept verbatim as the record of that (superseded) reasoning, including why
+  it was originally preferred (managed, no SPOF/backup ownership, colocated
+  region). That reasoning wasn't wrong; the owner simply weighted
+  in-cluster cost/data-locality higher.
+- **Revisit trigger, updated**: if the existing `minio` deployment's
+  single-pod/no-backup posture becomes a real incident (data loss, extended
+  outage), or the owner wants durability guarantees Hetzner Object Storage
+  would provide, reopen this ADR again.
 
 ## Context
 
@@ -57,7 +95,7 @@ and the one existing MinIO pod is an unmanaged single point of failure outside
 this project's ownership. The data confirms rather than overturns the spec's
 default.
 
-## Decision
+## Decision (original — superseded by the owner decision above)
 
 1. **Production S3 backend is Hetzner Object Storage**, not a MinIO subchart
    in the cluster. Object Storage is managed (no pod/PVC/backup to operate),
@@ -83,7 +121,7 @@ default.
    owned, replicated, backed-up MinIO deployment, not the existing
    unmanaged one).
 
-## Consequences
+## Consequences (original — superseded by the owner decision above)
 
 - **+** Zero code change either way — `S3Storage` already speaks any
   S3-compatible endpoint; only the secret's `S3_ENDPOINT`/region/keys differ.
@@ -97,39 +135,51 @@ default.
 - **−** Adds an external dependency (Hetzner Object Storage API/uptime)
   instead of keeping storage inside the already-provisioned cluster.
 
-## Manual provisioning
+## Provisioning — actual state (owner decision, done automatically)
 
-Bucket creation and S3 key generation cannot be done from this repo's tooling
-(`hcloud` CLI has no Object Storage support, see Context) — an owner with
-Hetzner Console access must:
+Unlike the original ADR's assumption (Hetzner Console-only, manual), the
+in-cluster MinIO path was fully scripted, no Console/manual step involved:
 
-1. **Hetzner Console → Object Storage** (same project as the cluster): create
-   a bucket named `cyber-accountant-prod` in region `fsn1`, then generate an
-   S3 access key + secret key scoped to it.
-2. **Create the cluster secret** (namespace `cyber-accountant`, created by
-   this task):
+1. **Bucket + dedicated app user**: a one-off `mc` pod (`quay.io/minio/mc`)
+   was run in the `minio` namespace with the existing root credentials
+   (`minio-root` secret, `secretKeyRef`, never exported to a shell or file),
+   used to:
+   - `mc mb --ignore-existing` the `cyber-accountant-prod` bucket;
+   - generate a random access key/secret (`openssl rand -hex 16` × 2) and
+     `mc admin user add` a non-root MinIO user with them;
+   - `mc admin policy create` + `attach` a policy granting `s3:*` scoped to
+     only `arn:aws:s3:::cyber-accountant-prod{,/*}`.
+   The pod was deleted immediately after; root credentials touched nothing
+   outside that pod's exec session.
+2. **Cluster secret** (namespace `cyber-accountant`, created idempotently via
+   `--dry-run=client -o yaml | kubectl apply -f -`):
 
    ```bash
    KUBECONFIG=../cluster/kubeconfig kubectl -n cyber-accountant create secret generic s3-credentials \
-     --from-literal=S3_ENDPOINT=<fsn1-endpoint-from-console> \
+     --from-literal=S3_ENDPOINT=http://minio.minio.svc.cluster.local:9000 \
      --from-literal=S3_BUCKET=cyber-accountant-prod \
-     --from-literal=S3_REGION=fsn1 \
-     --from-literal=S3_ACCESS_KEY=<access-key-from-console> \
-     --from-literal=S3_SECRET_KEY=<secret-key-from-console>
+     --from-literal=S3_REGION=us-east-1 \
+     --from-literal=S3_ACCESS_KEY=<generated> \
+     --from-literal=S3_SECRET_KEY=<generated> \
+     --dry-run=client -o yaml | kubectl apply -f -
    ```
 
-   `S3_ENDPOINT` is the actual `fsn1` Object Storage host Hetzner shows in the
-   console (of the form `https://<region>.your-objectstorage.com`) — confirm
-   it there rather than guessing. The angle-bracket placeholders above are
-   documentation only; no placeholder or real key material is ever committed
-   — the secret lives solely in the cluster.
+   Real key material lives only in the cluster secret (and briefly in the
+   provisioning pod's exec session); nothing was ever written to this repo
+   or to disk outside the operator's scratch directory during the run.
+3. **Verified isolation**: with the new (non-root) credentials, `mc ls`
+   listed only `cyber-accountant-prod` and could read/write into it;
+   `mc ls` against the cluster's other pre-existing buckets
+   (`cybercapybara`, `loki`, `tempo`) returned `Access Denied`.
 
 ## Not adopted (deferred)
 
-- **In-cluster MinIO (fresh, project-owned subchart)** — viable later per the
-  fallback above, but not justified today: no data-locality requirement
-  exists yet, and it would be the fourth-plus stateful workload competing for
-  the same single-replica-rationed disk/RAM budget.
-- **Reusing the existing unmanaged `minio` namespace** — rejected outright:
-  unowned by this project, single-pod SPOF, no visible backup policy: wrong
-  place to put tenant financial documents.
+- **Hetzner Object Storage** — this ADR's original recommendation (see
+  Decision/Consequences above); not adopted per the owner's 2026-08-14
+  reversal. Nothing about the original reasoning was wrong — managed,
+  colocated in `fsn1`, no SPOF/backup ownership — the owner simply chose to
+  keep data and cost inside the cluster instead. Revisit if the in-cluster
+  MinIO's single-pod/no-backup posture causes a real incident.
+- **A fresh, project-owned MinIO subchart** (the original ADR's fallback
+  option) — superseded by simply using the existing in-cluster instance
+  directly; no new stateful workload was added.
