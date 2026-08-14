@@ -80,6 +80,36 @@ export const qk = {
         ? (['hr', 'vacations'] as const)
         : (['hr', 'vacations', employeeId] as const),
   },
+  /**
+   * Payroll runs and their payslips. `runs` is keyed by the active ?year
+   * filter ('' = every year); the bare prefix still matches every variant,
+   * so a calculate/approve/post invalidation hits them all. usePagedQuery
+   * appends the page number on top.
+   */
+  payroll: {
+    runs: (year?: string) =>
+      year === undefined ? (['payroll', 'runs'] as const) : (['payroll', 'runs', year] as const),
+    payslips: (runId?: string) =>
+      runId === undefined
+        ? (['payroll', 'payslips'] as const)
+        : (['payroll', 'payslips', runId] as const),
+  },
+  /**
+   * Tax reference data, calculations, alerts and ФНО filings. `rates`,
+   * `deadlines` and `alerts` take no argument: the pages always ask for
+   * "today", which is the server's own default for `?on`.
+   */
+  tax: {
+    rates: () => ['tax', 'rates'] as const,
+    deadlines: () => ['tax', 'deadlines'] as const,
+    alerts: () => ['tax', 'alerts'] as const,
+    calculations: (kind?: string) =>
+      kind === undefined
+        ? (['tax', 'calculations'] as const)
+        : (['tax', 'calculations', kind] as const),
+    filings: (kind?: string) =>
+      kind === undefined ? (['tax', 'filings'] as const) : (['tax', 'filings', kind] as const),
+  },
   admin: {
     users: (page?: number) =>
       page === undefined ? (['admin', 'users'] as const) : (['admin', 'users', page] as const),

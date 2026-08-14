@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/toaster';
 import { useApiMutation } from '@/hooks/useApiMutation';
+import { useDocumentRender } from '@/hooks/useDocumentRender';
 import { useErrorToast } from '@/hooks/useErrorToast';
 import { usePagedQuery } from '@/hooks/usePagedQuery';
 import { ApiClientError, api } from '@/lib/api/client';
@@ -86,15 +87,9 @@ const SOURCE_LABELS: Record<string, string> = {
   email: 'Почта',
 };
 
-// FocusedDocumentAlert's polling cadence and hard cap. Fix round 1
-// (controller review): the previous version polled every 2s forever while
-// status stayed 'draft' — a LaTeX render failure or exhausted job retries
-// leave a document in 'draft' permanently, so that was an unbounded
-// background poll with no stop condition. Two minutes is generous for a
-// docgen render (seconds in practice); past that we stop and tell the user
-// plainly rather than keep claiming "рендер выполняется".
-const FOCUS_POLL_INTERVAL_MS = 2000;
-const FOCUS_POLL_TIMEOUT_MS = 120_000;
+// The polling cadence and hard cap FocusedDocumentAlert used to own inline
+// now live in useDocumentRender (hooks/useDocumentRender.ts) — four screens
+// wait for a docgen render, and they all need the same two bounds.
 
 // Shared StatusBadge tone family (DESIGN.md §5) — a document's
 // "draft/final/sent/…" pill reads the same as any other status pill in the app.
@@ -456,25 +451,7 @@ function FocusedDocumentAlert({
   onDismiss: () => void;
 }) {
   const toast = useToast();
-  const startedAtRef = useRef(Date.now());
-  const [timedOut, setTimedOut] = useState(false);
-
-  useEffect(() => {
-    if (queuedFailed) return; // never polling in this case — nothing to time out.
-    const timer = setTimeout(() => setTimedOut(true), FOCUS_POLL_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [queuedFailed]);
-
-  const docQ = useQuery({
-    queryKey: qk.documents.detail(id),
-    queryFn: () => api.getJson<DocumentDetailResponse>(`/api/v1/documents/${id}`),
-    refetchInterval: (query) => {
-      if (queuedFailed) return false;
-      if (query.state.data?.data.status !== 'draft') return false;
-      if (Date.now() - startedAtRef.current > FOCUS_POLL_TIMEOUT_MS) return false;
-      return FOCUS_POLL_INTERVAL_MS;
-    },
-  });
+  const render = useDocumentRender(id, !queuedFailed);
 
   const download = useApiMutation(
     () => api.postJson<DownloadUrlResponse>(`/api/v1/documents/${id}/download-url`),
@@ -487,9 +464,7 @@ function FocusedDocumentAlert({
     },
   );
 
-  const doc = docQ.data?.data;
-  const stillRenderingHonestly = !queuedFailed && !timedOut && doc?.status === 'draft';
-  const stuck = !queuedFailed && timedOut && doc?.status === 'draft';
+  const doc = render.document;
 
   return (
     <div className="space-y-3">
@@ -510,7 +485,7 @@ function FocusedDocumentAlert({
           </Button>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
-          {docQ.isLoading && <p className="text-muted-foreground">Загрузка статуса…</p>}
+          {render.isLoading && <p className="text-muted-foreground">Загрузка статуса…</p>}
           {doc && (
             <>
               <p>
@@ -525,12 +500,12 @@ function FocusedDocumentAlert({
                   Задача рендера не поставлена. Попробуйте сгенерировать документ заново.
                 </p>
               )}
-              {stillRenderingHonestly && (
+              {render.rendering && (
                 <p className="text-muted-foreground">
                   Рендер выполняется, страница обновится автоматически…
                 </p>
               )}
-              {stuck && (
+              {render.stuck && (
                 <div className="space-y-2">
                   <p className="text-muted-foreground">
                     Рендер занимает дольше обычного — обновите страницу позже.
@@ -538,14 +513,14 @@ function FocusedDocumentAlert({
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => docQ.refetch()}
-                    disabled={docQ.isFetching}
+                    onClick={() => render.refetch()}
+                    disabled={render.isFetching}
                   >
                     Обновить
                   </Button>
                 </div>
               )}
-              {doc.status !== 'draft' && (
+              {render.ready && (
                 <Button size="sm" onClick={() => download.mutate()} disabled={download.isPending}>
                   Скачать
                 </Button>

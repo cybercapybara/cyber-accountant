@@ -8,6 +8,8 @@ import {
   FileText,
   UsersRound,
   BriefcaseBusiness,
+  Wallet,
+  Landmark,
 } from 'lucide-react';
 
 import { Permission } from '@/lib/auth/permissions';
@@ -33,6 +35,8 @@ import { DocumentsPage } from '@/pages/Documents';
 import { GenerateDocumentPage } from '@/pages/GenerateDocument';
 import { EmployeesPage } from '@/pages/Employees';
 import { HrOrdersPage } from '@/pages/HrOrders';
+import { PayrollPage } from '@/pages/Payroll';
+import { TaxesPage } from '@/pages/Taxes';
 
 // Admin pages are code-split: a logged-out visitor on /login should not pull
 // the whole admin bundle. React.lazy needs a module with a `default` export,
@@ -204,6 +208,20 @@ export const routes: RouteEntry[] = [
     guard: 'confirmed',
     navLabel: 'Кадры',
     navIcon: BriefcaseBusiness,
+  },
+  {
+    path: '/payroll',
+    element: <PayrollPage />,
+    guard: 'confirmed',
+    navLabel: 'Зарплата',
+    navIcon: Wallet,
+  },
+  {
+    path: '/taxes',
+    element: <TaxesPage />,
+    guard: 'confirmed',
+    navLabel: 'Налоги',
+    navIcon: Landmark,
   },
 ];
 

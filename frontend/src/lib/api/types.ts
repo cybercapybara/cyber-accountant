@@ -53,6 +53,19 @@ export type Vacation = Schemas['Vacation'];
 export type VacationCreate = Schemas['VacationCreate'];
 /** Body of both …/generate-document endpoints — free-text fields only. */
 export type GenerateHrDocumentExtra = Schemas['GenerateHrDocumentExtra'];
+export type PayrollRun = Schemas['PayrollRun'];
+export type PayrollRunCreate = Schemas['PayrollRunCreate'];
+export type Payslip = Schemas['Payslip'];
+/** Body of …/payslips/{employee_id}/generate-document — `net_words` and nothing else. */
+export type PayslipDocumentExtra = Schemas['PayslipDocumentExtra'];
+export type TaxRate = Schemas['TaxRate'];
+export type TaxConstant = Schemas['TaxConstant'];
+export type TaxCalculation = Schemas['TaxCalculation'];
+export type TaxCalculationCreate = Schemas['TaxCalculationCreate'];
+export type TaxAlert = Schemas['TaxAlert'];
+export type TaxDeadline = Schemas['TaxDeadline'];
+export type TaxFiling = Schemas['TaxFiling'];
+export type TaxFilingCreate = Schemas['TaxFilingCreate'];
 
 /** GET /api/auth/me, POST /api/auth/login, POST /api/auth/refresh — { user }. */
 export type MeResponse = Schemas['MeResponse'];
@@ -120,3 +133,29 @@ export type LaborContractDetailResponse = Schemas['LaborContractDetailResponse']
 export type VacationListResponse = Schemas['VacationListResponse'];
 /** POST /api/v1/vacations — { data: Vacation }. */
 export type VacationDetailResponse = Schemas['VacationDetailResponse'];
+/** GET /api/v1/payroll-runs — { data: PayrollRun[], total, limit, offset }. */
+export type PayrollRunListResponse = Schemas['PayrollRunListResponse'];
+/** POST /api/v1/payroll-runs[/{id}/approve] — { data: PayrollRun }. */
+export type PayrollRunDetailResponse = Schemas['PayrollRunDetailResponse'];
+/** GET /api/v1/payroll-runs/{id}/payslips — { data: Payslip[] }, unpaginated. */
+export type PayslipListResponse = Schemas['PayslipListResponse'];
+/** POST /api/v1/payroll-runs/{id}/post-to-journal — { entry_id }. */
+export type PostToJournalResponse = Schemas['PostToJournalResponse'];
+/** GET /api/v1/tax/rates — { data: { on, rates, constants } }. */
+export type TaxRatesResponse = Schemas['TaxRatesResponse'];
+/** GET /api/v1/tax/calculations — { data: TaxCalculation[], total, limit, offset }. */
+export type TaxCalculationListResponse = Schemas['TaxCalculationListResponse'];
+/** POST /api/v1/tax/calculations — { data: TaxCalculation }. */
+export type TaxCalculationDetailResponse = Schemas['TaxCalculationDetailResponse'];
+/** GET /api/v1/tax/alerts — { data: TaxAlert[] }, unpaginated. */
+export type TaxAlertListResponse = Schemas['TaxAlertListResponse'];
+/** GET /api/v1/tax/deadlines — { data: TaxDeadline[] }, unpaginated. */
+export type TaxDeadlineListResponse = Schemas['TaxDeadlineListResponse'];
+/** GET /api/v1/tax/filings — { data: TaxFiling[], total, limit, offset }. */
+export type TaxFilingListResponse = Schemas['TaxFilingListResponse'];
+/** GET /api/v1/tax/filings/{id} — { data: TaxFiling }. */
+export type TaxFilingDetailResponse = Schemas['TaxFilingDetailResponse'];
+/** POST /api/v1/tax/filings — 202 { filing_id, xml_ready, render_queued }. */
+export type TaxFilingCreateResponse = Schemas['TaxFilingCreateResponse'];
+/** POST /api/v1/tax/filings/{id}/download-url — { url, artifact, key }. */
+export type FilingDownloadUrlResponse = Schemas['FilingDownloadUrlResponse'];

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link } from 'react-router-dom';
@@ -8,9 +8,9 @@ import { UsersRound } from 'lucide-react';
 import { DataTable, type Column } from '@/components/DataTable';
 import { EmptyState } from '@/components/EmptyState';
 import { FormField } from '@/components/FormField';
+import { GeneratedDocumentCard, type GeneratedDocument } from '@/components/GeneratedDocumentCard';
 import { PageHeader } from '@/components/PageHeader';
-import { StatusBadge, type BadgeTone } from '@/components/StatusBadge';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { StatusBadge } from '@/components/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -20,9 +20,6 @@ import { useErrorToast } from '@/hooks/useErrorToast';
 import { ApiClientError, api, apiErrorMessage } from '@/lib/api/client';
 import { qk } from '@/lib/api/queryKeys';
 import type {
-  Document,
-  DocumentDetailResponse,
-  DownloadUrlResponse,
   Employee,
   EmployeeListResponse,
   GenerateDocumentResponse,
@@ -61,24 +58,6 @@ import {
   type LaborContractValues,
   type VacationValues,
 } from '@/lib/schemas/hr';
-
-// Bounded polling for a just-enqueued кадровый document, with the same
-// cadence and hard cap DocumentsPage's FocusedDocumentAlert uses: a failed
-// LaTeX render or exhausted job retries leave the document in 'draft'
-// forever, so an unbounded poll would be indistinguishable from "stuck".
-const RENDER_POLL_INTERVAL_MS = 2000;
-const RENDER_POLL_TIMEOUT_MS = 120_000;
-
-const DOC_STATUS_LABELS: Record<string, string> = {
-  draft: 'Черновик',
-  final: 'Готов',
-  sent: 'Отправлен',
-};
-const DOC_STATUS_TONE: Record<string, BadgeTone> = {
-  draft: 'warning',
-  final: 'success',
-  sent: 'info',
-};
 
 // Unpaginated employee roster for the filter/selects — same rationale as
 // Journal.tsx's counterparty select: a P2 organization's staff list is
@@ -279,130 +258,19 @@ function EmployeeSelect({
 }
 
 /**
- * Poll the just-enqueued document until it leaves 'draft', then offer the
- * download. Bounded twice over, exactly like DocumentsPage's
- * FocusedDocumentAlert: `renderQueued === false` means no job was ever
- * enqueued, so it never polls at all and says so; otherwise polling stops
- * after RENDER_POLL_TIMEOUT_MS even if the status is still 'draft'.
+ * "Документ также доступен в разделе Документы" — the same footer both
+ * кадровые sections put under the shared GeneratedDocumentCard.
  */
-function GeneratedDocumentCard({
-  documentId,
-  renderQueued,
-  onDismiss,
-}: {
-  documentId: string;
-  renderQueued: boolean;
-  onDismiss: () => void;
-}) {
-  const toast = useToast();
-  const startedAtRef = useRef(Date.now());
-  const [timedOut, setTimedOut] = useState(false);
-
-  useEffect(() => {
-    if (!renderQueued) return;
-    const timer = setTimeout(() => setTimedOut(true), RENDER_POLL_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [renderQueued]);
-
-  const docQ = useQuery({
-    queryKey: qk.documents.detail(documentId),
-    queryFn: () => api.getJson<DocumentDetailResponse>(`/api/v1/documents/${documentId}`),
-    refetchInterval: (query) => {
-      if (!renderQueued) return false;
-      if (query.state.data?.data.status !== 'draft') return false;
-      if (Date.now() - startedAtRef.current > RENDER_POLL_TIMEOUT_MS) return false;
-      return RENDER_POLL_INTERVAL_MS;
-    },
-  });
-
-  const download = useApiMutation(
-    () => api.postJson<DownloadUrlResponse>(`/api/v1/documents/${documentId}/download-url`),
-    {
-      onSuccess: (data) => window.open(data.url, '_blank', 'noopener,noreferrer'),
-      onError: (message, err) => {
-        const isConflict = err instanceof ApiClientError && err.status === 409;
-        toast.error(isConflict ? 'Файл ещё не готов.' : message);
-      },
-    },
-  );
-
-  const doc: Document | undefined = docQ.data?.data;
-  const rendering = renderQueued && !timedOut && doc?.status === 'draft';
-  const stuck = renderQueued && timedOut && doc?.status === 'draft';
-
+function DocumentsSectionHint({ documentId }: { documentId: string }) {
   return (
-    <div className="space-y-3">
-      {!renderQueued && (
-        <Alert variant="warning">
-          <AlertTitle>Постановка в очередь не удалась</AlertTitle>
-          <AlertDescription>
-            Документ создан, но фоновая генерация не была поставлена в очередь. Попробуйте
-            сформировать документ заново.
-          </AlertDescription>
-        </Alert>
-      )}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Сформированный документ</CardTitle>
-          <Button variant="ghost" size="sm" onClick={onDismiss}>
-            Скрыть
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          {docQ.isLoading && <p className="text-muted-foreground">Загрузка статуса…</p>}
-          {doc && (
-            <>
-              <p>
-                Статус:{' '}
-                <StatusBadge
-                  label={DOC_STATUS_LABELS[doc.status] ?? doc.status}
-                  tone={DOC_STATUS_TONE[doc.status] ?? 'neutral'}
-                />
-              </p>
-              {rendering && (
-                <p className="text-muted-foreground">
-                  Рендер выполняется, статус обновится автоматически…
-                </p>
-              )}
-              {stuck && (
-                <div className="space-y-2">
-                  <p className="text-muted-foreground">
-                    Рендер занимает дольше обычного — проверьте статус позже.
-                  </p>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => docQ.refetch()}
-                    disabled={docQ.isFetching}
-                  >
-                    Обновить
-                  </Button>
-                </div>
-              )}
-              {doc.status !== 'draft' && (
-                <Button size="sm" onClick={() => download.mutate()} disabled={download.isPending}>
-                  Скачать
-                </Button>
-              )}
-              <p className="text-muted-foreground">
-                Документ также доступен в разделе{' '}
-                <Link to={`/documents?focus=${doc.id}&queued=1`} className="underline">
-                  Документы
-                </Link>
-                .
-              </p>
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+    <p className="text-muted-foreground">
+      Документ также доступен в разделе{' '}
+      <Link to={`/documents?focus=${documentId}&queued=1`} className="underline">
+        Документы
+      </Link>
+      .
+    </p>
   );
-}
-
-/** Result of a successful …/generate-document call. */
-interface GeneratedDocument {
-  documentId: string;
-  renderQueued: boolean;
 }
 
 // ── Приказы ─────────────────────────────────────────────────────────────────
@@ -572,7 +440,9 @@ function OrdersSection({
           documentId={generated.documentId}
           renderQueued={generated.renderQueued}
           onDismiss={() => setGenerated(null)}
-        />
+        >
+          <DocumentsSectionHint documentId={generated.documentId} />
+        </GeneratedDocumentCard>
       )}
     </>
   );
@@ -940,7 +810,9 @@ function ContractsSection({
           documentId={generated.documentId}
           renderQueued={generated.renderQueued}
           onDismiss={() => setGenerated(null)}
-        />
+        >
+          <DocumentsSectionHint documentId={generated.documentId} />
+        </GeneratedDocumentCard>
       )}
     </>
   );
