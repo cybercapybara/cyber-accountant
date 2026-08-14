@@ -47,14 +47,27 @@ public:
 
     /**
      * @brief Resolve the highest-version template for @p slug.
-     * @return `std::nullopt` if the slug directory doesn't exist or contains
-     *         no valid `vN` subdirectory.
+     * @details `slug` becomes a raw filesystem path component
+     *          (`root_ / slug / ...`) below, so it is validated FIRST against
+     *          an allowlist before it ever touches `std::filesystem` — a
+     *          slug of `"../../etc"` (or containing `/`, `.`, uppercase,
+     *          etc.) must never be allowed to walk outside the templates
+     *          root. This is the one choke point every slug-taking entry
+     *          point in this class (and `RenderJob::render_and_compile`,
+     *          which resolves templates exclusively through here) goes
+     *          through — do not add another path that builds `root_ / slug`
+     *          without this check.
+     * @return `std::nullopt` if @p slug fails the allowlist, the slug
+     *         directory doesn't exist, or it contains no valid `vN`
+     *         subdirectory.
      * @throws std::runtime_error if the highest-version directory is missing
      *         `template.tex` or `schema.json` (a malformed template ships as
      *         a hard error, not a silent "not found").
      */
     std::optional<TemplateInfo> latest(const std::string& slug) const {
         namespace fs = std::filesystem;
+        if (!is_valid_slug(slug))
+            return std::nullopt;
         const fs::path slug_dir = root_ / slug;
         std::error_code ec;
         if (!fs::is_directory(slug_dir, ec))
@@ -104,6 +117,28 @@ public:
     }
 
 private:
+    /// Allowlist for a template slug: it is used as a raw path component
+    /// (`root_ / slug / ...`), so anything outside `^[a-z][a-z0-9_-]*$` is
+    /// rejected — no `/`, no `..`, no leading digit/hyphen, no uppercase, no
+    /// empty string. This is defense-in-depth path-traversal hardening
+    /// (`Storage::key_is_safe`, `Files::sanitize_filename` are the same
+    /// posture for object-storage keys / filenames elsewhere in this repo):
+    /// a slug ultimately comes from job payloads submitted through the
+    /// generic admin job-submission endpoint, not just from code that
+    /// already trusts it.
+    static bool is_valid_slug(const std::string& slug) {
+        if (slug.empty())
+            return false;
+        if (slug[0] < 'a' || slug[0] > 'z')
+            return false;
+        for (char c : slug) {
+            const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+            if (!ok)
+                return false;
+        }
+        return true;
+    }
+
     /// "v3" -> 3; anything not matching `v` + one-or-more digits -> nullopt
     /// (so a stray README.md or fixtures-only directory next to `vN` ones is
     /// silently skipped rather than crashing the scan).

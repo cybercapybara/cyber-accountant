@@ -58,6 +58,58 @@ TEST_F(TemplateRegistryTest, LatestReturnsNulloptForUnknownSlug) {
     EXPECT_FALSE(registry.latest("no_such_slug").has_value());
 }
 
+// Security: slug becomes a raw filesystem path component (root_ / slug /
+// ...). A traversal/invalid slug must be rejected BEFORE it ever reaches
+// std::filesystem, not merely fail to find a template by accident. Also
+// covers a template that legitimately exists at the traversal target
+// ("invoice") — the allowlist must reject the shape of the slug itself,
+// not just "does this resolve to nothing".
+TEST_F(TemplateRegistryTest, LatestRejectsPathTraversalSlug) {
+    write_version("invoice", "v1");
+    Docgen::TemplateRegistry registry(root_);
+
+    EXPECT_FALSE(registry.latest("../evil").has_value());
+    EXPECT_FALSE(registry.latest("../../etc/passwd").has_value());
+    EXPECT_FALSE(registry.latest("..").has_value());
+    // Would resolve to root_/invoice/v1 via a nested path component.
+    EXPECT_FALSE(registry.latest("invoice/v1").has_value());
+}
+
+TEST_F(TemplateRegistryTest, LatestRejectsSlugWithSlash) {
+    Docgen::TemplateRegistry registry(root_);
+    EXPECT_FALSE(registry.latest("a/b").has_value());
+}
+
+TEST_F(TemplateRegistryTest, LatestRejectsUppercaseSlug) {
+    write_version("invoice", "v1");
+    Docgen::TemplateRegistry registry(root_);
+    // Uppercase isn't a traversal risk on a case-sensitive filesystem, but
+    // it's outside the allowlist (^[a-z][a-z0-9_-]*$) by design — one
+    // canonical slug shape, no case-variant duplicates.
+    EXPECT_FALSE(registry.latest("A").has_value());
+    EXPECT_FALSE(registry.latest("Invoice").has_value());
+}
+
+TEST_F(TemplateRegistryTest, LatestRejectsEmptySlug) {
+    Docgen::TemplateRegistry registry(root_);
+    EXPECT_FALSE(registry.latest("").has_value());
+}
+
+TEST_F(TemplateRegistryTest, LatestAcceptsUnderscoreAndHyphen) {
+    write_version("tax_invoice-v2", "v1");
+    Docgen::TemplateRegistry registry(root_);
+    EXPECT_TRUE(registry.latest("tax_invoice-v2").has_value());
+}
+
+// validate(slug, input) resolves the template through latest() internally —
+// a traversal slug must fail the same way (a validation error, not a crash
+// or a filesystem escape), not bypass the allowlist via a second entry point.
+TEST_F(TemplateRegistryTest, ValidateRejectsPathTraversalSlug) {
+    Docgen::TemplateRegistry registry(root_);
+    auto err = registry.validate("../evil", json::object());
+    ASSERT_TRUE(err.has_value());
+}
+
 TEST_F(TemplateRegistryTest, LatestFindsSingleVersion) {
     write_version("invoice", "v1");
     Docgen::TemplateRegistry registry(root_);

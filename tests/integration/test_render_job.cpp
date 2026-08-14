@@ -231,4 +231,29 @@ TEST_F(RenderJobTest, RenderJobLatexFailureFails) {
     EXPECT_FALSE(stored->s3_key.has_value());
 }
 
+// Security: `slug` reaches Docgen::render_and_compile straight from the job
+// payload — via the generic admin job-submission endpoint, that payload is
+// attacker-reachable (admin-gated, but still a live path-traversal
+// primitive if unchecked). TemplateRegistry::latest()'s allowlist must
+// reject it before any filesystem access, and the job must throw (document
+// stays draft) exactly like any other "no such template" failure — not
+// silently succeed, and not read/write outside templates/latex.
+TEST_F(RenderJobTest, RenderJobRejectsTraversalSlug) {
+    use_succeeding_latex_stub();  // never reached — slug is rejected first
+    auto org_id = make_org("111280000004");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id, "invoice", "generated", "draft");
+
+    json payload = {{"org_id", org_id},
+                    {"document_id", doc.id},
+                    {"slug", "../../../../etc/passwd"},
+                    {"input", valid_invoice_input()}};
+    EXPECT_THROW(Docgen::process_job(payload), std::runtime_error);
+
+    auto stored = documents.find_in_org(doc.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_EQ(stored->status, "draft");
+    EXPECT_FALSE(stored->s3_key.has_value());
+}
+
 }  // namespace
