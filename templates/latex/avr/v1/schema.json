@@ -20,7 +20,7 @@
     "vat_rate": {"type": "string"}, "vat_amount": {"type": "string"},
     "total_words": {"type": "string"}
   },
-  "dependentRequired": {
+  "dependencies": {
     "vat_rate": ["vat_amount"],
     "vat_amount": ["vat_rate"]
   },
