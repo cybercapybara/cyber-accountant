@@ -16,6 +16,7 @@ import { useErrorToast } from '@/hooks/useErrorToast';
 import { api } from '@/lib/api/client';
 import { qk } from '@/lib/api/queryKeys';
 import type { DlqListResponse, Job } from '@/lib/api/types';
+import { formatEpochSecondsRu } from '@/lib/dateFormat';
 
 const PER_PAGE = 20;
 
@@ -72,9 +73,7 @@ const JOB_STATUS: Record<Job['status'], { label: string; tone: BadgeTone }> = {
   dead: { label: 'DLQ', tone: 'danger' },
 };
 
-function formatEpoch(sec: number | undefined): string {
-  return sec ? new Date(sec * 1000).toLocaleString() : '—';
-}
+const formatEpoch = formatEpochSecondsRu;
 
 export function AdminJobsPage() {
   const [tab, setTab] = useState<'jobs' | 'dlq'>('jobs');
@@ -210,7 +209,7 @@ function JobDetailCard({ job, onClose }: { job: Job; onClose: () => void }) {
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
         <JobTimeline job={job} />
-        <DetailJson label="Payload" value={job.payload} />
+        <DetailJson label="Данные" value={job.payload} />
         {job.result != null && <DetailJson label="Результат" value={job.result} />}
         {job.error && (
           <div>

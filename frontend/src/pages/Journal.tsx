@@ -134,7 +134,7 @@ export function JournalPage() {
       invalidate: [qk.journal.entries()],
       onSuccess: () => {
         setCreating(false);
-        toast.success('Draft journal entry created.');
+        toast.success('Черновик проводки создан.');
       },
     },
   );
@@ -146,7 +146,7 @@ export function JournalPage() {
       invalidate: [qk.journal.entries()],
       onSuccess: (_data, id) => {
         qc.invalidateQueries({ queryKey: qk.journal.entry(id) });
-        toast.success('Journal entry posted.');
+        toast.success('Проводка проведена.');
         setConfirmAction(null);
       },
     },
@@ -160,7 +160,7 @@ export function JournalPage() {
       invalidate: [qk.journal.entries()],
       onSuccess: (_data, id) => {
         qc.invalidateQueries({ queryKey: qk.journal.entry(id) });
-        toast.success('Journal entry reversed.');
+        toast.success('Проводка сторнирована.');
         setConfirmAction(null);
       },
     },

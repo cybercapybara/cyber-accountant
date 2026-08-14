@@ -24,6 +24,7 @@ import type {
   DocumentUploadResponse,
   DownloadUrlResponse,
 } from '@/lib/api/types';
+import { formatIsoDateTimeRu } from '@/lib/dateFormat';
 
 const PER_PAGE = 20;
 
@@ -82,7 +83,7 @@ const STATUS_LABELS: Record<string, string> = {
 const SOURCE_LABELS: Record<string, string> = {
   generated: 'Сгенерирован',
   uploaded: 'Загружен',
-  email: 'Email',
+  email: 'Почта',
 };
 
 // FocusedDocumentAlert's polling cadence and hard cap. Fix round 1
@@ -107,10 +108,7 @@ const STATUS_TONE: Record<string, BadgeTone> = {
   archived: 'neutral',
 };
 
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-}
+const formatDate = formatIsoDateTimeRu;
 
 async function sha256Hex(file: File): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());

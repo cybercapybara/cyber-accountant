@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
 import { FormField } from '@/components/FormField';
+import { Money } from '@/components/Money';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -533,8 +534,8 @@ function InvoiceForm({
                 />
                 <div className="space-y-1">
                   <Label>Сумма</Label>
-                  <p className="flex h-10 items-center font-mono text-sm">
-                    {formatTiynRu(lineAmountTiyn(watchedItems?.[index] ?? EMPTY_LINE_ITEM))}
+                  <p className="flex h-10 items-center text-sm">
+                    <Money tiyn={lineAmountTiyn(watchedItems?.[index] ?? EMPTY_LINE_ITEM)} />
                   </p>
                 </div>
                 <Button
@@ -566,13 +567,13 @@ function InvoiceForm({
             />
             <div className="space-y-1 rounded-md border border-border p-3 text-sm">
               <p>
-                Сумма позиций: <span className="font-mono">{formatTiynRu(subtotalTiyn)}</span>
+                Сумма позиций: <Money tiyn={subtotalTiyn} />
               </p>
               <p>
-                НДС: <span className="font-mono">{formatTiynRu(vatTiyn)}</span>
+                НДС: <Money tiyn={vatTiyn} />
               </p>
               <p>
-                Итого: <span className="font-mono">{formatTiynRu(subtotalTiyn + vatTiyn)}</span>
+                Итого: <Money tiyn={subtotalTiyn + vatTiyn} />
               </p>
             </div>
           </div>
@@ -763,8 +764,8 @@ function AvrForm({
                 />
                 <div className="space-y-1">
                   <Label>Сумма</Label>
-                  <p className="flex h-10 items-center font-mono text-sm">
-                    {formatTiynRu(lineAmountTiyn(watchedItems?.[index] ?? EMPTY_LINE_ITEM))}
+                  <p className="flex h-10 items-center text-sm">
+                    <Money tiyn={lineAmountTiyn(watchedItems?.[index] ?? EMPTY_LINE_ITEM)} />
                   </p>
                 </div>
                 <Button
@@ -796,13 +797,13 @@ function AvrForm({
             />
             <div className="space-y-1 rounded-md border border-border p-3 text-sm">
               <p>
-                Сумма позиций: <span className="font-mono">{formatTiynRu(subtotalTiyn)}</span>
+                Сумма позиций: <Money tiyn={subtotalTiyn} />
               </p>
               <p>
-                НДС: <span className="font-mono">{formatTiynRu(vatTiyn)}</span>
+                НДС: <Money tiyn={vatTiyn} />
               </p>
               <p>
-                Итого: <span className="font-mono">{formatTiynRu(subtotalTiyn + vatTiyn)}</span>
+                Итого: <Money tiyn={subtotalTiyn + vatTiyn} />
               </p>
             </div>
           </div>
@@ -993,8 +994,8 @@ function WaybillForm({
                 />
                 <div className="space-y-1">
                   <Label>Сумма</Label>
-                  <p className="flex h-10 items-center font-mono text-sm">
-                    {formatTiynRu(lineAmountTiyn(watchedItems?.[index] ?? EMPTY_LINE_ITEM))}
+                  <p className="flex h-10 items-center text-sm">
+                    <Money tiyn={lineAmountTiyn(watchedItems?.[index] ?? EMPTY_LINE_ITEM)} />
                   </p>
                 </div>
                 <Button
@@ -1017,7 +1018,7 @@ function WaybillForm({
           </div>
 
           <p className="text-sm">
-            Итого: <span className="font-mono">{formatTiynRu(totalTiyn)}</span>
+            Итого: <Money tiyn={totalTiyn} />
           </p>
 
           <FormField
@@ -1258,14 +1259,14 @@ function TaxInvoiceForm({
                   />
                   <div className="space-y-1">
                     <Label>Сумма</Label>
-                    <p className="flex h-10 items-center font-mono text-sm">
-                      {formatTiynRu(amounts.amountTiyn)}
+                    <p className="flex h-10 items-center text-sm">
+                      <Money tiyn={amounts.amountTiyn} />
                     </p>
                   </div>
                   <div className="space-y-1">
                     <Label>Итого с НДС</Label>
-                    <p className="flex h-10 items-center font-mono text-sm">
-                      {formatTiynRu(amounts.totalWithVatTiyn)}
+                    <p className="flex h-10 items-center text-sm">
+                      <Money tiyn={amounts.totalWithVatTiyn} />
                     </p>
                   </div>
                   <Button
@@ -1290,13 +1291,13 @@ function TaxInvoiceForm({
 
           <div className="space-y-1 rounded-md border border-border p-3 text-sm">
             <p>
-              Сумма без НДС: <span className="font-mono">{formatTiynRu(totals.amount)}</span>
+              Сумма без НДС: <Money tiyn={totals.amount} />
             </p>
             <p>
-              НДС: <span className="font-mono">{formatTiynRu(totals.vat)}</span>
+              НДС: <Money tiyn={totals.vat} />
             </p>
             <p>
-              Всего с НДС: <span className="font-mono">{formatTiynRu(totals.withVat)}</span>
+              Всего с НДС: <Money tiyn={totals.withVat} />
             </p>
           </div>
 

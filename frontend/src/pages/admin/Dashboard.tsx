@@ -49,7 +49,7 @@ export function AdminDashboardPage() {
               <ListChecks className="h-6 w-6 mb-2 text-muted-foreground" />
               <CardTitle>Задачи</CardTitle>
               <CardDescription>
-                Статусы очереди, payload-ы, повторная постановка из DLQ.
+                Статусы очереди, данные задач, очередь недоставленных (DLQ).
               </CardDescription>
             </CardHeader>
           </Card>

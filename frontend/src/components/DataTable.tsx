@@ -81,12 +81,35 @@ export function DataTable<Row>({
       <tbody>
         {rows.map((row) => {
           const extra = rowProps?.(row);
-          const { className: extraClass, ...restProps } = extra ?? {};
+          const { className: extraClass, onClick, onKeyDown, ...restProps } = extra ?? {};
+          // A row with an onClick (row-select tables in admin/Jobs, admin/Audit)
+          // must also be reachable and activatable from the keyboard — a bare
+          // onClick on a <tr> is a mouse-only affordance otherwise. tabIndex=0 +
+          // role="button" put it in the tab order and announce it correctly;
+          // Enter/Space both trigger it, matching native button semantics.
+          const keyboardProps = onClick
+            ? {
+                tabIndex: 0,
+                role: 'button' as const,
+                onClick,
+                onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+                  onKeyDown?.(e);
+                  if (e.defaultPrevented) return;
+                  if (e.key !== 'Enter' && e.key !== ' ') return;
+                  e.preventDefault();
+                  e.currentTarget.click();
+                },
+              }
+            : { onClick, onKeyDown };
+          const clickableClass = onClick
+            ? 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset'
+            : '';
           return (
             <tr
               key={rowKey(row)}
-              className={`border-b border-border transition-colors last:border-0 hover:bg-muted/50 ${extraClass ?? ''}`}
+              className={`border-b border-border transition-colors last:border-0 hover:bg-muted/50 ${clickableClass} ${extraClass ?? ''}`}
               {...restProps}
+              {...keyboardProps}
             >
               {columns.map((c, i) => (
                 <td key={i} className={`py-1.5 pr-4 ${c.className ?? ''}`}>

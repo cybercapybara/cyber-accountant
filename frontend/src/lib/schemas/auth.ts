@@ -19,8 +19,8 @@ export const registerSchema = z
       .min(8, 'Пароль должен быть не короче 8 символов')
       .max(128, 'Пароль слишком длинный'),
     password_confirm: z.string(),
-    first_name: z.string().max(64).optional(),
-    last_name: z.string().max(64).optional(),
+    first_name: z.string().max(64, 'Не более 64 символов').optional(),
+    last_name: z.string().max(64, 'Не более 64 символов').optional(),
   })
   .refine((d) => d.password === d.password_confirm, {
     path: ['password_confirm'],

@@ -13,6 +13,7 @@ import { usePagedQuery } from '@/hooks/usePagedQuery';
 import { api } from '@/lib/api/client';
 import { qk } from '@/lib/api/queryKeys';
 import type { AuditEntry } from '@/lib/api/types';
+import { formatIsoDateTimeRu } from '@/lib/dateFormat';
 
 const PER_PAGE = 50;
 
@@ -26,10 +27,7 @@ interface Filters {
 
 const EMPTY_FILTERS: Filters = { action: '', target_type: '', actor_id: '', from: '', to: '' };
 
-function formatTimestamp(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
-}
+const formatTimestamp = formatIsoDateTimeRu;
 
 /**
  * A <input type="datetime-local"> emits `YYYY-MM-DDTHH:mm` (no zone). The

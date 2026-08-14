@@ -4,7 +4,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { ErrorState } from '@/components/ErrorState';
 import { FormField } from '@/components/FormField';
+import { LoadingTable } from '@/components/LoadingTable';
+import { PageHeader } from '@/components/PageHeader';
 import { RoleSelect } from '@/components/RoleSelect';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,7 +16,7 @@ import { useToast } from '@/components/ui/toaster';
 import { useApiMutation } from '@/hooks/useApiMutation';
 import { useErrorToast } from '@/hooks/useErrorToast';
 import { useMe } from '@/hooks/useMe';
-import { api } from '@/lib/api/client';
+import { api, apiErrorMessage } from '@/lib/api/client';
 import { qk } from '@/lib/api/queryKeys';
 import type { UserDetailResponse } from '@/lib/api/types';
 
@@ -48,21 +51,38 @@ export function AdminUserDetailPage() {
 
   useErrorToast(update.error ?? remove.error);
 
-  if (userQ.isLoading) return <p className="container py-8">Загрузка…</p>;
-  if (userQ.error || !userQ.data)
-    return <p className="container py-8 text-destructive">Пользователь не найден.</p>;
+  if (userQ.isLoading) {
+    return (
+      <div className="container mx-auto max-w-2xl py-8">
+        <LoadingTable columns={2} rows={4} />
+      </div>
+    );
+  }
+  if (userQ.error || !userQ.data) {
+    return (
+      <div className="container mx-auto max-w-2xl py-8">
+        <ErrorState
+          message={apiErrorMessage(userQ.error, 'Пользователь не найден.')}
+          onRetry={() => userQ.refetch()}
+          retrying={userQ.isFetching}
+        />
+      </div>
+    );
+  }
 
   const user = userQ.data.data;
   const isSelf = me?.id === user.id;
 
   return (
     <div className="container mx-auto max-w-2xl py-8 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">{user.email}</h1>
-        <Button variant="ghost" asChild>
-          <Link to="/admin/users">← Назад</Link>
-        </Button>
-      </div>
+      <PageHeader
+        title={user.email}
+        actions={
+          <Button variant="ghost" asChild>
+            <Link to="/admin/users">← Назад</Link>
+          </Button>
+        }
+      />
       <Card>
         <CardHeader>
           <CardTitle>Данные</CardTitle>
