@@ -20,6 +20,21 @@
  *        changing status together with e.g. description does not
  *        (PostedCanOnlyTransitionToReversed).
  *
+ *        Fix round 1 (review + security scan on a live Postgres 16) added:
+ *        deleting a still-draft entry with lines must succeed, both via a
+ *        direct DELETE and via the organizations -> entries -> lines cascade
+ *        (DeleteDraftWithLinesSucceeds) — trg_journal_lines_frozen's parent
+ *        lookup returns NULL once the cascade has already removed the
+ *        parent row, which must NOT read as "entry is posted/reversed";
+ *        a line cannot be walked from one entry_id (or org_id) to another
+ *        via UPDATE, regardless of either entry's status
+ *        (LinesCannotMoveBetweenEntries); draft cannot jump straight to
+ *        reversed without ever being posted (DraftCannotJumpToReversed); a
+ *        draft with zero lines cannot be posted (CannotPostEmptyEntry); and
+ *        a line's org_id must match its entry's real org_id at the
+ *        constraint level, not just in application code
+ *        (CrossOrgLineRejectedByCompositeFk).
+ *
  *        Fixture idiom follows tests/integration/test_accounts.cpp: DELETE
  *        FROM organizations (not TRUNCATE ... CASCADE) in SetUp. journal_*
  *        rows are all org_id NOT NULL, so a plain per-row ON DELETE CASCADE
@@ -121,7 +136,10 @@ TEST_F(JournalSchemaTest, BalancedEntryCommits) {
     }));
 
     auto count = Database::get().execute_read([&](auto& txn) {
-        return txn.exec_params("SELECT COUNT(*) FROM journal_lines WHERE org_id = $1", org_id).at(0).at(0).as<int>();
+        return txn.exec_params("SELECT COUNT(*) FROM journal_lines WHERE org_id = $1", org_id)
+            .at(0)
+            .at(0)
+            .template as<int>();
     });
     EXPECT_EQ(count, 2);
 }
@@ -189,7 +207,7 @@ TEST_F(JournalSchemaTest, DraftFreelyEditable) {
         return txn.exec_params("SELECT description FROM journal_entries WHERE id = $1", entry_id)
             .at(0)
             .at(0)
-            .as<std::string>();
+            .template as<std::string>();
     });
     EXPECT_EQ(description, "Edited description");
 }
@@ -209,7 +227,7 @@ TEST_F(JournalSchemaTest, PostedCanOnlyTransitionToReversed) {
         return txn.exec_params("SELECT status FROM journal_entries WHERE id = $1", entry_a)
             .at(0)
             .at(0)
-            .as<std::string>();
+            .template as<std::string>();
     });
     EXPECT_EQ(status_a, "reversed");
 
@@ -237,6 +255,140 @@ TEST_F(JournalSchemaTest, PostedCanOnlyTransitionToReversed) {
         insert_line(txn, org_id, storno_id, "6010", "debit", "100.00");
         return 0;
     }));
+}
+
+TEST_F(JournalSchemaTest, DeleteDraftWithLinesSucceeds) {
+    auto org_id = make_org("111260000036");
+
+    // Case 1: a direct DELETE of a still-draft entry cascades its own two
+    // lines away via journal_lines' FK ON DELETE CASCADE. Before the
+    // CRITICAL-2 fix, trg_journal_lines_frozen's parent lookup found no row
+    // (the parent was already gone earlier in the same cascade) and
+    // misread that as "entry is posted/reversed", blocking the very
+    // deletion the FK was trying to perform.
+    std::string entry_id;
+    Database::get().execute_write([&](auto& txn) {
+        entry_id = insert_draft_entry(txn, org_id, "Direct delete of a draft with lines");
+        insert_line(txn, org_id, entry_id, "1030", "debit", "100.00");
+        insert_line(txn, org_id, entry_id, "6010", "credit", "100.00");
+        return 0;
+    });
+    EXPECT_NO_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec_params("DELETE FROM journal_entries WHERE id = $1", entry_id);
+        return 0;
+    }));
+    auto remaining_after_direct_delete = Database::get().execute_read([&](auto& txn) {
+        return txn.exec_params("SELECT COUNT(*) FROM journal_lines WHERE entry_id = $1", entry_id)
+            .at(0)
+            .at(0)
+            .template as<int>();
+    });
+    EXPECT_EQ(remaining_after_direct_delete, 0);
+
+    // Case 2: the same cascade triggered two levels up, exactly like this
+    // suite's own SetUp() does between tests: organizations -> (FK)
+    // journal_entries -> (FK) journal_lines.
+    std::string entry_id_2;
+    Database::get().execute_write([&](auto& txn) {
+        entry_id_2 = insert_draft_entry(txn, org_id, "Deleted via organizations cascade");
+        insert_line(txn, org_id, entry_id_2, "1030", "debit", "50.00");
+        insert_line(txn, org_id, entry_id_2, "6010", "credit", "50.00");
+        return 0;
+    });
+    EXPECT_NO_THROW(Database::get().execute_write([](auto& txn) {
+        txn.exec("DELETE FROM organizations");
+        return 0;
+    }));
+}
+
+TEST_F(JournalSchemaTest, LinesCannotMoveBetweenEntries) {
+    auto org_id = make_org("111260000037");
+
+    std::string entry_a;
+    std::string entry_b;
+    std::string line_id;
+    Database::get().execute_write([&](auto& txn) {
+        entry_a = insert_draft_entry(txn, org_id, "Entry A");
+        line_id = insert_line(txn, org_id, entry_a, "1030", "debit", "100.00");
+        insert_line(txn, org_id, entry_a, "6010", "credit", "100.00");
+        entry_b = insert_draft_entry(txn, org_id, "Entry B");
+        insert_line(txn, org_id, entry_b, "1030", "debit", "50.00");
+        insert_line(txn, org_id, entry_b, "6010", "credit", "50.00");
+        return 0;
+    });
+
+    // Both entries are draft, so this LOOKS harmless at first glance — but
+    // journal_lines_frozen_after_post() only ever inspects the status of
+    // the TARGET (NEW) entry, never the source (OLD) one. Without an
+    // explicit entry_id/org_id-change guard, a line could be walked out of
+    // a POSTED entry into a draft one completely undetected, silently
+    // corrupting the posted entry's already-verified balance. The move is
+    // therefore rejected unconditionally, regardless of either side's
+    // status.
+    EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec_params("UPDATE journal_lines SET entry_id = $2 WHERE id = $1", line_id, entry_b);
+        return 0;
+    }),
+                 std::exception);
+}
+
+TEST_F(JournalSchemaTest, DraftCannotJumpToReversed) {
+    auto org_id = make_org("111260000038");
+
+    std::string entry_id;
+    Database::get().execute_write([&](auto& txn) {
+        entry_id = insert_draft_entry(txn, org_id, "Never posted");
+        insert_line(txn, org_id, entry_id, "1030", "debit", "100.00");
+        insert_line(txn, org_id, entry_id, "6010", "credit", "100.00");
+        return 0;
+    });
+
+    // posted -> reversed is the one legal transition; draft -> reversed
+    // skips posting entirely and must be rejected — storno reverses a
+    // POSTED entry, there is nothing to storno on a draft.
+    EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec_params("UPDATE journal_entries SET status = 'reversed' WHERE id = $1", entry_id);
+        return 0;
+    }),
+                 std::exception);
+}
+
+TEST_F(JournalSchemaTest, CannotPostEmptyEntry) {
+    auto org_id = make_org("111260000039");
+
+    std::string entry_id;
+    Database::get().execute_write([&](auto& txn) {
+        entry_id = insert_draft_entry(txn, org_id, "No lines at all");
+        return 0;
+    });
+
+    EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec_params("UPDATE journal_entries SET status = 'posted' WHERE id = $1", entry_id);
+        return 0;
+    }),
+                 std::exception);
+}
+
+TEST_F(JournalSchemaTest, CrossOrgLineRejectedByCompositeFk) {
+    auto org_a = make_org("111260000040");
+    auto org_b = make_org("111260000041");
+
+    std::string entry_id;
+    Database::get().execute_write([&](auto& txn) {
+        entry_id = insert_draft_entry(txn, org_a, "Belongs to org_a");
+        return 0;
+    });
+
+    // A line claiming org_b while pointing at an org_a entry has no
+    // matching (entry_id, org_id) pair in journal_entries to satisfy the
+    // composite FK — rejected at the constraint level (foreign_key_violation),
+    // not by application-level org-scoping logic that a repository could
+    // forget to check.
+    EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
+        insert_line(txn, org_b, entry_id, "1030", "debit", "100.00");
+        return 0;
+    }),
+                 std::exception);
 }
 
 }  // namespace

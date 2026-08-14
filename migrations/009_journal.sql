@@ -24,10 +24,18 @@ CREATE TABLE IF NOT EXISTS journal_entries (
     description        TEXT NOT NULL DEFAULT '',
     status             TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','posted','reversed')),
     reverses_entry_id  UUID REFERENCES journal_entries(id),
-    created_by_user_id UUID REFERENCES users(id),
+    -- ON DELETE SET NULL (not the table default of RESTRICT/CASCADE): a
+    -- deleted user must not block, nor drag down, an otherwise-immutable
+    -- posted/reversed journal entry — the audit trail row itself outlives
+    -- the user who created it.
+    created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     created_by_run_id  UUID,             -- agent_runs появятся в P4; без FK до тех пор
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Composite target for journal_lines' tenant-safe FK below: lets that FK
+    -- pin BOTH entry_id and org_id at once, so a line's org_id is provably
+    -- the same tenant as its parent entry's org_id (not just any org).
+    UNIQUE (id, org_id)
 );
 DROP TRIGGER IF EXISTS trg_journal_entries_touch ON journal_entries;
 CREATE TRIGGER trg_journal_entries_touch BEFORE UPDATE ON journal_entries
@@ -37,13 +45,20 @@ CREATE INDEX IF NOT EXISTS idx_journal_entries_org_date ON journal_entries (org_
 CREATE TABLE IF NOT EXISTS journal_lines (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id          UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    entry_id        UUID NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+    entry_id        UUID NOT NULL,
     account_code    TEXT NOT NULL,
     side            TEXT NOT NULL CHECK (side IN ('debit','credit')),
     amount          NUMERIC(18,2) NOT NULL CHECK (amount > 0),
     counterparty_id UUID REFERENCES counterparties(id),
     vat_amount      NUMERIC(18,2) CHECK (vat_amount IS NULL OR vat_amount >= 0),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- Composite FK against journal_entries(id, org_id) instead of a plain
+    -- entry_id -> journal_entries(id) FK: a plain FK only guarantees the
+    -- entry EXISTS, not that it belongs to the SAME org as this line — a
+    -- cross-tenant line (line.org_id != entry's real org_id) would satisfy
+    -- a plain FK just fine. Pinning both columns closes that hole at the
+    -- constraint level, not just in application code.
+    FOREIGN KEY (entry_id, org_id) REFERENCES journal_entries (id, org_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_journal_lines_entry ON journal_lines (entry_id);
 CREATE INDEX IF NOT EXISTS idx_journal_lines_org_account ON journal_lines (org_id, account_code);
@@ -75,7 +90,10 @@ CREATE CONSTRAINT TRIGGER trg_journal_balance
 
 -- (b) Немутируемость шапки: posted можно перевести ТОЛЬКО в reversed, и
 -- только этим одним полем (сторно, не правка задним числом); reversed и
--- DELETE posted/reversed запрещены целиком.
+-- DELETE posted/reversed запрещены целиком. Плюс два укрепления против
+-- обхода состояний (найдены секьюрити-сканом): draft нельзя сторнировать
+-- напрямую (не проведена — нечего сторнировать, storno это операция над
+-- posted), и нельзя провести (draft -> posted) пустую проводку без строк.
 CREATE OR REPLACE FUNCTION journal_entries_immutability() RETURNS trigger AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN
@@ -97,6 +115,13 @@ BEGIN
     ELSIF OLD.status = 'reversed' THEN
         RAISE EXCEPTION 'reversed journal entries are immutable'
             USING ERRCODE = 'check_violation';
+    ELSIF OLD.status = 'draft' AND NEW.status = 'reversed' THEN
+        RAISE EXCEPTION 'draft cannot be reversed (post it first)'
+            USING ERRCODE = 'check_violation';
+    ELSIF OLD.status = 'draft' AND NEW.status = 'posted'
+          AND NOT EXISTS (SELECT 1 FROM journal_lines WHERE entry_id = NEW.id) THEN
+        RAISE EXCEPTION 'cannot post an entry with no lines'
+            USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;  -- draft свободно правится (updated_at меняет touch-триггер)
 END $$ LANGUAGE plpgsql;
@@ -112,11 +137,31 @@ CREATE OR REPLACE FUNCTION journal_lines_frozen_after_post() RETURNS trigger AS 
 DECLARE st TEXT;
 BEGIN
     SELECT status INTO st FROM journal_entries WHERE id = COALESCE(NEW.entry_id, OLD.entry_id);
+    IF st IS NULL THEN
+        -- Родительская проводка уже удалена в ЭТОЙ ЖЕ транзакции (её
+        -- собственный DELETE каскадится сюда через FK: строка ON DELETE
+        -- CASCADE у journal_lines) — SELECT выше не находит родителя и
+        -- возвращает NULL, а не "проводка не draft". Без этой ветки DELETE
+        -- draft-проводки со строками (прямой DELETE FROM journal_entries
+        -- или каскад через DELETE FROM organizations) падал бы здесь:
+        -- «удаление строк уже удалённой draft-проводки» — легальная
+        -- операция, а не попытка изменить чужие строки задним числом.
+        RETURN COALESCE(NEW, OLD);
+    END IF;
     IF st IS DISTINCT FROM 'draft' AND TG_OP <> 'INSERT' THEN
         RAISE EXCEPTION 'lines of a % entry are immutable', st USING ERRCODE = 'check_violation';
     END IF;
     IF st IS DISTINCT FROM 'draft' AND TG_OP = 'INSERT' THEN
         RAISE EXCEPTION 'cannot add lines to a % entry', st USING ERRCODE = 'check_violation';
+    END IF;
+    -- Строка не может "переехать" в другую проводку или другой org одним
+    -- UPDATE: st выше отражает статус ЦЕЛЕВОЙ (NEW) проводки, а не
+    -- исходной — перенос строки ИЗ posted-проводки В draft-проводку прошёл
+    -- бы предыдущие две проверки не заметив, что исходная проводка
+    -- потеряла строку, участвовавшую в её проверенном балансе.
+    IF TG_OP = 'UPDATE' AND (NEW.entry_id <> OLD.entry_id OR NEW.org_id <> OLD.org_id) THEN
+        RAISE EXCEPTION 'journal lines cannot move between entries or orgs'
+            USING ERRCODE = 'check_violation';
     END IF;
     RETURN COALESCE(NEW, OLD);
 END $$ LANGUAGE plpgsql;
