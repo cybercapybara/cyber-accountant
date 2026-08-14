@@ -200,7 +200,7 @@ TEST_F(CounterpartiesApiTest, ListCounterpartiesPaginated) {
     auto org = seed_org("222240000005", "List Org LLP");
     auto accountant = member("accountant4@example.com", org.id, "accountant");
 
-    for (const std::string& identifier : {"111240000031", "111240000041"}) {
+    for (const std::string& identifier : {std::string{"111240000031"}, std::string{"111240000041"}}) {
         auto req = authed_json(accountant, {{"identifier", identifier}, {"name", "Vendor " + identifier}});
         HttpResponsePtr resp;
         ctrl.create(req, [&](const HttpResponsePtr& r) { resp = r; });
