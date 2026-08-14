@@ -233,7 +233,23 @@ cyber-accountant:
   # from the `smtp-credentials` Secret above, never committed.
   mail:
     enabled: true
-    viaJobs: true            # jobs.enabled is false in this profile, so this safely falls back to inline send (see docs/CONFIG.md MAIL_VIA_JOBS) until jobs are turned on
+    # false — NOT a "safe until jobs are on" default (an earlier version of
+    # this comment claimed jobs.enabled=false makes viaJobs=true harmless;
+    # that was wrong). The Job queue module initializes and enqueues into
+    # Redis regardless of the jobs.enabled REST-API-exposure flag. Verified
+    # live: with viaJobs=true, a reset-password-request enqueued a real
+    # "account_email" job into the SHARED Redis (namespace db) — and it was
+    # immediately dequeued and silently dropped by `www`'s OWN worker
+    # (`kubectl -n www logs deploy/worker-cpp-worker`: "AccountEmails: job
+    # for reset_password skipped — user ... no longer exists"), because
+    # job-queue keys aren't namespaced per app (see the externalRedis
+    # comment above) and both workers poll the identical Redis list key.
+    # The email was never sent. viaJobs=false makes both api and worker
+    # send inline (in-process, real blocking SMTP call), bypassing the
+    # shared queue entirely — safe under the current Redis-sharing
+    # constraint. Revisit once src/cache/Cache.hpp gets per-app key
+    # namespacing (tracked in the externalRedis comment above).
+    viaJobs: false
     smtpHost: smtp-relay.brevo.com
     smtpPort: 587
     smtpUsername: michael@tarassov.me
@@ -277,11 +293,14 @@ cyber-accountant-worker:
     sentinelNodes: "redis-node-0.redis-headless.db.svc.cluster.local:26379,redis-node-1.redis-headless.db.svc.cluster.local:26379,redis-node-2.redis-headless.db.svc.cluster.local:26379"
     poolSize: 5
   # Same shared Brevo SMTP relay as the `cyber-accountant` block above —
-  # see those comments for the full rationale. smtpPassword supplied via
+  # see those comments for the full rationale, including why viaJobs is
+  # false (confirmed live: the shared Redis job queue isn't namespaced per
+  # app, so `www`'s worker dequeues and drops this app's account_email
+  # jobs). smtpPassword supplied via
   # `--set cyber-accountant-worker.mail.smtpPassword=...` at upgrade time.
   mail:
     enabled: true
-    viaJobs: true
+    viaJobs: false
     smtpHost: smtp-relay.brevo.com
     smtpPort: 587
     smtpUsername: michael@tarassov.me
