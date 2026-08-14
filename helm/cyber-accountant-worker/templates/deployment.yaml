@@ -209,6 +209,32 @@ spec:
             - name: MAIL_SUBJECT_PREFIX
               value: {{ .Values.mail.subjectPrefix | quote }}
             {{- end }}
+            # Object storage — MUST match the cyber-accountant (api) release's
+            # backend/bucket (see the storage: comment in values.yaml). The
+            # docgen render job writes generated PDFs here.
+            - name: STORAGE_BACKEND
+              value: {{ .Values.storage.backend | quote }}
+            {{- if .Values.storage.publicBaseUrl }}
+            - name: STORAGE_PUBLIC_BASE_URL
+              value: {{ .Values.storage.publicBaseUrl | quote }}
+            {{- end }}
+            {{- if eq .Values.storage.backend "s3" }}
+            - name: S3_ENDPOINT
+              value: {{ .Values.storage.s3.endpoint | quote }}
+            - name: S3_REGION
+              value: {{ .Values.storage.s3.region | quote }}
+            - name: S3_BUCKET
+              value: {{ .Values.storage.s3.bucket | quote }}
+            - name: S3_ACCESS_KEY
+              value: {{ .Values.storage.s3.accessKey | quote }}
+            {{- if .Values.storage.s3.secretKey }}
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cyber-accountant-worker.fullname" . }}
+                  key: s3-secret-key
+            {{- end }}
+            {{- end }}
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false

@@ -130,7 +130,7 @@ redis:
 cyber-accountant:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant
-    tag: "0.1.0"  # NOT "v0.1.0" — release.yml strips the `v` prefix when publishing; actual GHCR tags are 0.1.0 / latest / 0.1.0-staging (verified via /v2/.../tags/list)
+    tag: "0.2.0"  # P1 release (T16) — NOT "v0.2.0" (release.yml strips the `v` prefix); confirmed present via /v2/.../tags/list before use
   imagePullSecrets:
     - name: ghcr-pull
   externalKafka:
@@ -243,23 +243,16 @@ cyber-accountant:
   # from the `smtp-credentials` Secret above, never committed.
   mail:
     enabled: true
-    # false — NOT a "safe until jobs are on" default (an earlier version of
-    # this comment claimed jobs.enabled=false makes viaJobs=true harmless;
-    # that was wrong). The Job queue module initializes and enqueues into
-    # Redis regardless of the jobs.enabled REST-API-exposure flag. Verified
-    # live: with viaJobs=true, a reset-password-request enqueued a real
-    # "account_email" job into the SHARED Redis (namespace db) — and it was
-    # immediately dequeued and silently dropped by `www`'s OWN worker
-    # (`kubectl -n www logs deploy/worker-cpp-worker`: "AccountEmails: job
-    # for reset_password skipped — user ... no longer exists"), because
-    # job-queue keys aren't namespaced per app (see the externalRedis
-    # comment above) and both workers poll the identical Redis list key.
-    # The email was never sent. viaJobs=false makes both api and worker
-    # send inline (in-process, real blocking SMTP call), bypassing the
-    # shared queue entirely — safe under the current Redis-sharing
-    # constraint. Revisit once src/cache/Cache.hpp gets per-app key
-    # namespacing (tracked in the externalRedis comment above).
-    viaJobs: false
+    # true — re-enabled T16, now that T13b's REDIS_DB=1 actually isolates
+    # this app's job queue from `www`'s (see the externalRedis comment
+    # above for the full history: was true → measured broken by the DB-0
+    # collision → false as the immediate fix → db:1 fixed the root cause →
+    # true again here, since queued mail is the intended production
+    # behavior (the worker delivers, the api just enqueues). Verify after
+    # deploy: a real send must show up in the WORKER's logs (job executed,
+    # message_id), not the api's (api log would mean it fell back to
+    # inline, i.e. the queue path didn't actually run).
+    viaJobs: true
     smtpHost: smtp-relay.brevo.com
     smtpPort: 587
     smtpUsername: michael@tarassov.me
@@ -268,11 +261,29 @@ cyber-accountant:
     from: noreply@cybercapybara.kz
     fromName: "Cyber Accountant"
     subjectPrefix: "[Cyber Accountant] "
+  # ── Object storage (T16): shared in-cluster MinIO, same bucket/user
+  # provisioned in the P0 MinIO task (docs/adr/0007-s3-backend.md) — the
+  # `s3-credentials` Secret (namespace cyber-accountant) has held this
+  # exact endpoint/bucket/region/access-key/secret-key since then, just
+  # unconsumed by the chart until now. Non-secret fields (endpoint/region/
+  # bucket) copied straight from that Secret since they're stable
+  # identifiers, not credentials; accessKey/secretKey both left blank and
+  # supplied via `--set` at upgrade time (same treatment for both, not just
+  # secretKey — a random MinIO access key carries no useful meaning
+  # sitting in git either).
+  storage:
+    backend: s3
+    s3:
+      endpoint: http://minio.minio.svc.cluster.local:9000
+      region: us-east-1
+      bucket: cyber-accountant-prod
+      accessKey: ""
+      secretKey: ""
 
 cyber-accountant-worker:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-worker
-    tag: "0.1.0"  # see note above — unprefixed tag
+    tag: "0.2.0"  # see note above — unprefixed tag, P1 release (T16)
   imagePullSecrets:
     - name: ghcr-pull
   tracing:
@@ -311,7 +322,7 @@ cyber-accountant-worker:
   # `--set cyber-accountant-worker.mail.smtpPassword=...` at upgrade time.
   mail:
     enabled: true
-    viaJobs: false
+    viaJobs: true   # re-enabled T16 — see the cyber-accountant block's mail comment for the full history
     smtpHost: smtp-relay.brevo.com
     smtpPort: 587
     smtpUsername: michael@tarassov.me
@@ -320,10 +331,21 @@ cyber-accountant-worker:
     from: noreply@cybercapybara.kz
     fromName: "Cyber Accountant"
     subjectPrefix: "[Cyber Accountant] "
+  # Same shared MinIO bucket/creds as the cyber-accountant (api) block
+  # above — MUST match (see that block's storage comment): the docgen
+  # render job writes generated PDFs here.
+  storage:
+    backend: s3
+    s3:
+      endpoint: http://minio.minio.svc.cluster.local:9000
+      region: us-east-1
+      bucket: cyber-accountant-prod
+      accessKey: ""
+      secretKey: ""
 
 cpp-frontend:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-frontend
-    tag: "0.1.0"  # see note above — unprefixed tag
+    tag: "0.2.0"  # see note above — unprefixed tag, P1 release (T16)
   imagePullSecrets:
     - name: ghcr-pull
