@@ -156,7 +156,14 @@ inline void compile_pdf(const std::filesystem::path& tex_dir, const std::string&
  *        @p input into `<out_dir>/main.tex` / `<out_dir>/main.pdf`.
  * @details Shared by the render job and the worker's `--render-template`
  *          CLI smoke-test mode (src/worker_main.cpp), so both paths exercise
- *          the exact same validate -> render -> compile pipeline.
+ *          the exact same validate -> normalize -> render -> compile
+ *          pipeline. `TemplateRegistry::normalize_input` runs strictly AFTER
+ *          `validate()` succeeds — it schema-driven-fills every optional
+ *          field the caller omitted (so `{{ }}`/`{% if %}` in the template
+ *          can dot into it without inja's "variable not found" render
+ *          error) — see that function's doc comment for why templates
+ *          additionally had to switch `{% if X %}` to `{% if X != "" %}` on
+ *          optional string fields.
  * @throws std::runtime_error on a missing template, schema-validation
  *         failure, or compile failure.
  */
@@ -168,7 +175,8 @@ inline void render_and_compile(const std::string& slug, const json& input, const
     if (auto err = TemplateRegistry::validate(*info, input))
         throw std::runtime_error("docgen: schema validation failed: " + *err);
 
-    const std::string tex = render_tex(*info, input);
+    const json normalized = TemplateRegistry::normalize_input(info->schema, input);
+    const std::string tex = render_tex(*info, normalized);
     std::ofstream out(out_dir / "main.tex", std::ios::binary | std::ios::trunc);
     if (!out)
         throw std::runtime_error("docgen: cannot write main.tex to " + out_dir.string());

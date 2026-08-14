@@ -285,4 +285,139 @@ TEST_F(TemplateRegistryTest, RenderTexCommentMarkersAreStripped) {
     EXPECT_EQ(out.find("hidden"), std::string::npos);
 }
 
+// ── normalize_input (schema-driven default-fill) ─────────────────────────
+// A caller (correctly) omitting an optional field must not crash inja with
+// "variable ... not found" — normalize_input fills every property the
+// schema declares but the input lacks: "" for string, [] for array, a
+// recursively-filled object for object (resolving one-level "$ref" first,
+// the only $ref shape any shipped schema uses).
+
+TEST(NormalizeInputTest, FillsMissingStringArrayAndRefObjectFromSyntheticSchema) {
+    // "address" is a $ref to a nested object with its OWN two string
+    // properties — exercises $ref resolution AND recursive object fill in
+    // one schema, without depending on any real template.
+    const json schema = json::parse(R"({
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+            "name": {"type": "string"},
+            "nickname": {"type": "string"},
+            "tags": {"type": "array"},
+            "address": {"$ref": "#/definitions/addr"}
+        },
+        "definitions": {
+            "addr": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"},
+                    "zip": {"type": "string"}
+                }
+            }
+        }
+    })");
+
+    const json input = {{"name", "Ada"}};
+    auto out = Docgen::TemplateRegistry::normalize_input(schema, input);
+
+    EXPECT_EQ(out["name"], "Ada");  // present value untouched
+    EXPECT_EQ(out["nickname"], "");
+    EXPECT_EQ(out["tags"], json::array());
+    ASSERT_TRUE(out["address"].is_object());
+    EXPECT_EQ(out["address"]["city"], "");
+    EXPECT_EQ(out["address"]["zip"], "");
+}
+
+// A partially-provided nested object gets its OWN missing fields filled
+// too (recursion into an existing value, not just a wholly-absent one).
+TEST(NormalizeInputTest, FillsMissingFieldsOfAPartiallyProvidedNestedObject) {
+    const json schema = json::parse(R"({
+        "type": "object",
+        "properties": {
+            "address": {"$ref": "#/definitions/addr"}
+        },
+        "definitions": {
+            "addr": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"},
+                    "zip": {"type": "string"}
+                }
+            }
+        }
+    })");
+
+    const json input = {{"address", {{"city", "Almaty"}}}};
+    auto out = Docgen::TemplateRegistry::normalize_input(schema, input);
+
+    EXPECT_EQ(out["address"]["city"], "Almaty");  // present value untouched
+    EXPECT_EQ(out["address"]["zip"], "");         // missing sibling filled
+}
+
+// Same fill, against the REAL invoice/v1 schema (the one every shipped
+// docgen schema shapes its $ref-based "party" definition after).
+TEST(NormalizeInputTest, FillsMissingOptionalFieldsOfRealInvoiceSchema) {
+    std::ifstream schema_file("templates/latex/invoice/v1/schema.json");
+    if (!schema_file)
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    json schema;
+    schema_file >> schema;
+
+    const json input = {
+        {"number", "1"},
+        {"date", "14.08.2026"},
+        {"seller", {{"name", "S"}, {"identifier", "1"}}},  // no address/iik/bank/bik/kbe
+        {"buyer", {{"name", "B"}, {"identifier", "2"}}},
+        {"items", json::array({json{{"name", "x"}, {"qty", "1"}, {"unit", "шт"}, {"price", "1"}, {"amount", "1"}}})},
+        {"total", "1"},
+        {"total_words", "one"},
+        // contract, vat_rate, vat_amount: omitted top-level optional strings.
+    };
+
+    auto out = Docgen::TemplateRegistry::normalize_input(schema, input);
+
+    EXPECT_EQ(out["seller"]["address"], "");
+    EXPECT_EQ(out["seller"]["iik"], "");
+    EXPECT_EQ(out["seller"]["bank"], "");
+    EXPECT_EQ(out["seller"]["bik"], "");
+    EXPECT_EQ(out["seller"]["kbe"], "");
+    EXPECT_EQ(out["contract"], "");
+    EXPECT_EQ(out["vat_rate"], "");
+    EXPECT_EQ(out["vat_amount"], "");
+    // Provided values must survive untouched.
+    EXPECT_EQ(out["seller"]["name"], "S");
+    EXPECT_EQ(out["number"], "1");
+}
+
+// End-to-end against the REAL shipped invoice template: an input missing
+// every optional field must render WITHOUT throwing, and — because the
+// template's `{% if %}` conditions were rewritten to `!= ""` to match
+// normalize_input's fill (see TemplateRegistry::normalize_input's doc
+// comment on why "" is truthy in inja) — must not leave any of the
+// conditional blocks' label text in the output either.
+TEST(NormalizeInputTest, RenderTexOfRealInvoiceTemplateOmitsEmptyConditionalBlocks) {
+    if (!fs::exists("templates/latex/invoice/v1/template.tex"))
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+
+    Docgen::TemplateRegistry registry;  // default root: "templates/latex"
+    auto info = registry.latest("invoice");
+    ASSERT_TRUE(info.has_value());
+
+    const json input = {
+        {"number", "1"},
+        {"date", "14.08.2026"},
+        {"seller", {{"name", "Продавец"}, {"identifier", "1"}}},
+        {"buyer", {{"name", "Покупатель"}, {"identifier", "2"}}},
+        {"items", json::array({json{{"name", "x"}, {"qty", "1"}, {"unit", "шт"}, {"price", "1"}, {"amount", "1"}}})},
+        {"total", "1"},
+        {"total_words", "one"},
+    };
+    const json normalized = Docgen::TemplateRegistry::normalize_input(info->schema, input);
+
+    std::string out;
+    EXPECT_NO_THROW(out = Docgen::render_tex(*info, normalized));
+    EXPECT_EQ(out.find("ИИК"), std::string::npos);
+    EXPECT_EQ(out.find("Основание"), std::string::npos);
+    EXPECT_EQ(out.find("НДС"), std::string::npos);
+}
+
 }  // namespace

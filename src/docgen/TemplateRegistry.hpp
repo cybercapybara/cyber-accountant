@@ -22,6 +22,7 @@
 #include <fstream>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json-schema.hpp>
@@ -165,7 +166,111 @@ public:
         return std::nullopt;
     }
 
+    /**
+     * @brief Schema-driven default-fill: for every property @p schema
+     *        declares (recursively, resolving one-level `"$ref":
+     *        "#/definitions/..."` — the only `$ref` shape any shipped
+     *        schema uses) that is MISSING from @p input, add a
+     *        type-appropriate zero value — `string` -> `""`, `array` ->
+     *        `[]`, `object` -> itself recursively filled per its own
+     *        declared properties. Values already present are never touched
+     *        (except to recurse into an already-present nested object, so
+     *        its OWN missing optional fields get filled too).
+     * @details Why this exists: `{{ }}`/`{% if %}` in a template dot into
+     *          paths like `seller.address` that a schema marks optional —
+     *          when the caller (correctly) omits an optional field, inja
+     *          throws `render_error: variable 'seller.address' not found`
+     *          on the bare reference, not a graceful "undefined" the way
+     *          Jinja2 treats a missing key. Call this AFTER a successful
+     *          `validate()` and BEFORE `render_tex()` — `RenderJob::
+     *          render_and_compile` (src/docgen/RenderJob.hpp) is the one
+     *          place both the render job and the `--render-template` CLI
+     *          mode funnel through, so this is wired in exactly once.
+     * @note inja's `truthy()` (vendored `inja.hpp`, confirmed by reading the
+     *       pinned v3.4.0 source) falls back to `!value.empty()` for any
+     *       type it doesn't special-case, and `nlohmann::json::empty()`
+     *       ONLY reports true for `null`/an empty `array`/an empty `object`
+     *       — a JSON **string** is never "json-empty" regardless of its
+     *       content, so `""` is TRUTHY in inja. Filling a missing optional
+     *       string with `""` therefore stops the "not found" crash but does
+     *       NOT make `{% if seller.address %}` skip — every shipped
+     *       template's `{% if %}` on an optional *string* field was
+     *       rewritten to `{% if X != "" %}` to compensate (safe only
+     *       because this function guarantees `X` exists by the time the
+     *       template runs). An optional *object* filled by this function
+     *       (e.g. reconciliation's `opening_balance`) is likewise never
+     *       "json-empty" once its declared properties are filled in — such
+     *       templates check a representative leaf value instead of the
+     *       whole object (see `templates/latex/reconciliation/v1/template.tex`).
+     */
+    static json normalize_input(const json& schema, json input) {
+        if (!input.is_object())
+            return input;
+        return detail::fill_object(schema, schema, std::move(input));
+    }
+
 private:
+    /// Implementation details for normalize_input() — kept out of the
+    /// public surface since neither helper makes sense called on its own
+    /// (both need the ROOT schema doc to resolve "$ref" against, not just
+    /// whatever sub-schema node they're currently filling).
+    struct detail {
+        /// Resolve a one-level `"$ref": "#/definitions/X"` schema node
+        /// against @p root. Any other node (no `$ref`, or a `$ref` shape
+        /// this codebase doesn't produce) passes through unchanged.
+        static const json& resolve_ref(const json& root, const json& node) {
+            if (!node.is_object() || !node.contains("$ref"))
+                return node;
+            const std::string ref = node.at("$ref").get<std::string>();
+            static const std::string kPrefix = "#/definitions/";
+            if (ref.rfind(kPrefix, 0) != 0)
+                return node;
+            const std::string name = ref.substr(kPrefix.size());
+            if (root.contains("definitions") && root.at("definitions").contains(name))
+                return root.at("definitions").at(name);
+            return node;
+        }
+
+        /// Type-appropriate zero value for a schema node missing from the
+        /// input entirely. `object` recurses so a wholly-absent optional
+        /// object still gets every one of ITS declared properties filled
+        /// in, at every depth.
+        static json default_for(const json& root, const json& node_in) {
+            const json& node = resolve_ref(root, node_in);
+            const std::string type = node.value("type", "");
+            if (type == "object")
+                return fill_object(root, node, json::object());
+            if (type == "array")
+                return json::array();
+            if (type == "string")
+                return "";
+            // number/boolean/other: no shipped schema declares an optional
+            // field of these types today, so there is no default to invent.
+            return nullptr;
+        }
+
+        /// Fill every property @p node_in declares (after $ref resolution)
+        /// that @p value is missing; recurse into a property @p value
+        /// already has when IT is an object, so partially-provided nested
+        /// objects get their own missing optional fields filled too.
+        /// @p value must be a JSON object.
+        static json fill_object(const json& root, const json& node_in, json value) {
+            const json& node = resolve_ref(root, node_in);
+            if (!value.is_object() || !node.contains("properties") || !node.at("properties").is_object())
+                return value;
+            for (const auto& prop : node.at("properties").items()) {
+                const std::string& key = prop.key();
+                if (!value.contains(key)) {
+                    value[key] = default_for(root, prop.value());
+                } else if (value.at(key).is_object()) {
+                    value[key] = fill_object(root, prop.value(), value.at(key));
+                }
+                // Existing string/array/number/bool values: left untouched.
+            }
+            return value;
+        }
+    };
+
     /// Allowlist for a template slug: it is used as a raw path component
     /// (`root_ / slug / ...`), so anything outside `^[a-z][a-z0-9_-]*$` is
     /// rejected — no `/`, no `..`, no leading digit/hyphen, no uppercase, no

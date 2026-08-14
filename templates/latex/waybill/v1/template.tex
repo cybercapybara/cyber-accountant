@@ -10,11 +10,11 @@
 \begin{center}\Large\bfseries Накладная на отпуск запасов на сторону № {{ number }} от {{ date }}\end{center}
 \vspace{4mm}
 \noindent\field{Поставщик (склад):} {{ seller.name }}, БИН/ИИН {{ seller.identifier }}\\
-{% if seller.address %}\hphantom{\field{Поставщик (склад):} }{{ seller.address }}\\{% endif %}
-{% if seller.iik %}ИИК {{ seller.iik }}{% if seller.bank %}, {{ seller.bank }}{% endif %}{% if seller.bik %}, БИК {{ seller.bik }}{% endif %}{% if seller.kbe %}, КБе {{ seller.kbe }}{% endif %}\\{% endif %}
+{% if seller.address != "" %}\hphantom{\field{Поставщик (склад):} }{{ seller.address }}\\{% endif %}
+{% if seller.iik != "" %}ИИК {{ seller.iik }}{% if seller.bank != "" %}, {{ seller.bank }}{% endif %}{% if seller.bik != "" %}, БИК {{ seller.bik }}{% endif %}{% if seller.kbe != "" %}, КБе {{ seller.kbe }}{% endif %}\\{% endif %}
 \vspace{2mm}
 \noindent\field{Получатель:} {{ buyer.name }}, БИН/ИИН {{ buyer.identifier }}\\
-{% if buyer.address %}\hphantom{\field{Получатель:} }{{ buyer.address }}\\{% endif %}
+{% if buyer.address != "" %}\hphantom{\field{Получатель:} }{{ buyer.address }}\\{% endif %}
 \noindent\field{Основание:} {{ basis }}\\
 \vspace{4mm}
 \noindent\begin{tabularx}{\textwidth}{@{}c X r r r r@{}}

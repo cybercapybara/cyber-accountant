@@ -10,13 +10,13 @@
 \begin{center}\Large\bfseries Счёт-фактура № {{ number }} от {{ date }}\end{center}
 \vspace{4mm}
 \noindent\field{Поставщик:} {{ seller.name }}, БИН/ИИН {{ seller.identifier }}\\
-{% if seller.address %}\hphantom{\field{Поставщик:} }{{ seller.address }}\\{% endif %}
-{% if seller.iik %}ИИК {{ seller.iik }}{% if seller.bank %}, {{ seller.bank }}{% endif %}{% if seller.bik %}, БИК {{ seller.bik }}{% endif %}{% if seller.kbe %}, КБе {{ seller.kbe }}{% endif %}\\{% endif %}
-{% if seller.vat_certificate %}Свидетельство плательщика НДС: {{ seller.vat_certificate }}\\{% endif %}
+{% if seller.address != "" %}\hphantom{\field{Поставщик:} }{{ seller.address }}\\{% endif %}
+{% if seller.iik != "" %}ИИК {{ seller.iik }}{% if seller.bank != "" %}, {{ seller.bank }}{% endif %}{% if seller.bik != "" %}, БИК {{ seller.bik }}{% endif %}{% if seller.kbe != "" %}, КБе {{ seller.kbe }}{% endif %}\\{% endif %}
+{% if seller.vat_certificate != "" %}Свидетельство плательщика НДС: {{ seller.vat_certificate }}\\{% endif %}
 \vspace{2mm}
 \noindent\field{Покупатель:} {{ buyer.name }}, БИН/ИИН {{ buyer.identifier }}\\
-{% if buyer.address %}\hphantom{\field{Покупатель:} }{{ buyer.address }}\\{% endif %}
-{% if buyer.vat_certificate %}Свидетельство плательщика НДС: {{ buyer.vat_certificate }}\\{% endif %}
+{% if buyer.address != "" %}\hphantom{\field{Покупатель:} }{{ buyer.address }}\\{% endif %}
+{% if buyer.vat_certificate != "" %}Свидетельство плательщика НДС: {{ buyer.vat_certificate }}\\{% endif %}
 \vspace{4mm}
 \noindent\begin{tabularx}{\textwidth}{@{}c X r r r r r r r@{}}
 \toprule

@@ -10,12 +10,12 @@
 \begin{center}\Large\bfseries Счёт на оплату № {{ number }} от {{ date }}\end{center}
 \vspace{6mm}
 \noindent\field{Поставщик:} {{ seller.name }}, БИН/ИИН {{ seller.identifier }}\\
-{% if seller.address %}\hphantom{\field{Поставщик:} }{{ seller.address }}\\{% endif %}
-{% if seller.iik %}ИИК {{ seller.iik }}{% if seller.bank %}, {{ seller.bank }}{% endif %}{% if seller.bik %}, БИК {{ seller.bik }}{% endif %}{% if seller.kbe %}, КБе {{ seller.kbe }}{% endif %}\\{% endif %}
+{% if seller.address != "" %}\hphantom{\field{Поставщик:} }{{ seller.address }}\\{% endif %}
+{% if seller.iik != "" %}ИИК {{ seller.iik }}{% if seller.bank != "" %}, {{ seller.bank }}{% endif %}{% if seller.bik != "" %}, БИК {{ seller.bik }}{% endif %}{% if seller.kbe != "" %}, КБе {{ seller.kbe }}{% endif %}\\{% endif %}
 \vspace{2mm}
 \noindent\field{Покупатель:} {{ buyer.name }}, БИН/ИИН {{ buyer.identifier }}\\
-{% if buyer.address %}\hphantom{\field{Покупатель:} }{{ buyer.address }}\\{% endif %}
-{% if contract %}\noindent\field{Основание:} {{ contract }}\\{% endif %}
+{% if buyer.address != "" %}\hphantom{\field{Покупатель:} }{{ buyer.address }}\\{% endif %}
+{% if contract != "" %}\noindent\field{Основание:} {{ contract }}\\{% endif %}
 \vspace{4mm}
 \noindent\begin{tabularx}{\textwidth}{@{}c X r r r r@{}}
 \toprule
@@ -26,7 +26,7 @@
 \bottomrule
 \end{tabularx}
 \vspace{3mm}
-{% if vat_amount %}\hfill НДС ({{ vat_rate }}): {{ vat_amount }} ₸\par{% endif %}
+{% if vat_amount != "" %}\hfill НДС ({{ vat_rate }}): {{ vat_amount }} ₸\par{% endif %}
 \hfill\field{Итого к оплате: {{ total }} ₸}\par
 \noindent Всего наименований {{ length(items) }}, на сумму {{ total }} ₸\\
 ({{ total_words }})
