@@ -37,6 +37,7 @@
 #include "ledger/JournalEntry.hpp"
 #include "ledger/JournalRepository.hpp"
 #include "ledger/JournalService.hpp"
+#include "payroll/PayrollRepository.hpp"
 #include "payroll/PayrollService.hpp"
 #include "repositories/RoleRepository.hpp"
 #include "repositories/UserRepository.hpp"
@@ -231,6 +232,52 @@ TEST_F(PayrollApiTest, CalculateRunOutOfRangeMonthUnprocessable) {
     ASSERT_FALSE(errors.empty());
     EXPECT_EQ(errors[0]["field"].get<std::string>(), "month");
     EXPECT_EQ(errors[0]["code"].get<std::string>(), "out_of_range");
+}
+
+TEST_F(PayrollApiTest, CalculateRunOutOfRangeYearUnprocessable) {
+    auto org = seed_org("777160000030", "Payroll Year Range Org LLP");
+    auto accountant = member("payroll-acc30@example.com", org.id, "accountant");
+
+    auto req = authed_json(accountant, json{{"year", 20261}, {"month", 3}});
+    HttpResponsePtr resp;
+    ctrl.calculate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto errors = body_of(resp)["errors"];
+    ASSERT_TRUE(errors.is_array());
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors[0]["field"].get<std::string>(), "year");
+    EXPECT_EQ(errors[0]["code"].get<std::string>(), "out_of_range");
+}
+
+TEST_F(PayrollApiTest, CalculateRunWithoutSeededRatesUnprocessable) {
+    // 2025 predates migration 011's 2026-01-01 seed, so the very first rate
+    // lookup comes back empty. That is a reference-data gap an operator can
+    // fix by seeding a row — it must be a 422 naming the missing rate, never
+    // the 500 a bare std::runtime_error would produce (fix round 1).
+    auto org = seed_org("777160000031", "Payroll No Rates Org LLP");
+    auto accountant = member("payroll-acc31@example.com", org.id, "accountant");
+    seed_employee(org.id, "156312191013");
+
+    auto req = authed_json(accountant, json{{"year", 2025}, {"month", 6}});
+    HttpResponsePtr resp;
+    ctrl.calculate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k422UnprocessableEntity) << resp->body();
+    auto payload = body_of(resp);
+    EXPECT_EQ(payload["error"].get<std::string>(), "validation_failed");
+    auto errors = payload["errors"];
+    ASSERT_TRUE(errors.is_array());
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors[0]["field"].get<std::string>(), "year");
+    EXPECT_EQ(errors[0]["code"].get<std::string>(), "missing_tax_reference");
+    // The message has to be actionable on its own: which reference, what date.
+    const std::string message = errors[0]["message"].get<std::string>();
+    EXPECT_NE(message.find("2025-06-30"), std::string::npos) << message;
+    EXPECT_NE(message.find("rate"), std::string::npos) << message;
+    // Nothing was persisted for a period that could not be calculated.
+    Payroll::PayrollRepository runs;
+    EXPECT_FALSE(runs.find_by_period(org.id, 2025, 6, /*from_primary=*/true).has_value());
 }
 
 TEST_F(PayrollApiTest, RecalculateApprovedRunConflicts) {

@@ -91,6 +91,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "database/Database.hpp"
@@ -114,6 +115,41 @@ namespace Payroll {
 struct InvalidRunState : Repositories::ConflictError {
     explicit InvalidRunState(std::string message)
         : Repositories::ConflictError("invalid_run_state", std::move(message)) {}
+};
+
+/// → 422. Thrown when a tax rate or constant `calculate_run()` needs is not in
+/// force on the period's effective date (the last calendar day of the period —
+/// see the file header). The direct counterpart of Tax::MissingTaxReference,
+/// which Api::TaxController already maps to 422 for exactly the same
+/// condition on the tax side.
+///
+/// Why a type of its own rather than the bare std::runtime_error this used to
+/// throw (code review, fix round 1): the API layer's generic handler
+/// (Api::with_repo_errors) maps any unrecognized std::exception to a 500, so
+/// "payroll was run for a period whose rates have not been seeded yet" — a
+/// foreseeable operator/reference-data gap, correctable by adding a row to
+/// `tax_rates`/`tax_constants` — was being reported to the client as a server
+/// bug. Deriving from std::runtime_error (not Repositories::ConflictError)
+/// keeps it OUT of the 409 bucket: nothing about the RUN's state is wrong, the
+/// reference data behind it is simply absent.
+///
+/// `kind`/`reference`/`effective_on` are carried as fields, not just baked
+/// into what(), so the HTTP layer can name the exact missing row in its 422
+/// body — an operator reading the response learns WHICH rate or constant to
+/// seed and for WHICH date, without going to the server log.
+struct MissingPayrollReference : std::runtime_error {
+    MissingPayrollReference(std::string what_kind, std::string name, std::string effective_date)
+        // NOTE: the base is initialized BEFORE any member, so the three
+        // parameters are still intact here — they are only moved from in the
+        // member initializers that follow.
+        : std::runtime_error("payroll: no tax " + what_kind + " '" + name + "' effective on " + effective_date)
+        , kind(std::move(what_kind))
+        , reference(std::move(name))
+        , effective_on(std::move(effective_date)) {}
+
+    std::string kind;          ///< "rate" (tax_rates) or "constant" (tax_constants)
+    std::string reference;     ///< the missing `tax_rates.kind` / `tax_constants.key`
+    std::string effective_on;  ///< the date the lookup was made for, "YYYY-MM-DD"
 };
 
 /// The date (YYYY-MM-DD) of the last calendar day of @p year / @p month —
@@ -141,6 +177,10 @@ public:
      *        employee, and persists the run header + one payslip per
      *        employee in a single transaction. See file header for the
      *        exact replace-on-recalculate / reject-on-approved contract.
+     * @throws MissingPayrollReference if any rate/constant the calculation
+     *         needs is not in force on the period's last day (e.g. a period
+     *         before migration 011's 2026-01-01 seed) — a reference-data gap
+     *         the API layer reports as 422, not 500.
      * @throws InvalidRunState if a run already exists for this period and is
      *         'approved' — checked up front AND as a compare-and-swap on the
      *         UPDATE itself (Fix round 1, code review: the earlier version
@@ -385,21 +425,21 @@ private:
     long long rate_bp(const std::string& kind, const std::string& date) {
         auto rate = tax_.rate_on(kind, date, "");
         if (!rate)
-            throw std::runtime_error("payroll: no tax rate for kind '" + kind + "' effective on " + date);
+            throw MissingPayrollReference("rate", kind, date);
         return rate->rate_bp;
     }
 
     long long constant_tiyn(const std::string& key, const std::string& date) {
         auto constant = tax_.constant_on(key, date);
         if (!constant)
-            throw std::runtime_error("payroll: no tax constant '" + key + "' effective on " + date);
+            throw MissingPayrollReference("constant", key, date);
         return constant->value_tiyn;
     }
 
     long long constant_units(const std::string& key, const std::string& date) {
         auto constant = tax_.constant_on(key, date);
         if (!constant)
-            throw std::runtime_error("payroll: no tax constant '" + key + "' effective on " + date);
+            throw MissingPayrollReference("constant", key, date);
         return constant->value_units.value_or(0);
     }
 

@@ -294,4 +294,39 @@ inline bool parse_body(const drogon::HttpRequestPtr& req,
     }
 }
 
+/**
+ * @brief Parse an OPTIONAL JSON **object** body: an absent/empty body yields
+ *        an empty object and success, rather than the `invalid_json` 400
+ *        parse_body() (correctly) gives it.
+ *
+ * For the `.../generate-document` endpoints, whose body carries only the
+ * free-text fields a docgen template needs that the database cannot hold, and
+ * which is deep-merged (RFC 7396 `merge_patch`) over an auto-derived base —
+ * "send nothing" is a legitimate request there, not a malformed one. A body
+ * that IS present but isn't a JSON object is still a 400, since merge_patch
+ * over a non-object would silently REPLACE the whole derived input.
+ *
+ * Lives here (Task 12, fix round 1) rather than in each controller: it was a
+ * verbatim third copy across HrController's two generate-document routes and
+ * PayrollController's payslip one — the same consolidation is_valid_date got
+ * in Task 11.
+ *
+ * @return false (having already replied through @p cb) on a malformed body.
+ */
+inline bool parse_optional_body(const drogon::HttpRequestPtr& req,
+                                json& out,
+                                std::function<void(const drogon::HttpResponsePtr&)>& cb) {
+    if (req->body().empty()) {
+        out = json::object();
+        return true;
+    }
+    if (!parse_body(req, out, cb))
+        return false;
+    if (!out.is_object()) {
+        cb(ErrorResponse::bad_request("invalid_json", "body must be a JSON object"));
+        return false;
+    }
+    return true;
+}
+
 }  // namespace Api::Validation

@@ -49,14 +49,14 @@
  *   - 404 — no such run visible to this org (a foreign org's run is
  *     indistinguishable from a missing one, per OrgCrudBase::find_in_org).
  *
- * NOT mapped, on purpose: PayrollService throws a plain std::runtime_error
- * when a rate/constant the period needs is absent from `tax_rates`/
- * `tax_constants` (e.g. calculating a period before migration 011's
- * 2026-01-01 seed). That is a reference-data gap in the deployment, not a
- * caller-correctable request, so it stays a logged 500 — inventing a
- * hardcoded "earliest supported period" here to convert it into a 422 would
- * put a tax constant in C++, which this codebase does not do (rates and
- * thresholds come ONLY from the DB tables).
+ *   - 422 also covers a period whose rates have not been seeded at all:
+ *     PayrollService::calculate_run throws Payroll::MissingPayrollReference
+ *     (fix round 1 — it used to be a bare std::runtime_error, i.e. a 500)
+ *     and `calculate` renders it as a 422 naming the missing rate/constant
+ *     and the exact effective date. No "earliest supported period" constant
+ *     is hardcoded here to detect it — the throw site already knows the
+ *     lookup came back empty, so only the exception TYPE changed; rates and
+ *     thresholds still come exclusively from `tax_rates`/`tax_constants`.
  *
  * generate-document: same base-input + optional-body-merge design
  * HrController documents at length — templates/latex/payslip/v1/schema.json
@@ -220,8 +220,27 @@ public:
         // with the service's own code, no ad-hoc catch needed here.
         with_repo_errors(callback, "payroll runs calculate", [&] {
             Payroll::PayrollService svc;
-            auto run = svc.calculate_run(ctx.org_id, year, month);
-            callback(Response::ok({{"data", json(run)}}));
+            try {
+                auto run = svc.calculate_run(ctx.org_id, year, month);
+                callback(Response::ok({{"data", json(run)}}));
+            } catch (const Payroll::MissingPayrollReference& e) {
+                // The period the caller asked for has no seeded rate/constant
+                // — a reference-data gap, correctable by adding a row to
+                // `tax_rates`/`tax_constants`, so a 422 naming the exact
+                // missing row rather than the 500 with_repo_errors would give
+                // an unrecognized std::exception (fix round 1). Same posture
+                // TaxController takes for Tax::MissingTaxReference.
+                //
+                // Keyed to `year` because that is the field of the two that
+                // actually decides whether the period falls inside the seeded
+                // window (migration 011 starts at 2026-01-01); the message
+                // carries the rate/constant name and the exact effective date
+                // so an operator can act on the response alone.
+                callback(Validation::response_422("year",
+                                                  "missing_tax_reference",
+                                                  "no tax " + e.kind + " '" + e.reference + "' is in force on " +
+                                                      e.effective_on + " (the last day of the requested period)"));
+            }
         });
     }
 
@@ -353,7 +372,7 @@ public:
             return;
         }
         json extra;
-        if (!parse_optional_body(req, extra, callback))
+        if (!Validation::parse_optional_body(req, extra, callback))
             return;
 
         Payroll::PayrollRepository payroll_repo;
@@ -500,27 +519,6 @@ private:
         for (unsigned char c : s) {
             if (c < '0' || c > '9')
                 return false;
-        }
-        return true;
-    }
-
-    /// Parse an OPTIONAL JSON object body for generate-document — an empty
-    /// body means "no extra fields to merge", not an error. Same helper
-    /// HrController defines for its own two generate-document routes; kept
-    /// private per controller rather than promoted to HandlerSupport.hpp
-    /// while only these three routes need it.
-    static bool parse_optional_body(const HttpRequestPtr& req,
-                                    json& out,
-                                    std::function<void(const HttpResponsePtr&)>& callback) {
-        if (req->body().empty()) {
-            out = json::object();
-            return true;
-        }
-        if (!Validation::parse_body(req, out, callback))
-            return false;
-        if (!out.is_object()) {
-            callback(ErrorResponse::bad_request("invalid_json", "body must be a JSON object"));
-            return false;
         }
         return true;
     }

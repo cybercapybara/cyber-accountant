@@ -557,6 +557,28 @@ protected:
                     {"director", "Ахметов Ерлан Серикович"},
                     {"accountant", "Серикбаева Айгерим Кайратовна"}};
     }
+
+    /// POST /tax/filings through the controller, returning the new filing id
+    /// (or nullopt with a recorded failure) — for tests whose SUBJECT is a
+    /// different route and that only need a filing to exist.
+    std::optional<std::string> create_filing(const Security::Auth::AuthPrincipal& principal,
+                                             const std::string& kind,
+                                             const std::string& calculation_id,
+                                             const json& document_input) {
+        auto req = authed_json(
+            principal, json{{"kind", kind}, {"calculation_id", calculation_id}, {"document_input", document_input}});
+        HttpResponsePtr resp;
+        ctrl.createFiling(req, [&](const HttpResponsePtr& r) { resp = r; });
+        if (resp == nullptr) {
+            ADD_FAILURE() << "createFiling did not answer";
+            return std::nullopt;
+        }
+        if (resp->statusCode() != k202Accepted) {
+            ADD_FAILURE() << "createFiling failed: " << resp->body();
+            return std::nullopt;
+        }
+        return body_of(resp)["filing_id"].get<std::string>();
+    }
 };
 
 TEST_F(TaxFilingApiTest, FilingStoresXmlAndQueuesPdf) {
@@ -700,6 +722,106 @@ TEST_F(TaxFilingApiTest, FilingRejectsAnotherOrgsCalculation) {
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     EXPECT_EQ(body_of(resp)["errors"][0]["code"].get<std::string>(), "foreign_calculation");
+}
+
+// ── GET /api/v1/tax/filings ──────────────────────────────────────────────────
+
+TEST_F(TaxFilingApiTest, ListFilingsReturnsThisOrgsFilingsAndFiltersByKind) {
+    auto org = seed_org("777180000012", "Filing List Org LLP");
+    auto accountant = member("filing-acc12@example.com", org.id, "accountant");
+    auto user = seed_user("filing-journal12@example.com");
+    post_income(org.id, user.id, "2026-02-01", "1000000.00", std::string("160000.00"));
+
+    Tax::TaxService svc;
+    auto snr = svc.calculate_snr(org.id, "2026-01-01", "2026-06-30");
+    auto vat = svc.calculate_vat(org.id, "2026-01-01", "2026-03-31");
+    ASSERT_TRUE(create_filing(accountant, "910.00", snr.id, fno910_extra()));
+    ASSERT_TRUE(create_filing(accountant, "300.00", vat.id, fno300_extra()));
+
+    HttpResponsePtr all;
+    ctrl.listFilings(authed(accountant), [&](const HttpResponsePtr& r) { all = r; });
+    ASSERT_NE(all, nullptr);
+    ASSERT_EQ(all->statusCode(), k200OK) << all->body();
+    auto all_body = body_of(all);
+    EXPECT_EQ(all_body["total"].get<long>(), 2);
+    ASSERT_EQ(all_body["data"].size(), 2u);
+    for (const auto& f : all_body["data"])
+        EXPECT_EQ(f["org_id"].get<std::string>(), org.id);
+
+    auto by_kind = authed(accountant);
+    by_kind->setParameter("kind", "300.00");
+    HttpResponsePtr filtered;
+    ctrl.listFilings(by_kind, [&](const HttpResponsePtr& r) { filtered = r; });
+    ASSERT_NE(filtered, nullptr);
+    ASSERT_EQ(filtered->statusCode(), k200OK);
+    auto filtered_body = body_of(filtered);
+    EXPECT_EQ(filtered_body["total"].get<long>(), 1);
+    ASSERT_EQ(filtered_body["data"].size(), 1u);
+    EXPECT_EQ(filtered_body["data"][0]["kind"].get<std::string>(), "300.00");
+    EXPECT_EQ(filtered_body["data"][0]["calculation_id"].get<std::string>(), vat.id);
+}
+
+TEST_F(TaxFilingApiTest, ListFilingsRejectsUnknownKindFilter) {
+    auto org = seed_org("777180000013", "Filing List Filter Org LLP");
+    auto viewer = member("filing-viewer13@example.com", org.id, "viewer");
+
+    auto req = authed(viewer);
+    req->setParameter("kind", "910");  // close, but not a registered form code
+    HttpResponsePtr resp;
+    ctrl.listFilings(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto errors = body_of(resp)["errors"];
+    ASSERT_TRUE(errors.is_array());
+    ASSERT_FALSE(errors.empty());
+    EXPECT_EQ(errors[0]["field"].get<std::string>(), "kind");
+    EXPECT_EQ(errors[0]["code"].get<std::string>(), "not_allowed");
+}
+
+TEST_F(TaxFilingApiTest, ListFilingsNeverLeaksAnotherTenantsFilings) {
+    // Filings carry a whole company's tax position — the list must be scoped
+    // to the caller's org claim and nothing else.
+    auto org_a = seed_org("777180000014", "Filing Tenant A LLP");
+    auto org_b = seed_org("777180000015", "Filing Tenant B LLP");
+    auto member_a = member("filing-tenant-a@example.com", org_a.id, "accountant");
+    auto member_b = member("filing-tenant-b@example.com", org_b.id, "accountant");
+
+    Tax::TaxService svc;
+    auto calc_a = svc.calculate_snr(org_a.id, "2026-01-01", "2026-06-30");
+    auto filing_a = create_filing(member_a, "910.00", calc_a.id, fno910_extra());
+    ASSERT_TRUE(filing_a);
+
+    // B has its own filing, so "empty" cannot be mistaken for "list is broken".
+    auto calc_b = svc.calculate_snr(org_b.id, "2026-07-01", "2026-12-31");
+    auto filing_b = create_filing(member_b, "910.00", calc_b.id, fno910_extra());
+    ASSERT_TRUE(filing_b);
+
+    HttpResponsePtr resp;
+    ctrl.listFilings(authed(member_b), [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k200OK);
+    auto listed = body_of(resp);
+    EXPECT_EQ(listed["total"].get<long>(), 1);
+    ASSERT_EQ(listed["data"].size(), 1u);
+    EXPECT_EQ(listed["data"][0]["id"].get<std::string>(), *filing_b);
+    EXPECT_EQ(listed["data"][0]["org_id"].get<std::string>(), org_b.id);
+    // A's filing id must appear nowhere in B's page.
+    for (const auto& f : listed["data"])
+        EXPECT_NE(f["id"].get<std::string>(), *filing_a);
+}
+
+// ── GET /api/v1/tax/filings/{id} ─────────────────────────────────────────────
+
+TEST_F(TaxFilingApiTest, GetFilingMalformedIdBadRequest) {
+    auto org = seed_org("777180000016", "Filing Get Bad Id Org LLP");
+    auto viewer = member("filing-viewer16@example.com", org.id, "viewer");
+
+    HttpResponsePtr resp;
+    ctrl.getFiling(
+        authed(viewer), [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k400BadRequest);
+    EXPECT_EQ(body_of(resp)["error"].get<std::string>(), "invalid_id");
 }
 
 TEST_F(TaxFilingApiTest, GetFilingCrossOrgNotFound) {

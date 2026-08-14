@@ -3955,6 +3955,13 @@ export interface paths {
                     };
                     content?: never;
                 };
+                /** @description year or month is out of range, or no tax rate/constant is in force on the last day of the period (the response names the missing one) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
             };
         };
         delete?: never;
@@ -4638,7 +4645,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description kind is not a registered form code, calculation_id does not belong to this organization, the form does not match the calculation's kind, or the merged document_input fails the template's JSON Schema */
+                /** @description kind is not a registered form code, calculation_id does not belong to this organization, the form does not match the calculation's kind, the stored calculation cannot be rendered as this form, or the merged document_input fails the template's JSON Schema */
                 422: {
                     headers: {
                         [name: string]: unknown;

@@ -2490,6 +2490,7 @@ paths:
         '400': { description: Validation failed (missing/wrong-type field) }
         '403': { description: 'No org context, or caller''s role is viewer' }
         '409': { description: The run for this period is already approved and cannot be recalculated }
+        '422': { description: 'year or month is out of range, or no tax rate/constant is in force on the last day of the period (the response names the missing one)' }
 
   /api/v1/payroll-runs/{id}/approve:
     parameters:
@@ -2734,7 +2735,7 @@ paths:
               schema: { $ref: '#/components/schemas/TaxFilingCreateResponse' }
         '400': { description: 'Validation failed (missing/wrong-type field, or a malformed calculation_id)' }
         '403': { description: 'No org context, or caller''s role is viewer' }
-        '422': { description: 'kind is not a registered form code, calculation_id does not belong to this organization, the form does not match the calculation''s kind, or the merged document_input fails the template''s JSON Schema' }
+        '422': { description: 'kind is not a registered form code, calculation_id does not belong to this organization, the form does not match the calculation''s kind, the stored calculation cannot be rendered as this form, or the merged document_input fails the template''s JSON Schema' }
         '503': { description: 'Object storage is not configured, or the job queue is not enabled' }
 
   /api/v1/tax/filings/{id}:

@@ -270,7 +270,7 @@ public:
             return;
         }
         json extra;
-        if (!parse_optional_body(req, extra, callback))
+        if (!Validation::parse_optional_body(req, extra, callback))
             return;
 
         Hr::HrRepository orders;
@@ -437,7 +437,7 @@ public:
             return;
         }
         json extra;
-        if (!parse_optional_body(req, extra, callback))
+        if (!Validation::parse_optional_body(req, extra, callback))
             return;
 
         // labor_contracts has no find_in_org of its own (HrRepository's
@@ -774,26 +774,6 @@ private:
             return false;
         }
         out = param;
-        return true;
-    }
-
-    /// Parse an OPTIONAL JSON object body for the generate-document
-    /// endpoints — an empty body means "no extra fields to merge", not an
-    /// error (unlike Validation::parse_body, which treats an empty body as
-    /// invalid JSON).
-    static bool parse_optional_body(const HttpRequestPtr& req,
-                                    json& out,
-                                    std::function<void(const HttpResponsePtr&)>& callback) {
-        if (req->body().empty()) {
-            out = json::object();
-            return true;
-        }
-        if (!Validation::parse_body(req, out, callback))
-            return false;
-        if (!out.is_object()) {
-            callback(ErrorResponse::bad_request("invalid_json", "body must be a JSON object"));
-            return false;
-        }
         return true;
     }
 

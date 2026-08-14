@@ -83,7 +83,10 @@
  * over the merged document input), and only then are side effects performed
  * — XML into storage, then the document row, then the filing row, then the
  * render job. A caller that forgot `director` therefore leaves no orphaned
- * object in S3 and no orphaned document row behind.
+ * object in S3 and no orphaned document row behind. The document and filing
+ * INSERTs themselves are NOT one transaction — neither repository accepts a
+ * caller-supplied transaction; the exact residual, and why it is accepted
+ * rather than closed, is spelled out at that call site.
  *
  * `xml_ready` and `render_queued` are both BEST-EFFORT flags, and both can
  * come back false in a 202:
@@ -126,6 +129,7 @@
 #include <cstdio>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -498,7 +502,24 @@ public:
 
         // Everything that can reject the request has run — side effects start
         // here (see file header for the ordering rationale).
-        const std::string xml = build_form_xml(kind, *calc, *org);
+        //
+        // build_form_xml is the LAST thing that can still fail before any
+        // side effect, and it can throw: both generators reject a Calculation
+        // whose stored shape they cannot render (Fno910::build_xml throws
+        // std::invalid_argument on a kind it does not own, and the period
+        // arithmetic below it assumes well-formed ISO bounds). The kind
+        // pairing is already pre-checked above, so reaching this catch means
+        // the STORED calculation row is not renderable as this form — a
+        // semantic problem with the referenced resource, hence 422 keyed to
+        // calculation_id, not the 500 an uncaught throw would produce (fix
+        // round 1: this call used to sit outside every guard).
+        std::string xml;
+        try {
+            xml = build_form_xml(kind, *calc, *org);
+        } catch (const std::invalid_argument& e) {
+            callback(Validation::response_422("calculation_id", "unrenderable_calculation", e.what()));
+            return;
+        }
         const std::string xml_key = Files::org_key(
             ctx.org_id,
             "generated",
@@ -515,6 +536,39 @@ public:
         }
 
         with_repo_errors(callback, "tax filings create", [&] {
+            // ── Documented residual: the two INSERTs below are two separate
+            // transactions, not one (fix round 1, code review).
+            //
+            // Checked, not assumed: Ledger::DocumentRepository::create and
+            // Tax::TaxFilingRepository::create each open their own
+            // `Database::get().execute_write(...)` internally and expose no
+            // parameter for a caller-supplied transaction, so this handler
+            // CANNOT wrap them in one `Database::execute_transaction`. That is
+            // the same limitation Payroll::PayrollService documents (and
+            // accepts) for Ledger::JournalService's create_draft/post pair.
+            // Closing it would mean either giving both repositories an
+            // external-transaction overload — a change to two P1/P2 files
+            // this fix does not own — or putting `documents` SQL inside the
+            // tax repository, which DocumentRepository's own header
+            // explicitly claims ("all SQL touching `documents` lives here").
+            //
+            // Exact residual, if the filing INSERT fails after the document
+            // INSERT committed: one `documents` row (source='generated',
+            // status='draft', no s3_key) and one already-stored XML object in
+            // S3 are left with no `tax_filings` row referencing them, and the
+            // client gets the 500 with_repo_errors produces. Nothing is
+            // corrupted and nothing is double-counted — the orphan is inert:
+            // it holds no money figure any report reads, `GET /tax/filings`
+            // never shows it, and re-POSTing the same request simply produces
+            // a fresh, complete filing (there is no UNIQUE key on the period
+            // to collide with — see migration 016). The cost is wasted object
+            // storage plus one stray draft in `GET /documents`.
+            //
+            // Order is document-then-filing on purpose: `tax_filings.
+            // document_id` is set in the filing's own INSERT, so the reverse
+            // order would need a second UPDATE to attach the document — that
+            // moves the failure window rather than closing it, and adds a
+            // third write that can fail on its own.
             Ledger::DocumentRepository documents;
             // doc_type "fno" IS in migrations/010_documents.sql's CHECK list,
             // so unlike the HR templates this one keeps DocgenController's
