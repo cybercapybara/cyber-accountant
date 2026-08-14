@@ -361,4 +361,22 @@ TEST(ParseTiyn, RejectsEmptyString) {
     EXPECT_THROW(Ledger::parse_tiyn(""), std::invalid_argument);
 }
 
+// ---------------------------------------------------------------------------
+// Ledger::format_tiyn — the inverse of parse_tiyn, added for
+// Payroll::PayrollService::post_to_journal (Task 4) to render summed payslip
+// totals as journal-line amount strings.
+// ---------------------------------------------------------------------------
+
+TEST(FormatTiyn, ZeroFormatsWithTwoDecimalZeros) {
+    EXPECT_EQ(Ledger::format_tiyn(0), "0.00");
+}
+
+TEST(FormatTiyn, RoundTripsFractionalAmount) {
+    EXPECT_EQ(Ledger::format_tiyn(123456), "1234.56");
+}
+
+TEST(FormatTiyn, WholeAmountGetsZeroCents) {
+    EXPECT_EQ(Ledger::format_tiyn(100), "1.00");
+}
+
 }  // namespace

@@ -55,6 +55,7 @@
 #pragma once
 
 #include <cctype>
+#include <cstdio>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -174,6 +175,31 @@ inline long long parse_tiyn(const std::string& amount) {
     if (tiyn <= 0)
         throw std::invalid_argument("parse_tiyn: amount must be strictly positive, got '" + amount + "'");
     return tiyn;
+}
+
+/**
+ * @brief The inverse of parse_tiyn(): render @p tiyn (1/100 of a tenge) as
+ *        the decimal string ("1234.56") every journal line amount and
+ *        vat_amount is stored as. Callers that only ever have an integer sum
+ *        in hand (e.g. Payroll::PayrollService::post_to_journal summing
+ *        several payslips) use this instead of hand-rolling `std::to_string
+ *        (whole) + "." + ...` and its zero-padding edge cases.
+ *
+ * @p tiyn is expected non-negative — every caller in this codebase sums
+ * amounts that are themselves non-negative by construction (payroll
+ * withholding, tax calculations), so there is no sign to round-trip. Unlike
+ * parse_tiyn(), zero is a valid input here: 0 -> "0.00" (a caller building a
+ * complete rates_snapshot or displaying a per-category total may legitimately
+ * have a zero bucket; only journal_lines.amount itself carries a DB-level
+ * `CHECK (amount > 0)`, which JournalService::create_draft's own validation
+ * mirrors before this formatter is ever involved).
+ */
+inline std::string format_tiyn(long long tiyn) {
+    const long long whole = tiyn / 100;
+    const long long frac = tiyn % 100;
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%lld.%02lld", whole, frac);
+    return std::string(buf);
 }
 
 class JournalService {
