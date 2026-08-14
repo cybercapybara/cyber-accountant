@@ -332,6 +332,22 @@ TEST(ParseTiyn, RejectsMultipleDecimalPoints) {
     EXPECT_THROW(Ledger::parse_tiyn("1.2.3"), std::invalid_argument);
 }
 
+// Fix round 1: `whole * 100 + frac` overflows `long long` (UB, not an
+// exception) once the integer part reaches 17+ digits — 16 nines is the
+// largest integer part that stays safe (see parse_tiyn's doc comment for
+// the exact derivation). These two cases pin the boundary on both sides.
+TEST(ParseTiyn, RejectsIntegerPartLongerThan16Digits) {
+    // 17 digits — one past the NUMERIC(18,2)-derived limit that keeps
+    // `whole * 100` itself from overflowing.
+    EXPECT_THROW(Ledger::parse_tiyn("99999999999999999.00"), std::invalid_argument);
+}
+
+TEST(ParseTiyn, Parses16DigitIntegerPartAtTheBoundary) {
+    // 16 nines, worst-case fractional part: 9999999999999999 * 100 + 99 =
+    // 999999999999999999, comfortably under LLONG_MAX (~9.22e18).
+    EXPECT_EQ(Ledger::parse_tiyn("9999999999999999.99"), 999999999999999999LL);
+}
+
 TEST(ParseTiyn, RejectsNegativeSign) {
     EXPECT_THROW(Ledger::parse_tiyn("-5.00"), std::invalid_argument);
 }

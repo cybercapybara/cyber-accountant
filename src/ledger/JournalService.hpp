@@ -107,9 +107,25 @@ struct InvalidEntryState : std::runtime_error {
  * digits (a bare "123" means "123.00"). Rejects: empty input, a sign of
  * either kind (amounts are always positive — side, debit vs credit, carries
  * the direction), more than one decimal point, more than 2 fractional
- * digits, any non-digit character, integer overflow, and a zero result
- * (journal_lines.amount has a DB-level `CHECK (amount > 0)` — this mirrors
- * that at the service layer so the 422 fires before the DB is touched).
+ * digits, any non-digit character, an integer part longer than the
+ * journal_lines.amount column can hold, and a zero result (that column has
+ * a DB-level `CHECK (amount > 0)` — this mirrors both at the service layer
+ * so the 422 fires before the DB is touched).
+ *
+ * The integer-part length guard (`> 16` digits) is NOT the NUMERIC(18,2)
+ * column's own limit re-derived carelessly — it is specifically sized so
+ * `whole * 100 + frac` below cannot overflow `long long`. NUMERIC(18,2)
+ * allows at most 16 integer digits (18 total precision - 2 scale), and the
+ * worst case at that length, 9999999999999999 * 100 + 99 = 999999999999999999,
+ * is still well under LLONG_MAX (~9.22e18). One more digit
+ * (17, e.g. 99999999999999999) would make `whole * 100` alone
+ * (9999999999999999900) exceed LLONG_MAX — undefined behaviour on a plain
+ * signed multiply, not an exception — so the guard runs BEFORE std::stoll,
+ * not as a catch on its own std::out_of_range (std::stoll would only throw
+ * for int_part itself overflowing long long, i.e. >19 digits; the
+ * downstream `* 100 + frac` overflow at 17-19 digits would otherwise slip
+ * through as UB, reachable straight from caller-supplied input before any
+ * DB constraint ever sees it).
  *
  * @throws std::invalid_argument on any of the above.
  */
@@ -135,6 +151,12 @@ inline long long parse_tiyn(const std::string& amount) {
     for (char c : frac_part)
         if (!std::isdigit(static_cast<unsigned char>(c)))
             throw std::invalid_argument("parse_tiyn: non-digit character in fractional part of '" + amount + "'");
+
+    // Guard BEFORE std::stoll: at 17+ digits, `whole * 100` alone overflows
+    // long long (UB), which is not something a try/catch around stoll can
+    // ever observe — see the function doc comment for the exact bound.
+    if (int_part.size() > 16)
+        throw std::invalid_argument("parse_tiyn: integer part too long (max 16 digits) in '" + amount + "'");
 
     while (frac_part.size() < 2)
         frac_part.push_back('0');
