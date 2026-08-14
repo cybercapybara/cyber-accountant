@@ -1,0 +1,36 @@
+((# Читабельная печатная форма упрощённой декларации ФНО 910.00, а не факсимиле бланка КГД. #))
+\documentclass[a4paper,10pt]{article}
+\usepackage[margin=18mm]{geometry}
+\usepackage{fontspec}
+\setmainfont[Scale=0.92]{Noto Sans}
+\usepackage{polyglossia}\setmainlanguage{russian}
+\usepackage{tabularx,booktabs,array}
+\newcommand{\field}[1]{\textbf{#1}}
+\pagestyle{empty}
+\begin{document}
+\begin{center}\Large\bfseries Упрощённая декларация для субъектов малого бизнеса\\
+(форма 910.00)\\
+\normalsize {% if period.half == "1" %}I{% endif %}{% if period.half == "2" %}II{% endif %} полугодие {{ period.year }} года\end{center}
+\vspace{4mm}
+\noindent\field{Наименование:} {{ org.name }}\\
+\noindent\field{БИН:} {{ org.bin }}
+\vspace{4mm}
+\noindent\begin{tabularx}{\textwidth}{@{}X c r@{}}
+\toprule
+Показатель & Код строки & Сумма \\
+\midrule
+Доход за налоговый период & 910.00.001 & {{ income_tenge }} ₸ \\
+Ставка налога & 910.00.002 & {{ rate_percent }}\% \\
+Сумма налога, подлежащая уплате & 910.00.003 & {{ tax_tenge }} ₸ \\
+\bottomrule
+\end{tabularx}
+\vspace{3mm}
+\noindent Сумма налога к уплате: {{ tax_tenge }} ₸\\
+({{ tax_words }})
+\vspace{12mm}
+\noindent Директор \hrulefill\qquad {{ director }}
+\vspace{6mm}
+\noindent Бухгалтер \hrulefill\qquad {{ accountant }}
+\vspace{6mm}
+\noindent Дата подписания: {{ signed_on }}
+\end{document}

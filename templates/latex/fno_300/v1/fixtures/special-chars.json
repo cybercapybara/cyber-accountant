@@ -1,0 +1,19 @@
+{
+  "org": {
+    "bin": "104332181962",
+    "name": "Тест Оргэнизейшн ТОО"
+  },
+  "period": {
+    "year": "2026",
+    "quarter": "3"
+  },
+  "sales_tenge": "1 000 000,00",
+  "vat_charged_tenge": "120 000,00",
+  "vat_credited_tenge": "200 000,00",
+  "balance_tenge": "80 000,00",
+  "balance_kind": "to_refund",
+  "balance_words": "Восемьдесят тысяч тенге 00 тиын",
+  "signed_on": "14.08.2026",
+  "director": "100% & \"итог\" #3 _над_ {скобка} \\слэш $7 ^степень ~волна <знак>",
+  "accountant": "Бухгалтеров Б.Б."
+}

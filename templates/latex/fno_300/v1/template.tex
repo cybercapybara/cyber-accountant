@@ -1,0 +1,43 @@
+((# Читабельная печатная форма декларации по НДС ФНО 300.00, а не факсимиле бланка КГД. #))
+\documentclass[a4paper,10pt]{article}
+\usepackage[margin=18mm]{geometry}
+\usepackage{fontspec}
+\setmainfont[Scale=0.92]{Noto Sans}
+\usepackage{polyglossia}\setmainlanguage{russian}
+\usepackage{tabularx,booktabs,array}
+\newcommand{\field}[1]{\textbf{#1}}
+\pagestyle{empty}
+\begin{document}
+\begin{center}\Large\bfseries Декларация по налогу на добавленную стоимость\\
+(форма 300.00)\\
+\normalsize {% if period.quarter == "1" %}I{% endif %}{% if period.quarter == "2" %}II{% endif %}{% if period.quarter == "3" %}III{% endif %}{% if period.quarter == "4" %}IV{% endif %} квартал {{ period.year }} года\end{center}
+\vspace{4mm}
+\noindent\field{Наименование:} {{ org.name }}\\
+\noindent\field{БИН:} {{ org.bin }}
+\vspace{4mm}
+\noindent\begin{tabularx}{\textwidth}{@{}X c r@{}}
+\toprule
+Показатель & Код строки & Сумма \\
+\midrule
+Оборот по реализации, облагаемый НДС & 300.00.001 & {{ sales_tenge }} ₸ \\
+Сумма НДС, начисленная за налоговый период & 300.00.002 & {{ vat_charged_tenge }} ₸ \\
+Сумма НДС, относимая в зачёт & 300.00.003 & {{ vat_credited_tenge }} ₸ \\
+Сумма НДС к уплате (возврату) & 300.00.004 & {{ balance_tenge }} ₸ \\
+\bottomrule
+\end{tabularx}
+\vspace{3mm}
+{% if balance_kind == "to_pay" %}
+\noindent Сумма НДС, подлежащая уплате в бюджет: {{ balance_tenge }} ₸\\
+({{ balance_words }})
+{% endif %}
+{% if balance_kind == "to_refund" %}
+\noindent Сумма НДС, подлежащая возврату из бюджета: {{ balance_tenge }} ₸\\
+({{ balance_words }})
+{% endif %}
+\vspace{12mm}
+\noindent Директор \hrulefill\qquad {{ director }}
+\vspace{6mm}
+\noindent Бухгалтер \hrulefill\qquad {{ accountant }}
+\vspace{6mm}
+\noindent Дата подписания: {{ signed_on }}
+\end{document}
