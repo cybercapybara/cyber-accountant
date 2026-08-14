@@ -24,6 +24,9 @@ export type UserListResponse = Schemas['UserListResponse'];
 export type JobListResponse = Schemas['JobListResponse'];
 export type DlqListResponse = Schemas['DlqListResponse'];
 export type JobCreate = Schemas['JobCreate'];
+export type Organization = Schemas['Organization'];
+export type OrganizationWithRole = Schemas['OrganizationWithRole'];
+export type OrgMember = Schemas['OrgMember'];
 
 /** GET /api/auth/me, POST /api/auth/login, POST /api/auth/refresh — { user }. */
 export type MeResponse = Schemas['MeResponse'];
@@ -37,3 +40,15 @@ export type RoleDetailResponse = Schemas['RoleDetailResponse'];
 export type InviteResponse = Schemas['InviteResponse'];
 /** Generic { message } envelope (logout, delete, …). */
 export type MessageResponse = Schemas['MessageResponse'];
+/** GET /api/v1/orgs — { data: Organization[], total, limit, offset }. */
+export type OrganizationListResponse = Schemas['OrganizationListResponse'];
+/** POST /api/v1/orgs — { data: Organization }. */
+export type OrganizationDetailResponse = Schemas['OrganizationDetailResponse'];
+/** GET /api/v1/orgs/mine — { data: OrganizationWithRole[] }. */
+export type MineOrganizationsResponse = Schemas['MineOrganizationsResponse'];
+/** POST/PATCH /api/v1/orgs/{id}/members[/{user_id}] — { data: OrgMember }. */
+export type OrgMemberDetailResponse = Schemas['OrgMemberDetailResponse'];
+/** POST /api/v1/orgs/{id}/switch — { access }. Cookie-mode clients never
+ * read this body (the __Host-access cookie is HttpOnly); it exists for
+ * Bearer-mode clients, which this template does not use. */
+export type SwitchResponse = Schemas['SwitchResponse'];

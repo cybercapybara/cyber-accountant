@@ -1,5 +1,5 @@
 import { lazy, type ReactElement } from 'react';
-import { Shield, ScrollText } from 'lucide-react';
+import { Shield, ScrollText, Building2 } from 'lucide-react';
 
 import { Permission } from '@/lib/auth/permissions';
 
@@ -17,6 +17,7 @@ import { ChangeEmailPage } from '@/pages/ChangeEmail';
 import { RequestResetPage } from '@/pages/RequestReset';
 import { ResetPasswordPage } from '@/pages/ResetPassword';
 import { JoinFromInvitePage } from '@/pages/JoinFromInvite';
+import { OrganizationsPage } from '@/pages/Organizations';
 
 // Admin pages are code-split: a logged-out visitor on /login should not pull
 // the whole admin bundle. React.lazy needs a module with a `default` export,
@@ -143,6 +144,13 @@ export const routes: RouteEntry[] = [
     requirePermission: Permission.AuditRead,
     navLabel: 'Audit',
     navIcon: ScrollText,
+  },
+  {
+    path: '/organizations',
+    element: <OrganizationsPage />,
+    guard: 'confirmed',
+    navLabel: 'Organizations',
+    navIcon: Building2,
   },
 ];
 

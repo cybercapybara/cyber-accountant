@@ -36,6 +36,7 @@
  */
 
 import type { paths } from './schema.gen';
+import { getSelectedOrgId } from './orgSession';
 
 export interface ApiFieldError {
   field?: string;
@@ -200,6 +201,24 @@ function isRefreshable(path: string): boolean {
   return !NO_REFRESH_PREFIXES.some((p) => path === p || path.startsWith(p + '?'));
 }
 
+/**
+ * Replay POST /api/v1/orgs/{id}/switch after a refresh (see orgSession.ts
+ * and the /orgs/{id}/switch description in docs/openapi.yaml). Raw fetch,
+ * not the api.POST wrapper: it must not re-enter this same refresh engine,
+ * and a failure here is not fatal — the caller keeps the refreshed session,
+ * just possibly scoped to the single-membership default org instead of the
+ * one the user picked, exactly like an ordinary refresh with no org saved.
+ */
+function trySwitchOrg(orgId: string): Promise<void> {
+  return fetch(`/api/v1/orgs/${orgId}/switch`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: csrfHeader('POST'),
+  })
+    .then(() => undefined)
+    .catch(() => undefined);
+}
+
 function tryRefresh(): Promise<boolean> {
   refreshInFlight ??= fetch('/api/v1/auth/refresh', {
     method: 'POST',
@@ -207,6 +226,13 @@ function tryRefresh(): Promise<boolean> {
     headers: csrfHeader('POST'),
   })
     .then((r) => r.ok)
+    .then(async (ok) => {
+      if (ok) {
+        const orgId = getSelectedOrgId();
+        if (orgId) await trySwitchOrg(orgId);
+      }
+      return ok;
+    })
     .catch(() => false)
     .finally(() => {
       refreshInFlight = null;

@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '@/lib/api/client';
 import { qk } from '@/lib/api/queryKeys';
+import { clearSelectedOrgId } from '@/lib/api/orgSession';
 
 export function useLogin() {
   const qc = useQueryClient();
@@ -41,6 +42,10 @@ export function useLogout() {
     },
     onSuccess: () => {
       qc.clear();
+      // The next login is a different session (possibly a different
+      // user) — a stale selected-org id must not leak into it and get
+      // replayed by client.ts's post-refresh re-switch.
+      clearSelectedOrgId();
     },
   });
 }

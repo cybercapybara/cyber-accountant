@@ -8,6 +8,11 @@
  */
 export const qk = {
   me: () => ['me'] as const,
+  orgs: {
+    all: (page?: number) =>
+      page === undefined ? (['orgs', 'all'] as const) : (['orgs', 'all', page] as const),
+    mine: () => ['orgs', 'mine'] as const,
+  },
   admin: {
     users: (page?: number) =>
       page === undefined ? (['admin', 'users'] as const) : (['admin', 'users', page] as const),

@@ -1490,6 +1490,429 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List organizations (admin) */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Organization page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OrganizationListResponse"];
+                    };
+                };
+                /** @description Not an admin */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create an organization (admin) — tenants are provisioned by a system admin, not self-service */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description Exactly 12 digits; check-digit validation is P1 */
+                        bin: string;
+                        name: string;
+                        /**
+                         * @default snr_simplified
+                         * @enum {string}
+                         */
+                        tax_regime?: "snr_simplified" | "standard";
+                        /** @default false */
+                        vat_payer?: boolean;
+                    };
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OrganizationDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not an admin */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description An organization with that BIN already exists */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description BIN does not match the required 12-digit format */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/mine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the caller's organizations, each with their role in it */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Organizations the caller is a member of */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MineOrganizationsResponse"];
+                    };
+                };
+                /** @description Not authenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{id}/switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a new access token scoped to this organization
+         * @description Issues a fresh access token with the SAME claim shape as the login/
+         *     refresh access token (OrganizationsController::switchOrg mirrors
+         *     AuthController::mint_session's access-claim assembly), plus an `org`
+         *     claim set to {id}. Requires a live membership row for the caller in
+         *     {id}. The refresh token/cookie is untouched.
+         *
+         *     Sets the __Host-access cookie to the new token (cookie-mode clients
+         *     never see the body — it's HttpOnly), in addition to returning it in
+         *     the JSON body for Bearer-mode clients.
+         *
+         *     Caveat for multi-org clients: after the next POST /api/v1/auth/refresh,
+         *     the active org resets to mint_session's single-membership default
+         *     (empty if the caller belongs to 0 or >1 organizations) — a client
+         *     with more than one organization must call /switch again after every
+         *     refresh to stay scoped to a non-default org. This will be handled by
+         *     the frontend (Task 8).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description New access token — Set-Cookie access (refresh cookie untouched) */
+                200: {
+                    headers: {
+                        "Set-Cookie"?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SwitchResponse"];
+                    };
+                };
+                /** @description Malformed organization id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not authenticated */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not a member of this organization */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Add a member to an organization (admin, or owner of this organization) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        user_id: string;
+                        /** @enum {string} */
+                        role: "owner" | "accountant" | "viewer";
+                    };
+                };
+            };
+            responses: {
+                /** @description Member added */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OrgMemberDetailResponse"];
+                    };
+                };
+                /** @description Validation failed */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not an admin or owner of this organization */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description This user is already a member of the organization */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{id}/members/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a member from an organization (admin, or owner of this organization) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    user_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Member removed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MessageResponse"];
+                    };
+                };
+                /** @description Not an admin or owner of this organization */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Member not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Cannot remove the last owner of an organization */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Change a member's role (admin, or owner of this organization) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    user_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        role: "owner" | "accountant" | "viewer";
+                    };
+                };
+            };
+            responses: {
+                /** @description Role updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OrgMemberDetailResponse"];
+                    };
+                };
+                /** @description Validation failed */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not an admin or owner of this organization */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Member not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Cannot demote the last owner of an organization */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
     "/api/v1/jobs": {
         parameters: {
             query?: never;
@@ -1863,6 +2286,55 @@ export interface components {
         };
         MessageResponse: {
             message?: string;
+        };
+        Organization: {
+            /** Format: uuid */
+            id: string;
+            /** @description 12-digit BIN/IIN — format-only in v1 */
+            bin: string;
+            name: string;
+            /** @enum {string} */
+            tax_regime: "snr_simplified" | "standard";
+            vat_payer: boolean;
+            /** @enum {string} */
+            status: "active" | "suspended" | "archived";
+            created_at: string;
+            updated_at: string;
+        };
+        OrganizationWithRole: components["schemas"]["Organization"] & {
+            /** @enum {string} */
+            role: "owner" | "accountant" | "viewer";
+        };
+        OrganizationListResponse: {
+            data: components["schemas"]["Organization"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        OrganizationDetailResponse: {
+            data: components["schemas"]["Organization"];
+        };
+        MineOrganizationsResponse: {
+            data: components["schemas"]["OrganizationWithRole"][];
+        };
+        OrgMember: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** Format: uuid */
+            user_id: string;
+            /** @enum {string} */
+            role: "owner" | "accountant" | "viewer";
+            created_at: string;
+            updated_at: string;
+        };
+        OrgMemberDetailResponse: {
+            data: components["schemas"]["OrgMember"];
+        };
+        SwitchResponse: {
+            /** @description New HS256 access JWT carrying an `org` claim set to {id} */
+            access: string;
         };
     };
     responses: never;
