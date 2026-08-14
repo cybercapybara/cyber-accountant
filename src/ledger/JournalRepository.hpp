@@ -94,6 +94,61 @@ public:
             entry.lines = load_lines(entry);
         return entries;
     }
+
+    /**
+     * @brief Task 13 addition: `GET /journal-entries` needs an optional
+     *        `?from=&to=` filter (inclusive, on `entry_date`) WITH accurate
+     *        pagination totals — mirrors DocumentRepository::list_filtered's
+     *        rationale (an in-memory filter-after-fetch would desync `total`
+     *        from the filtered page). @p from / @p to are nullopt for "no
+     *        bound on this side"; the controller is responsible for
+     *        rejecting a malformed date string (422) before it ever reaches
+     *        here — this repository trusts the caller on format, same
+     *        posture DocumentRepository takes on CHECK-shaped values.
+     *        Header-only (no lines) — same as list_in_org.
+     */
+    std::vector<JournalEntry> list_filtered(const std::string& org_id,
+                                            const std::optional<std::string>& from,
+                                            const std::optional<std::string>& to,
+                                            int limit,
+                                            int offset) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params("SELECT " + std::string(kColumns) +
+                                         " FROM journal_entries WHERE org_id = $1 "
+                                         "AND ($2::date IS NULL OR entry_date >= $2::date) "
+                                         "AND ($3::date IS NULL OR entry_date <= $3::date) "
+                                         "ORDER BY " +
+                                         std::string(kOrderBy) + " LIMIT $4 OFFSET $5",
+                                     org_id,
+                                     from,
+                                     to,
+                                     limit,
+                                     offset);
+            std::vector<JournalEntry> out;
+            out.reserve(r.size());
+            for (const auto& row : r)
+                out.push_back(JournalEntry::from_row(row));
+            return out;
+        });
+    }
+
+    /// Total row count for the same (@p from, @p to) filter `list_filtered`
+    /// uses — kept as a matching pair so `GET /journal-entries`'s pagination
+    /// `total` always agrees with the filtered page it labels.
+    long count_filtered(const std::string& org_id,
+                        const std::optional<std::string>& from,
+                        const std::optional<std::string>& to) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params(
+                "SELECT COUNT(*) FROM journal_entries WHERE org_id = $1 "
+                "AND ($2::date IS NULL OR entry_date >= $2::date) "
+                "AND ($3::date IS NULL OR entry_date <= $3::date)",
+                org_id,
+                from,
+                to);
+            return r.at(0).at(0).template as<long>();
+        });
+    }
 };
 
 }  // namespace Ledger

@@ -15,11 +15,13 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json-schema.hpp>
 #include <nlohmann/json.hpp>
@@ -100,6 +102,52 @@ public:
         if (!info)
             return "no template found for slug '" + slug + "'";
         return validate(*info, input);
+    }
+
+    /**
+     * @brief Task 13 addition: every registered template's latest version —
+     *        powers `GET /api/v1/doc-templates` (the frontend needs
+     *        {slug, version, schema} for each template to build its
+     *        generate forms).
+     * @details Walks `root_`'s immediate subdirectories exactly the way
+     *          `latest()` walks a single slug's `vN` children, running each
+     *          directory NAME through the SAME `is_valid_slug()` allowlist
+     *          before it is ever used as a `root_ / name` path component —
+     *          the one-choke-point invariant documented on `latest()`
+     *          extends to this scan too, so a stray non-template directory
+     *          on disk can never be walked just because it showed up in a
+     *          `directory_iterator`. A name that fails the allowlist, or
+     *          that `latest()` itself resolves to `std::nullopt` (no valid
+     *          `vN` subdirectory), is silently skipped — this is a
+     *          discovery scan over whatever happens to exist on disk, not a
+     *          caller asking for one specific slug, so "not a template" is
+     *          not an error here the way it is in `validate()`.
+     * @return one `TemplateInfo` per discovered slug, sorted by slug so the
+     *         API response order is stable across calls.
+     */
+    std::vector<TemplateInfo> list() const {
+        namespace fs = std::filesystem;
+        std::vector<TemplateInfo> out;
+        std::error_code ec;
+        if (!fs::is_directory(root_, ec))
+            return out;
+
+        std::vector<std::string> slugs;
+        for (const auto& entry : fs::directory_iterator(root_, ec)) {
+            if (!entry.is_directory())
+                continue;
+            const std::string name = entry.path().filename().string();
+            if (is_valid_slug(name))
+                slugs.push_back(name);
+        }
+        std::sort(slugs.begin(), slugs.end());
+
+        out.reserve(slugs.size());
+        for (const auto& slug : slugs) {
+            if (auto info = latest(slug))
+                out.push_back(std::move(*info));
+        }
+        return out;
     }
 
     /// Validate @p input against an already-resolved @p info's schema —

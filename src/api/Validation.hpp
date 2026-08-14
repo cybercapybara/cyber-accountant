@@ -200,6 +200,28 @@ inline drogon::HttpResponsePtr response_400(const Errors& errs) {
 }
 
 /**
+ * @brief Single-field 422 — the semantic-validation counterpart to
+ *        response_400(): @p field is syntactically fine (right type,
+ *        present), but its VALUE fails a domain rule (a typed service
+ *        exception, a JSON-Schema mismatch, a cross-org reference, ...).
+ *        Same split CounterpartiesController::validate_and_fill's
+ *        identifier check-digit branch and LedgerDocumentsController::list's
+ *        type/status filter checks already draw ad hoc, each building the
+ *        `{"errors": [...]}` body directly via ErrorResponse::make; Task
+ *        13's Journal/Docgen controllers are the first callers that need
+ *        this shape more than once each, so it moves here instead of
+ *        getting copy-pasted a third and fourth time.
+ */
+inline drogon::HttpResponsePtr response_422(const std::string& field,
+                                            const std::string& code,
+                                            const std::string& message) {
+    Errors errs;
+    errs.add(field, code, message);
+    return ErrorResponse::make(
+        {drogon::k422UnprocessableEntity, "validation_failed", "", json{{"errors", errs.errors_json()}}});
+}
+
+/**
  * @brief Parse the request body as JSON. Returns true on success and fills
  *        @p out; on failure invokes @p cb with a 400 response and returns false.
  *        Eliminates the 5-line try/catch boilerplate in every mutating handler.
