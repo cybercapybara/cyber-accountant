@@ -101,6 +101,13 @@ find_package(nlohmann_json CONFIG REQUIRED)
 # (upstream CMakeLists.txt, EXPORT_NAME validator) — link that, not the bare
 # package name.
 find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
+# pugixml: TEST-ONLY (tests/unit/test_fno910_xml.cpp) — parses
+# Tax::Fno910::build_xml's hand-rolled string output back to independently
+# verify well-formedness. Not linked into app_core: production ФНО
+# generators (src/tax/FnoXml.hpp, src/tax/Fno910.hpp) build XML by plain
+# string assembly and have no XML-library dependency (see their file
+# headers — KGD publishes no content XSD to validate against anyway).
+find_package(pugixml CONFIG REQUIRED)
 find_package(GTest CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)  # Used directly for HMAC-SHA256 (Auth) and SHA-256 (Idempotency)
@@ -251,6 +258,7 @@ if(UNIT_SOURCES)
         GTest::gtest
         GTest::gmock
         app_core
+        pugixml::pugixml
     )
     target_include_directories(${PROJECT_NAME}_tests_unit PRIVATE
         ${CMAKE_SOURCE_DIR}/src
