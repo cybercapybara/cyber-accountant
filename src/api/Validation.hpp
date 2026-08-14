@@ -191,6 +191,36 @@ inline void uuid(Errors& errs, const json& body, const std::string& field) {
     regex_match(errs, body, field, re, "uuid");
 }
 
+/**
+ * @brief `YYYY-MM-DD`, calendar-valid (not just shape/range) — days-in-month
+ *        table + the standard Gregorian leap-year rule (divisible by 4,
+ *        except centuries not divisible by 400), so e.g. "2026-02-30" fails
+ *        here instead of only surfacing later as a raw pqxx `::date`-cast
+ *        error (a 500) once it reaches the database.
+ *
+ * Moved here (Task 11) from JournalController's private `is_valid_date` so
+ * Employees/HrController can share it without duplicating the table —
+ * JournalController::list()/create() now call this same function; the
+ * calendar-validation semantics are unchanged.
+ */
+inline bool is_valid_date(const std::string& s) {
+    static const std::regex re(R"(^(\d{4})-(\d{2})-(\d{2})$)");
+    std::smatch m;
+    if (!std::regex_match(s, m, re))
+        return false;
+    const int year = std::stoi(m[1].str());
+    const int month = std::stoi(m[2].str());
+    const int day = std::stoi(m[3].str());
+    if (month < 1 || month > 12 || day < 1)
+        return false;
+    static const int kDaysInMonth[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    const bool leap_year = (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0);
+    int days_in_this_month = kDaysInMonth[month - 1];
+    if (month == 2 && leap_year)
+        days_in_this_month = 29;
+    return day <= days_in_this_month;
+}
+
 // ---------------------------------------------------------------------------
 // Response helper
 // ---------------------------------------------------------------------------

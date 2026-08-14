@@ -601,6 +601,225 @@ components:
         document_id:   { type: string, format: uuid, description: 'Poll GET /api/v1/documents/{id} for the final rendered status' }
         render_queued: { type: boolean, description: 'false if the docgen.render job could not be enqueued (e.g. a transient Redis error) — the document row still exists as draft; an operator must re-enqueue it (Fix round 1: best-effort enqueue)' }
 
+    # Mirrors Hr::to_json(Employee) in src/hr/Employee.hpp.
+    Employee:
+      type: object
+      required: [id, org_id, iin, last_name, first_name, middle_name, position, salary_tiyn, hired_on, dismissed_on, ipn_deduction_claimed, opvr_exempt, payout_iik, status, created_at, updated_at]
+      properties:
+        id:                    { type: string, format: uuid }
+        org_id:                { type: string, format: uuid }
+        iin:                   { type: string, pattern: '^[0-9]{12}$', description: '12 digits + valid check digit' }
+        last_name:             { type: string }
+        first_name:            { type: string }
+        middle_name:           { type: ['string', 'null'] }
+        position:              { type: string }
+        salary_tiyn:           { type: integer, format: int64, description: 'Salary in tiyn (1/100 tenge)' }
+        hired_on:              { type: string, format: date }
+        dismissed_on:          { type: ['string', 'null'], format: date }
+        ipn_deduction_claimed: { type: boolean }
+        opvr_exempt:           { type: boolean }
+        payout_iik:            { type: string }
+        status:                { type: string, enum: [active, dismissed] }
+        created_at:            { type: string }
+        updated_at:            { type: string }
+
+    EmployeeListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Employee' }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    EmployeeDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Employee' }
+
+    # POST /api/v1/employees request body — EmployeesController::validate_and_fill_create.
+    EmployeeCreate:
+      type: object
+      required: [iin, last_name, first_name, position, salary, hired_on]
+      properties:
+        iin:                   { type: string, pattern: '^[0-9]{12}$', description: 'ИИН, 12 digits + valid check digit' }
+        last_name:             { type: string }
+        first_name:            { type: string }
+        middle_name:           { type: string }
+        position:              { type: string }
+        salary:                { type: string, description: 'Decimal string in tenge, e.g. "300000.00" — parsed via Ledger::parse_tiyn, must be strictly positive' }
+        hired_on:               { type: string, pattern: '^\d{4}-\d{2}-\d{2}$', description: 'Calendar-valid date; immutable after creation' }
+        ipn_deduction_claimed: { type: boolean, default: false }
+        opvr_exempt:           { type: boolean, default: false }
+        payout_iik:            { type: string, default: '' }
+
+    # PATCH /api/v1/employees/{id} request body — same as EmployeeCreate minus
+    # hired_on (immutable) — EmployeesController::validate_and_fill_update.
+    # hired_on/status/dismissed_on are all REJECTED with 422 if present (see
+    # EmployeesController.hpp's file header) rather than accepted here.
+    EmployeeUpdate:
+      type: object
+      required: [iin, last_name, first_name, position, salary]
+      properties:
+        iin:                   { type: string, pattern: '^[0-9]{12}$' }
+        last_name:             { type: string }
+        first_name:            { type: string }
+        middle_name:           { type: string }
+        position:              { type: string }
+        salary:                { type: string, description: 'Decimal string in tenge, e.g. "300000.00"' }
+        ipn_deduction_claimed: { type: boolean }
+        opvr_exempt:           { type: boolean }
+        payout_iik:            { type: string }
+
+    # POST /api/v1/employees/{id}/dismiss request body.
+    EmployeeDismiss:
+      type: object
+      required: [dismissed_on]
+      properties:
+        dismissed_on: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$', description: 'Calendar-valid date' }
+
+    # Mirrors Hr::to_json(HrOrder) in src/hr/HrDocuments.hpp.
+    HrOrder:
+      type: object
+      required: [id, org_id, employee_id, kind, number, issued_on, effective_from, effective_to, payload, document_id, created_at, updated_at]
+      properties:
+        id:              { type: string, format: uuid }
+        org_id:          { type: string, format: uuid }
+        employee_id:     { type: string, format: uuid }
+        kind:            { type: string, enum: [hire, dismiss, vacation, business_trip, salary_change] }
+        number:          { type: string }
+        issued_on:       { type: string, format: date }
+        effective_from:  { type: string, format: date }
+        effective_to:    { type: ['string', 'null'], format: date }
+        payload:         { type: ['object', 'null'], additionalProperties: true }
+        document_id:     { type: ['string', 'null'], format: uuid }
+        created_at:      { type: string }
+        updated_at:      { type: string }
+
+    HrOrderListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/HrOrder' }
+
+    HrOrderDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/HrOrder' }
+
+    # POST /api/v1/hr-orders request body — HrController::createOrder.
+    HrOrderCreate:
+      type: object
+      required: [employee_id, kind, number, issued_on, effective_from]
+      properties:
+        employee_id:    { type: string, format: uuid, description: 'Must belong to the caller''s organization (422 foreign_employee otherwise)' }
+        kind:           { type: string, enum: [hire, dismiss, vacation, business_trip, salary_change] }
+        number:         { type: string }
+        issued_on:      { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        effective_from: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        effective_to:   { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        payload:        { type: object, additionalProperties: true }
+
+    # POST /api/v1/hr-orders/{id}/generate-document and
+    # /api/v1/labor-contracts/{id}/generate-document request body — every
+    # field OPTIONAL: the handler auto-derives what it can from the order/
+    # contract/employee/organization records and deep-merges this body on
+    # top (RFC 7396 merge patch) for the free-text fields the schema needs
+    # that this codebase has no column for (director, salary_words,
+    # work_schedule, ...) — see HrController.hpp's file header.
+    GenerateHrDocumentExtra:
+      type: object
+      additionalProperties: true
+      description: 'Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid'
+
+    # Mirrors Hr::to_json(LaborContract) in src/hr/HrDocuments.hpp.
+    LaborContract:
+      type: object
+      required: [id, org_id, employee_id, number, signed_on, starts_on, ends_on, terms_json, created_at, updated_at]
+      properties:
+        id:          { type: string, format: uuid }
+        org_id:      { type: string, format: uuid }
+        employee_id: { type: string, format: uuid }
+        number:      { type: string }
+        signed_on:   { type: string, format: date }
+        starts_on:   { type: string, format: date }
+        ends_on:     { type: ['string', 'null'], format: date }
+        terms_json:  { type: ['object', 'null'], additionalProperties: true }
+        created_at:  { type: string }
+        updated_at:  { type: string }
+
+    LaborContractListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/LaborContract' }
+
+    LaborContractDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/LaborContract' }
+
+    # POST /api/v1/labor-contracts request body — HrController::createContract.
+    LaborContractCreate:
+      type: object
+      required: [employee_id, number, signed_on, starts_on]
+      properties:
+        employee_id: { type: string, format: uuid, description: 'Must belong to the caller''s organization (422 foreign_employee otherwise)' }
+        number:      { type: string }
+        signed_on:   { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        starts_on:   { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        ends_on:     { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        terms_json:  { type: object, additionalProperties: true }
+
+    # Mirrors Hr::to_json(Vacation) in src/hr/HrDocuments.hpp.
+    Vacation:
+      type: object
+      required: [id, org_id, employee_id, starts_on, ends_on, days, kind, created_at, updated_at]
+      properties:
+        id:          { type: string, format: uuid }
+        org_id:      { type: string, format: uuid }
+        employee_id: { type: string, format: uuid }
+        starts_on:   { type: string, format: date }
+        ends_on:     { type: string, format: date }
+        days:        { type: integer }
+        kind:        { type: string, enum: [annual, unpaid, sick] }
+        created_at:  { type: string }
+        updated_at:  { type: string }
+
+    VacationListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Vacation' }
+
+    VacationDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Vacation' }
+
+    # POST /api/v1/vacations request body — HrController::createVacation.
+    VacationCreate:
+      type: object
+      required: [employee_id, starts_on, ends_on, days, kind]
+      properties:
+        employee_id: { type: string, format: uuid, description: 'Must belong to the caller''s organization (422 foreign_employee otherwise)' }
+        starts_on:   { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+        ends_on:     { type: string, pattern: '^\d{4}-\d{2}-\d{2}$', description: 'Must be on or after starts_on (422 before_starts_on otherwise)' }
+        days:        { type: integer, minimum: 1 }
+        kind:        { type: string, enum: [annual, unpaid, sick] }
+
 # -----------------------------------------------------------------------------
 paths:
   /:
@@ -1676,6 +1895,275 @@ paths:
         '403': { description: 'No org context, or caller''s role is viewer' }
         '422': { description: 'template_slug is not a registered template, input fails the template''s JSON Schema, or counterparty_id/link_entry_id does not belong to this organization' }
         '503': { description: Job queue not enabled }
+
+  /api/v1/employees:
+    get:
+      summary: List employees for the caller's organization (paginated, includes dismissed)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Employee page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeListResponse' }
+        '403': { description: No org context }
+    post:
+      summary: Create an employee (accountant/owner only)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmployeeCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '409': { description: An employee with that IIN already exists in this organization }
+        '422': { description: 'iin fails its check digit, salary fails to parse (Ledger::parse_tiyn), or hired_on is not a calendar-valid date' }
+
+  /api/v1/employees/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Get an employee
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Employee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeDetailResponse' }
+        '400': { description: Malformed id }
+        '403': { description: No org context }
+        '404': { description: Not found (including an employee belonging to another organization) }
+    patch:
+      summary: Patch an employee's editable fields (accountant/owner only)
+      description: |
+        Patches every field Hr::EmployeeRepository::update() allows in one
+        call — hired_on/status/dismissed_on are NOT among them.
+        Including any of those three (non-null) in the body is rejected with
+        422, not silently ignored: hired_on is immutable after hire, and
+        status/dismissed_on change only through
+        POST /employees/{id}/dismiss.
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmployeeUpdate' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found (including an employee belonging to another organization) }
+        '409': { description: The patched iin collides with another employee in this organization }
+        '422': { description: 'iin fails its check digit, salary fails to parse, or hired_on/status/dismissed_on was included in the body' }
+
+  /api/v1/employees/{id}/dismiss:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Dismiss an employee (accountant/owner only)
+      description: |
+        Sets status='dismissed' and dismissed_on in one call — the only way
+        to change either field (Hr::EmployeeRepository::dismiss()). A wrong
+        org, a missing id, and an already-dismissed employee are all
+        indistinguishable 404s.
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmployeeDismiss' }
+      responses:
+        '200':
+          description: Dismissed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found, already dismissed, or belonging to another organization }
+        '422': { description: dismissed_on is not a calendar-valid date }
+
+  /api/v1/hr-orders:
+    get:
+      summary: List HR orders for the caller's organization (unpaginated, optional ?employee_id filter)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: employee_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: HR orders
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrOrderListResponse' }
+        '400': { description: employee_id is present but not a well-formed uuid }
+        '403': { description: No org context }
+    post:
+      summary: Create an HR order (accountant/owner only)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HrOrderCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HrOrderDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field, or a malformed employee_id) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '422': { description: 'kind is not one of the registered values, issued_on/effective_from/effective_to is not calendar-valid, or employee_id does not belong to this organization' }
+
+  /api/v1/hr-orders/{id}/generate-document:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Generate the hr_order document for an HR order (accountant/owner only)
+      description: |
+        Builds the hr_order template input from the order + its employee +
+        the organization, deep-merges an optional request body on top for
+        the free-text fields not on file (director, reason, details, ...),
+        creates a draft document (doc_type='hr', source='generated'),
+        attaches it back onto the order (hr_orders.document_id), and
+        enqueues a docgen.render job — same async contract as
+        POST /documents/generate.
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerateHrDocumentExtra' }
+      responses:
+        '202':
+          description: Accepted — render enqueued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerateDocumentResponse' }
+        '400': { description: Malformed id, or body is not a JSON object }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found (including an HR order belonging to another organization) }
+        '422': { description: The merged input fails the hr_order template's JSON Schema (e.g. a required free-text field was not supplied) }
+        '503': { description: Job queue not enabled }
+
+  /api/v1/labor-contracts:
+    get:
+      summary: List labor contracts for one employee (unpaginated; ?employee_id is required)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: employee_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Labor contracts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LaborContractListResponse' }
+        '400': { description: employee_id is missing or not a well-formed uuid }
+        '403': { description: No org context }
+    post:
+      summary: Create a labor contract (accountant/owner only)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LaborContractCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LaborContractDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field, or a malformed employee_id) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '422': { description: 'signed_on/starts_on/ends_on is not calendar-valid, or employee_id does not belong to this organization' }
+
+  /api/v1/labor-contracts/{id}/generate-document:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Generate the labor_contract document for a labor contract (accountant/owner only)
+      description: |
+        Same shape as the hr-orders variant, sourced from the contract + its
+        employee + the organization. labor_contracts has no document_id
+        column, so there is no attach-back step here.
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerateHrDocumentExtra' }
+      responses:
+        '202':
+          description: Accepted — render enqueued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenerateDocumentResponse' }
+        '400': { description: Malformed id, or body is not a JSON object }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '404': { description: Not found (including a labor contract belonging to another organization) }
+        '422': { description: The merged input fails the labor_contract template's JSON Schema (e.g. a required free-text field was not supplied) }
+        '503': { description: Job queue not enabled }
+
+  /api/v1/vacations:
+    get:
+      summary: List vacations for the caller's organization (unpaginated, optional ?employee_id filter)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: employee_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Vacations
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VacationListResponse' }
+        '400': { description: employee_id is present but not a well-formed uuid }
+        '403': { description: No org context }
+    post:
+      summary: Create a vacation record (accountant/owner only)
+      tags: [hr]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VacationCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VacationDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field, or a malformed employee_id) }
+        '403': { description: 'No org context, or caller''s role is viewer' }
+        '422': { description: 'starts_on/ends_on is not calendar-valid, ends_on is before starts_on, days is not positive, kind is not one of the registered values, or employee_id does not belong to this organization' }
 
   /api/v1/jobs:
     get:

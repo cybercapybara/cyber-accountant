@@ -52,7 +52,6 @@
 
 #include <functional>
 #include <optional>
-#include <regex>
 #include <string>
 #include <vector>
 
@@ -100,13 +99,13 @@ public:
         const std::string from_param = req->getParameter("from");
         const std::string to_param = req->getParameter("to");
         if (!from_param.empty()) {
-            if (!is_valid_date(from_param))
+            if (!Validation::is_valid_date(from_param))
                 errs.add("from", "invalid_date", "must be in YYYY-MM-DD format");
             else
                 from_filter = from_param;
         }
         if (!to_param.empty()) {
-            if (!is_valid_date(to_param))
+            if (!Validation::is_valid_date(to_param))
                 errs.add("to", "invalid_date", "must be in YYYY-MM-DD format");
             else
                 to_filter = to_param;
@@ -164,7 +163,7 @@ public:
         }
 
         const std::string entry_date = body["entry_date"].get<std::string>();
-        if (!is_valid_date(entry_date)) {
+        if (!Validation::is_valid_date(entry_date)) {
             callback(Validation::response_422("entry_date", "invalid_date", "must be in YYYY-MM-DD format"));
             return;
         }
@@ -290,32 +289,6 @@ public:
     }
 
 private:
-    /// `YYYY-MM-DD`, calendar-valid (Fix round 1: was shape+range only —
-    /// month 01-12/day 01-31 with no per-month length or leap-year check, so
-    /// "2026-02-30" passed this and only failed later as a raw
-    /// pqxx `::date`-cast error, mapped to 500 by with_repo_errors()/
-    /// Postgres — never the intended 422). Days-in-month table + the
-    /// standard Gregorian leap-year rule (divisible by 4, except centuries
-    /// not divisible by 400) below close that gap for BOTH callers of this
-    /// helper: entry_date on create() and from/to on list()'s filters.
-    static bool is_valid_date(const std::string& s) {
-        static const std::regex re(R"(^(\d{4})-(\d{2})-(\d{2})$)");
-        std::smatch m;
-        if (!std::regex_match(s, m, re))
-            return false;
-        const int year = std::stoi(m[1].str());
-        const int month = std::stoi(m[2].str());
-        const int day = std::stoi(m[3].str());
-        if (month < 1 || month > 12 || day < 1)
-            return false;
-        static const int kDaysInMonth[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-        const bool leap_year = (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0);
-        int days_in_this_month = kDaysInMonth[month - 1];
-        if (month == 2 && leap_year)
-            days_in_this_month = 29;
-        return day <= days_in_this_month;
-    }
-
     /**
      * @brief Parse the `lines` JSON array into `Ledger::JournalLine`s,
      *        checking only SHAPE (presence + JSON type of each field) —
