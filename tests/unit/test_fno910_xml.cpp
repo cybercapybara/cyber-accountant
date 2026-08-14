@@ -20,7 +20,7 @@
 #include "tax/TaxCalculation.hpp"
 
 using Tax::Calculation;
-using Tax::CalculationKind;
+namespace CalculationKind = Tax::CalculationKind;
 using Tax::Fno910;
 using Tax::OrgInfo;
 using Tax::FnoXml::escape;
