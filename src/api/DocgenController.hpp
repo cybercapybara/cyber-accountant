@@ -219,6 +219,13 @@ public:
         with_repo_errors(callback, "documents generate", [&] {
             Ledger::DocumentRepository documents;
             // TODO(P2): map doc_type explicitly when a template slug diverges from documents.doc_type CHECK
+            // input_snapshot is std::optional<nlohmann::json> — wrapped
+            // explicitly (not passed as a bare `input`) because nlohmann::json's
+            // own greedy converting-constructor template makes the implicit
+            // json -> optional<json> conversion ambiguous under GCC (Fix
+            // round 2: this failed -Werror in CI, unlike the single-element
+            // json{...} temporaries LedgerDocumentsController passes for the
+            // same parameter — a NAMED json lvalue is what triggers it).
             auto created = documents.create(ctx.org_id,
                                             template_slug,  // doc_type == slug — see file header
                                             "generated",
@@ -226,7 +233,7 @@ public:
                                             counterparty_id,
                                             info->slug,
                                             info->version_str,
-                                            input);
+                                            std::optional<nlohmann::json>{input});
             if (link_entry_id && !documents.link_entry(ctx.org_id, created.id, *link_entry_id)) {
                 // Pre-checked above; only a concurrent delete of the entry
                 // between that check and here could land here. Best-effort:
@@ -253,7 +260,8 @@ public:
                 spdlog::error(
                     "documents generate: enqueue docgen.render for document {} failed: {}", created.id, e.what());
             }
-            callback(Response::accepted({{"document_id", created.id}, {"render_queued", render_queued}}));
+            const json response_body = {{"document_id", created.id}, {"render_queued", render_queued}};
+            callback(Response::accepted(response_body));
         });
     }
 };

@@ -5,7 +5,8 @@
  *
  * Layout convention (design spec, Task 9's `templates/latex/invoice/v1/` is
  * the reference implementation): `templates/latex/<slug>/v<N>/` holding
- * `template.tex` + `schema.json` (+ `fixtures/*.json` used by
+ * `template.tex` + `schema.json` (+ one JSON fixture per case under
+ * `fixtures/`, e.g. `fixtures/happy_path.json`, used by
  * `scripts/render-templates.sh`, not read by this class). `<N>` is a plain
  * non-negative integer — `latest(slug)` picks the directory with the
  * highest `N`, so shipping `v2` alongside `v1` makes `v2` the default
