@@ -341,4 +341,132 @@ TEST_F(OrganizationsApiTest, LastOwnerNotRemovable) {
     EXPECT_EQ(still->role, "owner");
 }
 
+// ── Member roster (GET) + add-by-email ──────────────────────────────────────
+
+TEST_F(OrganizationsApiTest, ListMembersReturnsRoster) {
+    auto org = seed_org("111240000010", "Roster Org LLP");
+    auto owner = seed_user("roster-owner@example.com", "User");
+    auto accountant = seed_user("roster-accountant@example.com", "User");
+    Tenancy::OrgMemberRepository members;
+    members.add(org.id, owner.user.id, "owner");
+    members.add(org.id, accountant.user.id, "accountant");
+    auto owner_principal = with_org(owner.principal, org.id);
+
+    HttpResponsePtr resp;
+    orgs_ctrl.listMembers(
+        authed(owner_principal), [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k200OK);
+    auto body = json::parse(std::string(resp->body()));
+    ASSERT_TRUE(body["data"].is_array());
+    ASSERT_EQ(body["data"].size(), 2U);
+
+    bool found_owner = false;
+    bool found_accountant = false;
+    for (const auto& row : body["data"]) {
+        ASSERT_TRUE(row.contains("user_id"));
+        ASSERT_TRUE(row.contains("email"));
+        ASSERT_TRUE(row.contains("role"));
+        ASSERT_TRUE(row.contains("created_at"));
+        if (row["user_id"].get<std::string>() == owner.user.id) {
+            EXPECT_EQ(row["email"].get<std::string>(), "roster-owner@example.com");
+            EXPECT_EQ(row["role"].get<std::string>(), "owner");
+            found_owner = true;
+        } else if (row["user_id"].get<std::string>() == accountant.user.id) {
+            EXPECT_EQ(row["email"].get<std::string>(), "roster-accountant@example.com");
+            EXPECT_EQ(row["role"].get<std::string>(), "accountant");
+            found_accountant = true;
+        }
+    }
+    EXPECT_TRUE(found_owner);
+    EXPECT_TRUE(found_accountant);
+}
+
+TEST_F(OrganizationsApiTest, ListMembersForbiddenForViewer) {
+    auto org = seed_org("111240000011", "Roster Viewer Org LLP");
+    auto viewer = seed_user("roster-viewer@example.com", "User");
+    Tenancy::OrgMemberRepository members;
+    members.add(org.id, viewer.user.id, "viewer");
+    auto viewer_principal = with_org(viewer.principal, org.id);
+
+    HttpResponsePtr resp;
+    orgs_ctrl.listMembers(
+        authed(viewer_principal), [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k403Forbidden);
+}
+
+TEST_F(OrganizationsApiTest, ListMembersForbiddenForOutsiderOwner) {
+    auto org_a = seed_org("111240000012", "Roster Org A LLP");
+    auto org_b = seed_org("111240000013", "Roster Org B LLP");
+    auto owner_of_b = seed_user("roster-owner-b@example.com", "User");
+    Tenancy::OrgMemberRepository members;
+    members.add(org_b.id, owner_of_b.user.id, "owner");
+    // Session is scoped to org B (owner there), not org A — the gate is
+    // fail-closed per require_admin_or_org_owner's contract: being an
+    // owner elsewhere doesn't authorize org A.
+    auto owner_b_principal = with_org(owner_of_b.principal, org_b.id);
+
+    HttpResponsePtr resp;
+    orgs_ctrl.listMembers(
+        authed(owner_b_principal), [&](const HttpResponsePtr& r) { resp = r; }, org_a.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k403Forbidden);
+}
+
+TEST_F(OrganizationsApiTest, AddMemberByEmail) {
+    auto org = seed_org("111240000014", "Add By Email Org LLP");
+    auto owner = seed_user("add-by-email-owner@example.com", "User");
+    auto target = seed_user("add-by-email-target@example.com", "User");
+    Tenancy::OrgMemberRepository members;
+    members.add(org.id, owner.user.id, "owner");
+    auto owner_principal = with_org(owner.principal, org.id);
+
+    auto req = authed_json(owner_principal, {{"email", target.user.email}, {"role", "accountant"}}, Post);
+    HttpResponsePtr resp;
+    orgs_ctrl.addMember(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k201Created);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["data"]["user_id"].get<std::string>(), target.user.id);
+    EXPECT_EQ(body["data"]["role"].get<std::string>(), "accountant");
+    EXPECT_TRUE(members.find_membership(org.id, target.user.id).has_value());
+}
+
+TEST_F(OrganizationsApiTest, AddMemberByUnknownEmail) {
+    auto org = seed_org("111240000015", "Unknown Email Org LLP");
+    auto owner = seed_user("unknown-email-owner@example.com", "User");
+    Tenancy::OrgMemberRepository members;
+    members.add(org.id, owner.user.id, "owner");
+    auto owner_principal = with_org(owner.principal, org.id);
+
+    auto req = authed_json(owner_principal, {{"email", "nobody@example.com"}, {"role", "viewer"}}, Post);
+    HttpResponsePtr resp;
+    orgs_ctrl.addMember(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k404NotFound);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["error"].get<std::string>(), "user_not_found");
+}
+
+TEST_F(OrganizationsApiTest, AddMemberByEmailAndUserIdRejected) {
+    auto org = seed_org("111240000016", "Ambiguous Add Org LLP");
+    auto owner = seed_user("ambiguous-owner@example.com", "User");
+    auto target = seed_user("ambiguous-target@example.com", "User");
+    Tenancy::OrgMemberRepository members;
+    members.add(org.id, owner.user.id, "owner");
+    auto owner_principal = with_org(owner.principal, org.id);
+
+    auto req = authed_json(
+        owner_principal, {{"user_id", target.user.id}, {"email", target.user.email}, {"role", "viewer"}}, Post);
+    HttpResponsePtr resp;
+    orgs_ctrl.addMember(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k400BadRequest);
+    EXPECT_FALSE(members.find_membership(org.id, target.user.id).has_value());
+}
+
 }  // namespace

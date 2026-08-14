@@ -8,6 +8,7 @@
  *   GET    /api/v1/orgs                         list tenants (admin, paginated)
  *   GET    /api/v1/orgs/mine                    the caller's orgs + their role
  *   POST   /api/v1/orgs/{id}/switch              mint an access token scoped to {id}
+ *   GET    /api/v1/orgs/{id}/members             list members + email (admin or owner)
  *   POST   /api/v1/orgs/{id}/members             add a member (admin or owner)
  *   PATCH  /api/v1/orgs/{id}/members/{user_id}   change a member's role (admin or owner)
  *   DELETE /api/v1/orgs/{id}/members/{user_id}   remove a member (admin or owner)
@@ -61,6 +62,7 @@ public:
     ADD_METHOD_TO(OrganizationsController::listOrganizations, "/api/v1/orgs", Get);
     ADD_METHOD_TO(OrganizationsController::mine, "/api/v1/orgs/mine", Get);
     ADD_METHOD_TO(OrganizationsController::switchOrg, "/api/v1/orgs/{1}/switch", Post);
+    ADD_METHOD_TO(OrganizationsController::listMembers, "/api/v1/orgs/{1}/members", Get);
     ADD_METHOD_TO(OrganizationsController::addMember, "/api/v1/orgs/{1}/members", Post);
     ADD_METHOD_TO(OrganizationsController::updateMemberRole, "/api/v1/orgs/{1}/members/{2}", Patch);
     ADD_METHOD_TO(OrganizationsController::removeMember, "/api/v1/orgs/{1}/members/{2}", Delete);
@@ -257,7 +259,42 @@ public:
     }
 
     // ---------------------------------------------------------------------
-    // POST /api/v1/orgs/{id}/members — { user_id, role }.
+    // GET /api/v1/orgs/{id}/members — the roster (admin, or owner of this
+    // organization), joined with each member's email so the frontend has
+    // something a human can act on instead of a bare user_id.
+    // ---------------------------------------------------------------------
+    void listMembers(const HttpRequestPtr& req,
+                     std::function<void(const HttpResponsePtr&)>&& callback,
+                     const std::string& id) {
+        if (auto err = require_admin_or_org_owner(req, id)) {
+            callback(err);
+            return;
+        }
+        if (!is_valid_uuid(id)) {
+            callback(ErrorResponse::bad_request("invalid_id", "Malformed organization id"));
+            return;
+        }
+
+        with_repo_errors(callback, "orgs listMembers", [&] {
+            Tenancy::OrgMemberRepository members;
+            auto roster = members.list_members_with_email(id);
+            json data = json::array();
+            for (const auto& m : roster)
+                data.push_back(m);
+            callback(Response::list(data));
+        });
+    }
+
+    // ---------------------------------------------------------------------
+    // POST /api/v1/orgs/{id}/members — { user_id, role } OR { email, role }.
+    //
+    // The email variant exists because the "add a member" UI has no way to
+    // discover a user's raw UUID — it resolves the email to a user_id via
+    // Repositories::UserRepository::find_by_email first, then continues
+    // through the exact same add() path as the user_id variant (same audit
+    // event, same DuplicateMembership 409). Both identifying fields at once
+    // is a 400 (ambiguous request shape), not a 422 — this is a malformed
+    // request, not a semantically-invalid value.
     // ---------------------------------------------------------------------
     void addMember(const HttpRequestPtr& req,
                    std::function<void(const HttpResponsePtr&)>&& callback,
@@ -274,10 +311,23 @@ public:
         if (!Validation::parse_body(req, body, callback))
             return;
 
+        const bool has_user_id = body.contains("user_id") && !body["user_id"].is_null();
+        const bool has_email = body.contains("email") && !body["email"].is_null();
+
         Validation::Errors errs;
-        Validation::require(errs, body, "user_id");
+        if (has_user_id && has_email) {
+            errs.add("email", "mutually_exclusive", "provide either user_id or email, not both");
+            callback(Validation::response_400(errs));
+            return;
+        }
+
         Validation::require(errs, body, "role");
-        Validation::uuid(errs, body, "user_id");
+        if (has_email) {
+            Validation::email(errs, body, "email");
+        } else {
+            Validation::require(errs, body, "user_id");
+            Validation::uuid(errs, body, "user_id");
+        }
         if (errs.any()) {
             callback(Validation::response_400(errs));
             return;
@@ -289,9 +339,25 @@ public:
             return;
         }
 
+        std::string user_id;
+        if (has_email) {
+            Repositories::UserRepository users;
+            auto found = users.find_by_email(body["email"].get<std::string>());
+            if (!found) {
+                callback(ErrorResponse::make({drogon::k404NotFound,
+                                              "user_not_found",
+                                              "No user with this email — ask them to register first",
+                                              json::object()}));
+                return;
+            }
+            user_id = found->id;
+        } else {
+            user_id = body["user_id"].get<std::string>();
+        }
+
         with_repo_errors(callback, "orgs addMember", [&] {
             Tenancy::OrgMemberRepository members;
-            auto created = members.add(id, body["user_id"].get<std::string>(), body["role"].get<std::string>());
+            auto created = members.add(id, user_id, body["role"].get<std::string>());
             Security::Audit::record(actor_of(req),
                                     "org.member.add",
                                     "organization",
