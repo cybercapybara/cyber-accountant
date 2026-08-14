@@ -2515,7 +2515,12 @@ export interface paths {
         put?: never;
         /**
          * Verify an uploaded object and finalize the document (accountant/owner only)
-         * @description Checks Storage::exists(s3_key) before trusting the client's
+         * @description Only valid for a document with source='uploaded' and status='draft'
+         *     (i.e. one POST /documents/uploads started) — calling it on a
+         *     source='generated' or already-'final' document is rejected before
+         *     any storage check, so a client can never overwrite a document's
+         *     real, reproducible checksum/mime/size with unverified values.
+         *     Checks Storage::exists(s3_key) before trusting the client's
          *     reported size/checksum; on success calls
          *     DocumentRepository::set_file() and flips status to 'final'.
          */
@@ -2564,7 +2569,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No upload was started for this document */
+                /** @description object_missing (no upload was started for this document, or the object was not found in storage) | invalid_state (document is not a draft, uploaded document — e.g. source='generated', or already confirmed to 'final') */
                 409: {
                     headers: {
                         [name: string]: unknown;
