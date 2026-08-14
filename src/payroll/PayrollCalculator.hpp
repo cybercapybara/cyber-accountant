@@ -75,8 +75,41 @@
 #pragma once
 
 #include <algorithm>
+#include <stdexcept>
+#include <string>
 
 namespace Payroll {
+
+/// The largest gross a single payslip may carry: 10^14 tiyn = 1 000 000 000
+/// 000 ₸ (one trillion tenge) of salary for ONE employee for ONE month.
+///
+/// This is an overflow bound, not a business rule. `apply_bp` computes
+/// `base * bp` in `long long`, and the ИПН and социальный налог bases are
+/// UNCAPPED (unlike ОПВ/ОПВР/СО/ОСМС, whose bases are clamped to a small
+/// multiple of МЗП) — they track `gross` all the way up. With `bp` never
+/// exceeding 10 000 (100%, and the seeded rates are two orders of magnitude
+/// below that), a gross of at most 10^14 keeps every product at or under
+/// 10^18, comfortably inside `long long`'s ~9.22·10^18 range; the remaining
+/// `+ 5000` and the `employer_cost_total` sum of five such terms cannot close
+/// that gap either.
+///
+/// A bound checked once, at the entry of `calculate()`, was chosen over
+/// overflow-detecting arithmetic inside `apply_bp` because it is far easier
+/// to reason about: there is exactly one place where an input can be
+/// rejected, every intermediate below it is then provably in range, and the
+/// arithmetic stays the plain integer expression the formula documentation
+/// describes. Overflow-checked multiplication would have to answer "and then
+/// what?" at nine separate call sites, each mid-formula.
+///
+/// The bound is deliberately absurd as a salary — the largest real-world
+/// payslip is many orders of magnitude below it — so no legitimate payroll is
+/// ever refused by it. It exists because `employees.salary_tiyn` is a plain
+/// BIGINT (migrations/012_hr.sql) and the API layer's `Ledger::parse_tiyn`
+/// accepts up to 16 digits of tenge, so a typo or a hostile request CAN put a
+/// value in the table that would overflow the arithmetic — silently, as
+/// signed overflow is undefined behaviour, producing a wrong number on a
+/// payslip rather than an error.
+inline constexpr long long kMaxGrossTiyn = 100'000'000'000'000LL;
 
 /// Resolved rates/constants for one calculation. All money fields are TIYN,
 /// all `*_bp` fields are basis points, all `*_mzp`/`*_mrp` fields are plain
@@ -141,7 +174,10 @@ struct Result {
 /// Multiplies `base_tiyn` by `rate_bp` basis points, rounding half-up to the
 /// nearest whole tiyn: `(base*bp + 5000) / 10000`. Integer-only; both
 /// arguments are expected non-negative (every call site in `calculate()`
-/// guarantees this).
+/// guarantees this) and `base_tiyn * rate_bp` is expected to fit in
+/// `long long` — `calculate()` guarantees THAT by rejecting a gross above
+/// kMaxGrossTiyn up front, which is what keeps this expression a plain
+/// multiplication instead of a checked one (see kMaxGrossTiyn).
 inline long long apply_bp(long long base_tiyn, long long rate_bp) {
     return (base_tiyn * rate_bp + 5000) / 10000;
 }
@@ -149,8 +185,20 @@ inline long long apply_bp(long long base_tiyn, long long rate_bp) {
 /// Runs the 9-step KZ withholding order (see file header) over one
 /// employee/period. Pure function: no I/O, no shared state, safe to call
 /// concurrently and to unit-test with plain structs.
+///
+/// @throws std::out_of_range if `in.gross_tiyn` is negative or exceeds
+///         kMaxGrossTiyn — see that constant for why the bound exists and why
+///         it is checked here rather than inside apply_bp. Callers that can
+///         report a better-shaped error to a user (Payroll::PayrollService)
+///         screen the value themselves before getting here; this check is the
+///         last line of defense for every other caller, so that the
+///         alternative is never undefined behaviour.
 inline Result calculate(const Input& in, const Rates& r) {
     Result out;
+
+    if (in.gross_tiyn < 0 || in.gross_tiyn > kMaxGrossTiyn)
+        throw std::out_of_range("payroll: gross of " + std::to_string(in.gross_tiyn) +
+                                " tiyn is outside the supported range [0, " + std::to_string(kMaxGrossTiyn) + "]");
 
     const long long gross = in.gross_tiyn;
 

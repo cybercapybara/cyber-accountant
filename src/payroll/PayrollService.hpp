@@ -14,10 +14,18 @@
  * the run stays reproducible even after a later migration adds a new
  * `effective_from` row for the same rate — see Payslip.hpp's doc comment.
  *
- * Every active employee (Hr::EmployeeRepository::list_active — dismissed
- * employees are excluded by that query already, not filtered again here)
- * gets exactly one Payroll::calculate() call and one payslips row. A
- * recalculation of a 'draft' run REPLACES its payslips (DELETE + re-INSERT
+ * Every employee whose EMPLOYMENT OVERLAPS the run's period
+ * (Hr::EmployeeRepository::list_employed_during — hired on or before the
+ * period's last day and not dismissed before its first, evaluated in SQL, not
+ * filtered again here) gets exactly one Payroll::calculate() call and one
+ * payslips row. Note this is deliberately NOT list_active(), i.e. not the
+ * roster as it stands today: a run is calculated FOR a period, frequently
+ * after the fact, so today's roster would both pay somebody hired after the
+ * period ended and skip somebody who worked it and has since left. See
+ * calculate_run() for the (full month vs prorated) pay decision for an
+ * employee who joined or left mid-period.
+ *
+ * A recalculation of a 'draft' run REPLACES its payslips (DELETE + re-INSERT
  * inside the same transaction as the header write) rather than appending —
  * same "recalculate overwrites, doesn't duplicate" contract as
  * Tax::TaxCalculationRepository::upsert. Recalculating an 'approved' run is
@@ -71,11 +79,34 @@
  *   - credit 3210 (обязательства по социальному страхованию) for so;
  *   - credit 3230 (прочие обязательства по другим обязательным платежам) for
  *     osms + vosms — same one-account-two-contributions shape as 3220;
- *   - credit 3150 (социальный налог) for social_tax, but ONLY when it is
- *     non-zero (an org on СНР на основе упрощённой декларации has
- *     social_tax_applies=false for every payslip, so this line would
- *     otherwise be a zero-amount line — JournalService::parse_tiyn rejects
- *     exactly that, and it would be a meaningless liability row besides).
+ *   - credit 3150 (социальный налог) for social_tax.
+ *
+ * EVERY one of those lines — the 7210 debit included — is omitted when its
+ * total comes out ZERO (Fix round 2, code review; only 3150 used to be
+ * guarded). Two reasons, and both matter:
+ *   - Ledger::parse_tiyn rejects an amount <= 0 BEFORE any SQL runs, so a
+ *     zero line makes create_draft throw std::invalid_argument, which the API
+ *     layer's generic handler reports as an opaque 500. That is not an exotic
+ *     edge case: on the 2026 seed the ИПН base is `0.88·gross − 30 МРП`,
+ *     which is zero for any gross at or below roughly 147 400 ₸, so an
+ *     organization whose employees all claim the standard deduction and earn
+ *     near the minimum wage had `ipn_total == 0` and could NEVER post payroll
+ *     at all, with no message explaining why and no way around it in the UI.
+ *     Other buckets reach zero the same ordinary way: `opv_total +
+ *     opvr_total` on a roster of ОПВР-exempt pensioners whose ОПВ is nil, or
+ *     any bucket at all once a rate is legitimately set to 0 bp.
+ *   - A zero-amount line carries no accounting meaning anyway: it is a
+ *     liability row asserting that nothing is owed.
+ * Dropping such a line cannot unbalance the entry, because a zero addend
+ * contributes nothing to either side of Σdebit = Σcredit.
+ *
+ * The fix is here and NOT in parse_tiyn: its refusal of non-positive amounts
+ * is correct and protects the ledger from meaningless and sign-flipped rows.
+ * A run in which literally every bucket is zero (only reachable with an
+ * all-zero-salary roster) therefore produces NO lines at all, and
+ * create_draft rejects the empty entry — a run with nothing to post is
+ * genuinely not postable, and that is the honest answer.
+ *
  * Σcredits is constructed to equal the debit by the arithmetic above (every
  * withheld/accrued tiyn is credited to exactly one of the liability
  * accounts, and the debit is their sum) — JournalService::create_draft's own
@@ -152,6 +183,27 @@ struct MissingPayrollReference : std::runtime_error {
     std::string effective_on;  ///< the date the lookup was made for, "YYYY-MM-DD"
 };
 
+/// → 409. Thrown when an employee's stored `salary_tiyn` exceeds
+/// Payroll::kMaxGrossTiyn, the bound above which the withholding arithmetic
+/// would overflow `long long` (see that constant). `employees.salary_tiyn` is
+/// a plain BIGINT and the API layer accepts up to 16 digits of tenge, so such
+/// a row CAN exist — a typo with a few extra zeros, or a hostile request.
+///
+/// Reported as a CONFLICT (409) rather than letting Payroll::calculate's
+/// std::out_of_range escape as a 500: this is a foreseeable data problem, and
+/// a 500 tells the payroll clerk nothing. 409 rather than 422 because the
+/// offending value is not a field of THIS request at all — the caller asked
+/// to calculate a period, and the run cannot proceed while a stored employee
+/// record is in a state payroll cannot process. The message names the
+/// employee so the clerk knows exactly which card to go fix.
+struct GrossSalaryOutOfRange : Repositories::ConflictError {
+    explicit GrossSalaryOutOfRange(const std::string& employee_id, long long salary_tiyn)
+        : Repositories::ConflictError("gross_salary_out_of_range",
+                                      "employee " + employee_id + " has salary_tiyn " + std::to_string(salary_tiyn) +
+                                          ", above the maximum " + std::to_string(kMaxGrossTiyn) +
+                                          " payroll can calculate — correct the employee card first") {}
+};
+
 /// The date (YYYY-MM-DD) of the last calendar day of @p year / @p month —
 /// the instant PayrollService::calculate_run resolves rates/constants at
 /// (see file header) and the entry_date PayrollService::post_to_journal uses
@@ -170,15 +222,60 @@ inline std::string last_day_of_month(int year, int month) {
     return std::string(buf);
 }
 
+/// The date (YYYY-MM-DD) of the FIRST calendar day of @p year / @p month —
+/// always day 01, so no leap-year reasoning is involved. Together with
+/// last_day_of_month() this bounds the closed interval a payroll run covers,
+/// which PayrollService::calculate_run hands to
+/// Hr::EmployeeRepository::list_employed_during.
+inline std::string first_day_of_month(int year, int month) {
+    // Same generous sizing rationale as last_day_of_month above.
+    char buf[48];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-01", year, month);
+    return std::string(buf);
+}
+
 class PayrollService {
 public:
     /**
      * @brief Calculate (or recalculate) @p org_id's payroll run for
      *        (@p period_year, @p period_month): resolves rates as of the
-     *        period's last day, runs Payroll::calculate over every active
-     *        employee, and persists the run header + one payslip per
-     *        employee in a single transaction. See file header for the
-     *        exact replace-on-recalculate / reject-on-approved contract.
+     *        period's last day, runs Payroll::calculate over every employee
+     *        EMPLOYED DURING that period, and persists the run header + one
+     *        payslip per employee in a single transaction. See file header
+     *        for the exact replace-on-recalculate / reject-on-approved
+     *        contract.
+     *
+     * PRORATION — deliberate decision, Fix round 2 (code review). An employee
+     * hired mid-period or dismissed mid-period is INCLUDED and receives a
+     * FULL month's pay; the amount is not scaled by the fraction of the month
+     * actually worked. Including them is not in question — they really did
+     * work part of the period, and excluding them would be a straight
+     * underpayment. What is deferred is the scaling.
+     *
+     * Proration is the accounting-correct answer, and it is deliberately NOT
+     * implemented here because it is a materially larger change than it
+     * looks, not a division: РК practice prorates a salaried oklad by WORKING
+     * days (рабочие дни по производственному календарю), not calendar days,
+     * so it needs a production calendar — the republic's holiday list per
+     * year, plus the weekend-shift rules — which this system does not have
+     * anywhere yet, and which is exactly the sort of reference data that must
+     * live in a seeded table rather than in C++. It also interacts with
+     * vacations/sick leave (migrations/012_hr.sql already carries a
+     * `vacations` table that nothing in payroll reads yet) and with the ОПВ/
+     * СО/ОСМС floors, which are monthly-МЗП-based and do not simply scale.
+     * Doing a calendar-day approximation now would produce numbers that are
+     * confidently wrong rather than obviously incomplete.
+     *
+     * TODO(payroll-proration): prorate a mid-period hire/dismissal by working
+     * days against a seeded РК production calendar (new tax_* reference
+     * table + Tax::TaxCalendar lookup), and fold in vacations/sick leave.
+     * Until then a mid-period hire or dismissal is OVERPAID relative to days
+     * worked and the payroll clerk must adjust that payslip by hand.
+     *
+     * @throws GrossSalaryOutOfRange if any included employee's stored salary
+     *         exceeds Payroll::kMaxGrossTiyn — checked here, before the
+     *         transaction opens, so the arithmetic below can never overflow
+     *         and the caller gets a 409 naming the employee instead of a 500.
      * @throws MissingPayrollReference if any rate/constant the calculation
      *         needs is not in force on the period's last day (e.g. a period
      *         before migration 011's 2026-01-01 seed) — a reference-data gap
@@ -192,9 +289,19 @@ public:
      *         via its own `AND status = 'draft'` CAS).
      */
     PayrollRun calculate_run(const std::string& org_id, int period_year, int period_month) {
+        const std::string period_start = first_day_of_month(period_year, period_month);
         const std::string effective_date = last_day_of_month(period_year, period_month);
         const Rates rates = build_rates(org_id, effective_date);
-        const auto employees = employees_.list_active(org_id);
+        // The roster AS OF THE PERIOD, not as of today — see the file header
+        // and the proration note above.
+        const auto employees = employees_.list_employed_during(org_id, period_start, effective_date);
+        // Screen every salary before opening the transaction: Payroll::
+        // calculate would otherwise throw std::out_of_range mid-loop (a 500),
+        // and doing it up front means no partial run is ever rolled back for
+        // a reason the caller could have been told about immediately.
+        for (const auto& employee : employees)
+            if (employee.salary_tiyn < 0 || employee.salary_tiyn > kMaxGrossTiyn)
+                throw GrossSalaryOutOfRange(employee.id, employee.salary_tiyn);
         // from_primary=true: this read feeds the CAS below, so it must never
         // observe a lagging replica's stale 'draft' when the primary already
         // committed 'approved' (e.g. this same run, just approved).
@@ -333,6 +440,13 @@ public:
      *         documented residual limitation under true concurrency.
      * @throws std::runtime_error if the run has no payslips yet (nothing to
      *         post — calculate_run() must run first).
+     *
+     * A bucket whose run-wide total is ZERO produces NO journal line (file
+     * header, "EVERY one of those lines ... is omitted"), so the entry may
+     * legitimately carry fewer than seven lines — an org on СНР has no 3150
+     * line, an org paying near the minimum wage with the standard deduction
+     * claimed has no 3120 line, and so on. This is the ordinary case, not a
+     * degenerate one.
      */
     std::string post_to_journal(const std::string& org_id, const std::string& run_id, const std::string& user_id) {
         auto run = payroll_.find_in_org(run_id, org_id, /*from_primary=*/true);
@@ -370,15 +484,20 @@ public:
 
         const long long debit_total = gross_total + opvr_total + so_total + osms_total + social_tax_total;
 
+        // Every line is emitted ONLY when its total is non-zero — see the
+        // file header for why (Ledger::parse_tiyn rejects a zero amount, and
+        // a zero line is meaningless accounting anyway) and for why dropping
+        // one cannot unbalance the entry. Totals are sums of per-payslip
+        // fields, each of which the `payslips` CHECK constraints keep >= 0,
+        // so "not zero" here is the same test as "positive".
         std::vector<Ledger::JournalLine> lines;
-        lines.push_back(debit_line("7210", debit_total));
-        lines.push_back(credit_line("3350", net_total));
-        lines.push_back(credit_line("3120", ipn_total));
-        lines.push_back(credit_line("3220", opv_total + opvr_total));
-        lines.push_back(credit_line("3210", so_total));
-        lines.push_back(credit_line("3230", osms_total + vosms_total));
-        if (social_tax_total != 0)
-            lines.push_back(credit_line("3150", social_tax_total));
+        add_line(lines, "7210", "debit", debit_total);
+        add_line(lines, "3350", "credit", net_total);
+        add_line(lines, "3120", "credit", ipn_total);
+        add_line(lines, "3220", "credit", opv_total + opvr_total);
+        add_line(lines, "3210", "credit", so_total);
+        add_line(lines, "3230", "credit", osms_total + vosms_total);
+        add_line(lines, "3150", "credit", social_tax_total);
 
         const std::string description = "Начисление заработной платы за " + std::to_string(run->period_month) + "." +
                                         std::to_string(run->period_year);
@@ -408,20 +527,29 @@ public:
     }
 
 private:
-    static Ledger::JournalLine debit_line(const std::string& account_code, long long amount_tiyn) {
+    /// Append one journal line for @p amount_tiyn on @p account_code /
+    /// @p side — UNLESS the amount is zero, in which case nothing is
+    /// appended at all. The single choke point through which every payroll
+    /// journal line is built, so the "no zero-amount lines" rule cannot be
+    /// forgotten for one bucket the way it was for every line but 3150 before
+    /// Fix round 2 (see file header for the rule and its accounting
+    /// rationale).
+    ///
+    /// @p amount_tiyn is never negative in this service — every total is a
+    /// sum of `payslips` columns the schema constrains to >= 0 — and
+    /// Ledger::format_tiyn throws if one ever were, so no sign handling is
+    /// needed here beyond the zero test.
+    static void add_line(std::vector<Ledger::JournalLine>& lines,
+                         const std::string& account_code,
+                         const std::string& side,
+                         long long amount_tiyn) {
+        if (amount_tiyn == 0)
+            return;
         Ledger::JournalLine l;
         l.account_code = account_code;
-        l.side = "debit";
+        l.side = side;
         l.amount = Ledger::format_tiyn(amount_tiyn);
-        return l;
-    }
-
-    static Ledger::JournalLine credit_line(const std::string& account_code, long long amount_tiyn) {
-        Ledger::JournalLine l;
-        l.account_code = account_code;
-        l.side = "credit";
-        l.amount = Ledger::format_tiyn(amount_tiyn);
-        return l;
+        lines.push_back(std::move(l));
     }
 
     long long rate_bp(const std::string& kind, const std::string& date) {

@@ -5,8 +5,8 @@
  * Org-scoped (design spec §5: "методов 'выбрать без org' не существует"), so
  * this extends Tenancy::OrgCrudBase rather than Repositories::CrudBase —
  * find_in_org/list_in_org/count_in_org come from the base, and
- * create/update/dismiss/list_active are the bespoke queries this table
- * needs. Mirrors src/ledger/CounterpartyRepository.hpp: constraint
+ * create/update/dismiss/list_active/list_employed_during are the bespoke
+ * queries this table needs. Mirrors src/ledger/CounterpartyRepository.hpp: constraint
  * violations surface as a typed exception (DuplicateEmployeeIin) via
  * Repositories::detail::translate_sql, so the HTTP layer maps it to 409 via
  * Api::with_repo_errors() without sniffing SQLSTATEs itself.
@@ -159,12 +159,70 @@ public:
     /// Employees with status = 'active' for @p org_id, newest-hired first
     /// (kOrderBy). Excludes dismissed employees — callers that need the full
     /// roster including dismissals use OrgCrudBase::list_in_org instead.
+    ///
+    /// This is the "who is on the roster RIGHT NOW" view (the employees
+    /// screen). It is deliberately NOT what a payroll run is built from: a
+    /// run is about a PAST period, so it needs the roster as it stood then —
+    /// see list_employed_during() below.
     std::vector<Employee> list_active(const std::string& org_id) {
         return Database::get().execute_read([&](auto& txn) {
             auto r = txn.exec_params("SELECT " + std::string(kColumns) +
                                          " FROM employees WHERE org_id = $1 AND status = 'active' ORDER BY " +
                                          std::string(kOrderBy),
                                      org_id);
+            std::vector<Employee> out;
+            out.reserve(r.size());
+            for (const auto& row : r)
+                out.push_back(Employee::from_row(row));
+            return out;
+        });
+    }
+
+    /**
+     * @brief Employees of @p org_id whose EMPLOYMENT overlaps the closed date
+     *        interval [@p period_start, @p period_end] (both "YYYY-MM-DD"),
+     *        newest-hired first (kOrderBy).
+     *
+     * The overlap test is the standard two-sided one:
+     *   - `hired_on <= period_end` — somebody hired after the period ended
+     *     did not work a single day of it;
+     *   - the employment had not already ENDED before the period began, i.e.
+     *     either they are still on the roster (`dismissed_on IS NULL AND
+     *     status = 'active'`) or they were dismissed on/after the period
+     *     start (`dismissed_on >= period_start`) — a mid-period or later
+     *     dismissal still owes that period's pay.
+     * The `status = 'active'` half of the first branch is belt-and-braces
+     * against a 'dismissed' row that somehow carries a NULL dismissed_on:
+     * dismiss() always writes the two together, but the column is nullable at
+     * the schema level (migrations/012_hr.sql), and "dismissed on an unknown
+     * date" must not silently read as "still employed forever".
+     *
+     * Why this exists rather than reusing list_active(): a payroll run is
+     * calculated FOR a period, often well after the fact (back-filling
+     * January in August is ordinary bookkeeping). Selecting today's active
+     * roster would pay a January payslip to somebody hired in August, and
+     * would skip somebody who worked all of January and left in March — see
+     * Payroll::PayrollService::calculate_run.
+     *
+     * Dates are passed as strings and cast in SQL (`$2::date`), the same
+     * "text parameter + explicit cast" idiom create()/dismiss() already use
+     * for hired_on/dismissed_on. Org-scoped like every other query here.
+     */
+    std::vector<Employee> list_employed_during(const std::string& org_id,
+                                               const std::string& period_start,
+                                               const std::string& period_end) {
+        return Database::get().execute_read([&](auto& txn) {
+            auto r = txn.exec_params("SELECT " + std::string(kColumns) +
+                                         " FROM employees"
+                                         " WHERE org_id = $1"
+                                         "   AND hired_on <= $3::date"
+                                         "   AND (dismissed_on >= $2::date"
+                                         "        OR (dismissed_on IS NULL AND status = 'active'))"
+                                         " ORDER BY " +
+                                         std::string(kOrderBy),
+                                     org_id,
+                                     period_start,
+                                     period_end);
             std::vector<Employee> out;
             out.reserve(r.size());
             for (const auto& row : r)

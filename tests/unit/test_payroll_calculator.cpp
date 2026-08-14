@@ -3,6 +3,8 @@
 // PayrollCalculator.hpp's file header for the order of calculation and its
 // sources). Rates/constants match the Task 1 seed in
 // migrations/011_tax_reference.sql (2026 values).
+#include <stdexcept>
+
 #include <gtest/gtest.h>
 
 #include "payroll/PayrollCalculator.hpp"
@@ -231,4 +233,49 @@ TEST(PayrollCalculator, CeilingsApply) {
     EXPECT_EQ(out.opvr, Payroll::apply_bp(opv_ceiling, rates.opvr_bp));
     EXPECT_EQ(out.so, Payroll::apply_bp(so_ceiling, rates.so_bp));
     EXPECT_EQ(out.osms, Payroll::apply_bp(osms_ceiling, rates.osms_bp));
+}
+
+// ── Overflow guard on gross (Payroll::kMaxGrossTiyn, fix round 2) ────────────
+//
+// apply_bp computes `base * bp` in long long. The ОПВ/ОПВР/СО/ОСМС bases are
+// clamped to a small multiple of МЗП and so can never get near the limit, but
+// the ИПН and социальный налог bases are UNCAPPED — they track gross all the
+// way up. Signed overflow is undefined behaviour, i.e. a silently wrong
+// number on a payslip, so calculate() rejects an out-of-range gross up front
+// instead. The two tests below pin the boundary exactly.
+
+TEST(PayrollCalculator, GrossAtTheMaximumIsAccepted) {
+    const auto rates = make_rates();
+    Payroll::Input in;
+    in.gross_tiyn = Payroll::kMaxGrossTiyn;
+    in.ipn_deduction_claimed = false;
+
+    Payroll::Result out;
+    ASSERT_NO_THROW(out = Payroll::calculate(in, rates));
+
+    // The two uncapped bases are exactly the ones that would have overflowed;
+    // both come back positive and internally consistent rather than wrapped
+    // to a negative or nonsensical value.
+    EXPECT_GT(out.ipn, 0);
+    EXPECT_GT(out.social_tax, 0);
+    EXPECT_GT(out.net, 0);
+    EXPECT_EQ(out.net, in.gross_tiyn - out.opv - out.vosms - out.ipn);
+    EXPECT_EQ(out.employer_cost_total, in.gross_tiyn + out.opvr + out.so + out.osms + out.social_tax);
+    EXPECT_GT(out.employer_cost_total, in.gross_tiyn);
+}
+
+TEST(PayrollCalculator, GrossOneTiynAboveTheMaximumIsRejected) {
+    const auto rates = make_rates();
+    Payroll::Input in;
+    in.gross_tiyn = Payroll::kMaxGrossTiyn + 1;
+
+    EXPECT_THROW(Payroll::calculate(in, rates), std::out_of_range);
+}
+
+TEST(PayrollCalculator, NegativeGrossIsRejected) {
+    const auto rates = make_rates();
+    Payroll::Input in;
+    in.gross_tiyn = -1;
+
+    EXPECT_THROW(Payroll::calculate(in, rates), std::out_of_range);
 }

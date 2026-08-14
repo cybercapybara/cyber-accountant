@@ -136,12 +136,23 @@ public:
      *        same name: pass true right after a write (e.g. PayrollService
      *        re-loading payslips just approved) so a lagging replica can't
      *        return an empty/stale array.
+     *
+     * Scoped by BOTH run_id and @p run's org_id. run_id alone is already
+     * unique — and every caller reaches this method through find_in_org/
+     * find_by_period, which have already proven the run belongs to the
+     * caller's org — so the org predicate cannot change the result set today.
+     * It is here so the design spec §5 rule ("методов 'выбрать без org' не
+     * существует") holds by construction in this file instead of resting on
+     * caller discipline: a future caller that constructs a PayrollRun some
+     * other way still cannot read another tenant's payslips through it. Same
+     * belt-and-braces scoping PayrollService's own DELETE FROM payslips uses.
      */
     std::vector<Payslip> list_payslips(const PayrollRun& run, bool from_primary = false) {
         auto query = [&](auto& txn) {
-            auto r = txn.exec_params(
-                "SELECT " + std::string(kPayslipColumns) + " FROM payslips WHERE run_id = $1 ORDER BY created_at, id",
-                run.id);
+            auto r = txn.exec_params("SELECT " + std::string(kPayslipColumns) +
+                                         " FROM payslips WHERE run_id = $1 AND org_id = $2 ORDER BY created_at, id",
+                                     run.id,
+                                     run.org_id);
             std::vector<Payslip> out;
             out.reserve(r.size());
             for (const auto& row : r)
