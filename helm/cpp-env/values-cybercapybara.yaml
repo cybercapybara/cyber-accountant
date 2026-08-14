@@ -64,43 +64,25 @@
 # ═══════════════════════════════════════════════════════════════
 
 env: cybercapybara
-# Placeholder — no real domain assigned in this phase (see cluster survey
-# above). Ingress objects still render (the chart has no top-level ingress
-# disable switch), pointing at *.cybercapybara.example.com, which nobody
-# owns; cert-manager's Certificate for them will sit Pending/failed. That is
-# expected and harmless — self-contained to this namespace. Smoke this phase
-# is via `kubectl port-forward`, not through ingress.
+# Placeholder — no real domain assigned to api.<env>/app.<env>. This release
+# has its own REAL public entrypoint instead:
+# deploy/ingress/buh-cybercapybara-kz.yaml (buh.cybercapybara.kz).
 #
-# Update 2026-08-14 — owner follow-up: these two placeholder Ingress objects
-# (`api` → api.cybercapybara.example.com, `app` → app.cybercapybara.example.com)
-# are noise now that this release has a REAL public entrypoint
-# (deploy/ingress/buh-cybercapybara-kz.yaml, buh.cybercapybara.kz). Went
-# looking for a values key to turn them off — there isn't one: unlike
-# mailpit/jaeger (gated by `mailpit.ingress.enabled` /
-# `jaeger.ingress.enabled`, see helm/cpp-env/templates/ingress.yaml), the
-# api/app Ingress objects have NO `{{- if }}` guard in that template at all;
-# `cpp-env.host`/`cpp-env.ingress` in templates/_helpers.tpl render them
-# unconditionally from `env`/`baseDomain`. Same class of gap as
-# templates/postgres.yaml's unconditional CNPG Cluster CR (see the
-# 2026-08-14 shared-db-namespace change) — no values-only switch exists;
-# a real fix needs an `{{- if }}` added to templates/ingress.yaml, out of
-# scope for a values-only change. Until then: `kubectl -n cyber-accountant
-# delete ingress api app` after every `helm upgrade` (they don't come back
-# from the values change below — only from the next upgrade re-rendering
-# the unconditional template; confirmed: this exact upgrade recreated them).
-# Deleting the Ingress objects also cascade-deletes their (never-succeeded,
-# ACME-rejected) Certificate objects — verified via ownerReferences, so no
-# separate cert cleanup is needed. Tried blanking `ingress.clusterIssuer`
-# to stop cert-manager's ACME attempts too, but ingress-shim doesn't touch
-# an already-created Certificate's issuerRef when the source annotation
-# changes — verified no effect on the existing api-tls/app-tls Certificates
-# — so left at its real value below rather than ship a values change with
-# no observed effect.
+# Update 2026-08-14 — the umbrella's api/app placeholder Ingress pair used
+# to have NO enable guard at all (templates/ingress.yaml rendered them
+# unconditionally), so they kept reappearing as clutter after every `helm
+# upgrade` and needed manual `kubectl delete ingress api app` each time —
+# same class of gap as templates/postgres.yaml's Cluster CR, fixed the same
+# way: templates/ingress.yaml now wraps them in
+# `{{- if .Values.ingress.enabled }}` (matching the mailpit/jaeger idiom in
+# the same file). `ingress.enabled: false` below actually suppresses them
+# now — no more manual cleanup needed after this fix.
 baseDomain: example.com
 
 ingress:
+  enabled: false                       # api/app placeholders off — buh-cybercapybara-kz is standalone (deploy/ingress/), not templated through here
   className: nginx                     # ingress-nginx IS present in-cluster
-  clusterIssuer: letsencrypt-prod       # real cluster-wide issuer; harmless no-op against a domain we don't own
+  clusterIssuer: letsencrypt-prod       # real cluster-wide issuer; unused while enabled: false above
   wildcardTlsSecret: ""
   externalDnsTarget: ""                 # "" → no external-dns annotation, no real DNS record created
 
