@@ -290,6 +290,17 @@ TEST_F(EmployeesApiTest, GetEmployeeCrossOrgNotFound) {
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
 
+TEST_F(EmployeesApiTest, GetEmployeeMalformedIdRejected) {
+    auto org = seed_org("333150000024", "Malformed Id Org LLP");
+    auto accountant = member("accountant23@example.com", org.id, "accountant");
+
+    HttpResponsePtr resp;
+    ctrl.get(
+        authed(accountant), [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k400BadRequest);
+}
+
 // ── PATCH /api/v1/employees/{id} ─────────────────────────────────────────────
 
 TEST_F(EmployeesApiTest, PatchEmployeeSucceeds) {

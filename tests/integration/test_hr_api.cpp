@@ -560,6 +560,122 @@ TEST_F(HrApiTest, GenerateContractDocumentMissingRequiredFieldRejected) {
     EXPECT_EQ(queue_depth(), 0);
 }
 
+TEST_F(HrApiTest, GenerateContractDocumentMalformedIdRejected) {
+    auto org = seed_org("777150000037", "Contract Malformed Id Org LLP");
+    auto accountant = member("accountant28@example.com", org.id, "accountant");
+
+    auto req = authed(accountant, Post);
+    HttpResponsePtr resp;
+    ctrl.generateContractDocument(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k400BadRequest);
+}
+
+// Fix round 1 (security): same allowlist guarantee as
+// GenerateOrderDocumentOverrideIinRejectedAndValueUnchanged, for the
+// labor_contract variant — an attempt to override the authoritative
+// salary_tenge (derived from the employee's stored salary_tiyn) is
+// rejected outright, and a subsequent legitimate request still produces a
+// document whose stored input carries the REAL salary, never the attempt.
+TEST_F(HrApiTest, GenerateContractDocumentOverrideSalaryRejectedAndValueUnchanged) {
+    auto org = seed_org("777150000038", "Contract Override Org LLP");
+    auto accountant = member("accountant29@example.com", org.id, "accountant");
+    auto employee = seed_employee(org.id, "312460130157");
+
+    Hr::HrRepository repo;
+    auto contract = repo.create_contract(org.id, employee.id, "1", "2026-01-10", "2026-01-15");
+
+    json malicious = {{"salary_tenge", "999999.00"},
+                      {"salary_words", "Триста тысяч тенге 00 тиын"},
+                      {"work_schedule", "Пятидневная рабочая неделя"},
+                      {"employer", {{"director", "Ахметов Ерлан Серикович"}}}};
+    auto bad_req = authed_json(accountant, malicious);
+    HttpResponsePtr bad_resp;
+    ctrl.generateContractDocument(
+        bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; }, contract.id);
+    ASSERT_NE(bad_resp, nullptr);
+    EXPECT_EQ(bad_resp->statusCode(), k422UnprocessableEntity);
+    auto bad_body = json::parse(std::string(bad_resp->body()));
+    EXPECT_EQ(bad_body["errors"][0]["field"].get<std::string>(), "salary_tenge");
+    EXPECT_EQ(bad_body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    EXPECT_EQ(queue_depth(), 0);
+
+    json legit = {{"salary_words", "Триста тысяч тенге 00 тиын"},
+                  {"work_schedule", "Пятидневная рабочая неделя"},
+                  {"employer", {{"director", "Ахметов Ерлан Серикович"}}}};
+    auto good_req = authed_json(accountant, legit);
+    HttpResponsePtr good_resp;
+    ctrl.generateContractDocument(
+        good_req, [&](const HttpResponsePtr& r) { good_resp = r; }, contract.id);
+    ASSERT_NE(good_resp, nullptr);
+    ASSERT_EQ(good_resp->statusCode(), k202Accepted);
+    auto good_body = json::parse(std::string(good_resp->body()));
+    const std::string document_id = good_body["document_id"].get<std::string>();
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.find_in_org(document_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(doc.has_value());
+    ASSERT_TRUE(doc->input_snapshot.has_value());
+    EXPECT_EQ((*doc->input_snapshot)["salary_tenge"].get<std::string>(), "300000.00");
+}
+
+TEST_F(HrApiTest, GenerateOrderDocumentMalformedIdRejected) {
+    auto org = seed_org("777150000033", "Order Malformed Id Org LLP");
+    auto accountant = member("accountant24@example.com", org.id, "accountant");
+
+    auto req = authed(accountant, Post);
+    HttpResponsePtr resp;
+    ctrl.generateOrderDocument(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k400BadRequest);
+}
+
+// Fix round 1 (security): the extra body merged onto a generate-document's
+// auto-derived input is now allowlisted (HrController.hpp's
+// hr_order_allowed_extra_fields()) — an attempt to override an
+// authoritative, database-derived field (here: employee.iin) must be
+// rejected outright, and a subsequent LEGITIMATE request (allowed field
+// only) must still produce a document whose stored input carries the REAL
+// employee iin, never the attempted override.
+TEST_F(HrApiTest, GenerateOrderDocumentOverrideIinRejectedAndValueUnchanged) {
+    auto org = seed_org("777150000034", "Order Override Org LLP");
+    auto accountant = member("accountant25@example.com", org.id, "accountant");
+    auto employee = seed_employee(org.id, "988916681773");
+
+    Hr::HrRepository repo;
+    auto order = repo.create_order(org.id, employee.id, "hire", "1", "2026-01-10", "2026-01-15");
+
+    json malicious = {{"director", "Ахметов Ерлан Серикович"}, {"employee", {{"iin", "999999999999"}}}};
+    auto bad_req = authed_json(accountant, malicious);
+    HttpResponsePtr bad_resp;
+    ctrl.generateOrderDocument(
+        bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; }, order.id);
+    ASSERT_NE(bad_resp, nullptr);
+    EXPECT_EQ(bad_resp->statusCode(), k422UnprocessableEntity);
+    auto bad_body = json::parse(std::string(bad_resp->body()));
+    EXPECT_EQ(bad_body["errors"][0]["field"].get<std::string>(), "employee.iin");
+    EXPECT_EQ(bad_body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    EXPECT_EQ(queue_depth(), 0);
+
+    json legit = {{"director", "Ахметов Ерлан Серикович"}};
+    auto good_req = authed_json(accountant, legit);
+    HttpResponsePtr good_resp;
+    ctrl.generateOrderDocument(
+        good_req, [&](const HttpResponsePtr& r) { good_resp = r; }, order.id);
+    ASSERT_NE(good_resp, nullptr);
+    ASSERT_EQ(good_resp->statusCode(), k202Accepted);
+    auto good_body = json::parse(std::string(good_resp->body()));
+    const std::string document_id = good_body["document_id"].get<std::string>();
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.find_in_org(document_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(doc.has_value());
+    ASSERT_TRUE(doc->input_snapshot.has_value());
+    EXPECT_EQ((*doc->input_snapshot)["employee"]["iin"].get<std::string>(), "988916681773");
+}
+
 // ── POST /api/v1/vacations ───────────────────────────────────────────────────
 
 TEST_F(HrApiTest, CreateVacationSucceeds) {
