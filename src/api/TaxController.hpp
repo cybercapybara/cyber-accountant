@@ -110,14 +110,19 @@
  * and fno_300/v1/schema.json both require free-text fields this codebase has
  * no column for — `director`, `accountant`, and the amount spelled out in
  * words (`tax_words`/`balance_words`; there is no money-to-words converter
- * anywhere here). fno_300 additionally requires `sales_tenge`, the revenue
- * TURNOVER behind the VAT: Tax::TaxService::calculate_vat sums `vat_amount`
- * only and never records the underlying base, so that figure genuinely is
- * not on file either. Those — and ONLY those, per
+ * anywhere here). Those — and ONLY those, per
  * fno_910_allowed_extra_fields()/fno_300_allowed_extra_fields() — must
  * arrive in `document_input`, which is deep-merged (RFC 7396 `merge_patch`)
  * over the derived base before the schema check; omitting one yields the
  * same `422 schema_validation_failed` DocgenController already produces.
+ *
+ * fno_300's `sales_tenge` (the revenue TURNOVER behind the VAT) is NOT one
+ * of them, though an earlier round of this fix wrongly treated it as one:
+ * `calculate_vat` does not need that figure for its own arithmetic, but the
+ * query that produces it is the one calculate_snr already runs, so the
+ * calculation now snapshots it (`result_snapshot.income_tiyn`) and this
+ * controller derives `sales_tenge` from the snapshot. A caller may not
+ * declare their own revenue turnover on a legal tax filing.
  *
  * Final fix round (security): that allowlist is load-bearing, not cosmetic.
  * `document_input` used to be merge_patch'd with no allowlist at all, so
@@ -237,15 +242,20 @@ public:
     }
 
     /// Same role as fno_910_allowed_extra_fields(), for
-    /// templates/latex/fno_300/v1/schema.json. `sales_tenge` is on this list
-    /// even though it is an AMOUNT: calculate_vat sums `vat_amount` only and
-    /// never records the revenue turnover behind it, so unlike
-    /// `vat_charged_tenge`/`vat_credited_tenge`/`balance_tenge` (all derived
-    /// from the calculation, all off-limits) it has no authoritative source
-    /// in this system at all — the alternative to accepting it from the
-    /// caller is a form with a mandatory field left blank.
+    /// templates/latex/fno_300/v1/schema.json.
+    ///
+    /// `sales_tenge` is deliberately NOT here. An earlier round of this fix
+    /// admitted it, on the reasoning that calculate_vat sums `vat_amount`
+    /// only and so never records the revenue turnover behind the VAT. The
+    /// premise was right and the conclusion wrong: the turnover is exactly
+    /// what `TaxService::sum_line_amount_tiyn(kIncomeAccounts, "credit",
+    /// ..., vat_only=false)` computes — calculate_snr and threshold_alerts
+    /// have always called it — calculate_vat simply did not SNAPSHOT it.
+    /// It does now (`result_snapshot.income_tiyn`), so the figure is
+    /// server-derived like every other amount on this form and a caller
+    /// declaring their own revenue turnover on a legal tax filing is a 422.
     static const std::vector<std::string>& fno_300_allowed_extra_fields() {
-        static const std::vector<std::string> kAllowed = {"sales_tenge", "balance_words", "director", "accountant"};
+        static const std::vector<std::string> kAllowed = {"balance_words", "director", "accountant"};
         return kAllowed;
     }
 
@@ -967,11 +977,18 @@ private:
         long long accrued_tiyn = 0;
         long long deductible_tiyn = 0;
         long long balance_tiyn = 0;
+        // `income_tiyn` is the revenue turnover behind the VAT, snapshotted
+        // by calculate_vat — read through the same required-key helper as
+        // every other figure, so a snapshot without it is a 422 naming the
+        // key, never a silently-filed 0 ₸ turnover.
+        long long income_tiyn = 0;
         if (!snapshot_int(calc, "accrued_tiyn", accrued_tiyn, missing_key) ||
             !snapshot_int(calc, "deductible_tiyn", deductible_tiyn, missing_key) ||
-            !snapshot_int(calc, "balance_tiyn", balance_tiyn, missing_key))
+            !snapshot_int(calc, "balance_tiyn", balance_tiyn, missing_key) ||
+            !snapshot_int(calc, "income_tiyn", income_tiyn, missing_key))
             return std::nullopt;
         input["period"] = {{"year", year}, {"quarter", std::to_string(quarter_of(calc.period_from))}};
+        input["sales_tenge"] = Ledger::format_tiyn(income_tiyn);
         input["vat_charged_tenge"] = Ledger::format_tiyn(accrued_tiyn);
         input["vat_credited_tenge"] = Ledger::format_tiyn(deductible_tiyn);
         // format_tiyn rejects negatives by contract, and a negative balance is

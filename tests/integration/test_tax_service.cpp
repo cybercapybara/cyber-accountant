@@ -208,6 +208,11 @@ TEST_F(TaxServiceTest, VatBalanceFromLineVatAmounts) {
     EXPECT_EQ(q1.result_snapshot.at("deductible_tiyn").get<long long>(), 6000LL);  // 60.00 ₸
     EXPECT_EQ(q1.result_snapshot.at("balance_tiyn").get<long long>(), 6000LL);
     EXPECT_EQ(q1.total_tiyn, 6000LL);
+    // The revenue TURNOVER behind that VAT is snapshotted too — the whole
+    // credit amount of the 6010 line (1120.00 ₸), not its 120.00 ₸
+    // vat_amount. The ФНО 300.00 form's turnover line is derived from this
+    // instead of being accepted from the request body.
+    EXPECT_EQ(q1.result_snapshot.at("income_tiyn").get<long long>(), 112000LL);
 
     // Q2 2026: only a purchase with input VAT, no sales at all — accrued=0,
     // deductible>0, so the balance must come out NEGATIVE (к возврату) and
@@ -226,6 +231,9 @@ TEST_F(TaxServiceTest, VatBalanceFromLineVatAmounts) {
     EXPECT_EQ(q2.result_snapshot.at("deductible_tiyn").get<long long>(), 2400LL);  // 24.00 ₸
     EXPECT_EQ(q2.result_snapshot.at("balance_tiyn").get<long long>(), -2400LL);
     EXPECT_EQ(q2.total_tiyn, -2400LL);
+    // No sales at all in Q2 — a real 0 ₸ turnover, snapshotted explicitly so
+    // the form's turnover line is a stored zero rather than a missing key.
+    EXPECT_EQ(q2.result_snapshot.at("income_tiyn").get<long long>(), 0LL);
 }
 
 TEST_F(TaxServiceTest, SnapshotsStored) {

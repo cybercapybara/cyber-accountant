@@ -5979,7 +5979,7 @@ export interface components {
              * @description 910.00 needs a snr_simplified calculation, 300.00 a vat one (422 kind_mismatch otherwise); must belong to the caller's organization
              */
             calculation_id: string;
-            /** @description Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. ALLOWLISTED — only the fields the database cannot hold may appear: director, accountant, tax_words (910.00); director, accountant, balance_words, sales_tenge (300.00). Any other key (the org identity, the period, or any amount taken from the calculation) is rejected 422 not_allowed_override naming that field, before the merge happens. Left open here (additionalProperties) because the accepted set depends on `kind`; the server is the authority */
+            /** @description Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. ALLOWLISTED — only the fields the database cannot hold may appear: director, accountant, tax_words (910.00); director, accountant, balance_words (300.00). Any other key — the org identity, the period, and every amount including the ФНО 300.00 revenue turnover `sales_tenge`, which is derived from the calculation's own snapshot — is rejected 422 not_allowed_override naming that field, before the merge happens. Left open here (additionalProperties) because the accepted set depends on `kind`; the server is the authority */
             document_input?: {
                 [key: string]: unknown;
             };

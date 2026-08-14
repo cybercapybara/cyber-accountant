@@ -18,8 +18,8 @@
  * (Hr::EmployeeRepository::list_employed_during — hired on or before the
  * period's last day and not dismissed before its first, evaluated in SQL, not
  * filtered again here) gets exactly one Payroll::calculate() call and one
- * payslips row. Note this is deliberately NOT list_active(), i.e. not the
- * roster as it stands today: a run is calculated FOR a period, frequently
+ * payslips row. Note this is deliberately NOT the roster as it stands
+ * today: a run is calculated FOR a period, frequently
  * after the fact, so today's roster would both pay somebody hired after the
  * period ended and skip somebody who worked it and has since left. See
  * calculate_run() for the (full month vs prorated) pay decision for an

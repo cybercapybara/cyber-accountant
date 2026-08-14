@@ -47,7 +47,8 @@ namespace Tax {
 /// in Fno910.hpp because Task 8's ФНО generator reuses this exact struct.
 ///
 /// `org_id` carries the tenant this identity belongs to. It is NOT emitted
-/// into any XML — it exists solely so every `build_xml` can CHECK it against
+/// into any XML, and not into to_json() below either — it exists solely so
+/// every `build_xml` can CHECK it against
 /// the Calculation's own `org_id` and refuse a pair that crosses tenants
 /// (see Fno910::build_xml). Multi-tenancy is enforced by construction
 /// everywhere else in this codebase; a generator that trusted its caller to
@@ -61,9 +62,12 @@ struct OrgInfo {
     std::string tax_period_half;
 };
 
+/// `org_id` is deliberately ABSENT from this serialization — it exists only
+/// for the tenant-pairing check in each build_xml (see the struct's comment
+/// above) and is not part of any ФНО artifact, so emitting it here would
+/// leak an internal identifier into whatever a future caller serializes.
 inline void to_json(nlohmann::json& j, const OrgInfo& o) {
     j = nlohmann::json{
-        {"org_id", o.org_id},
         {"bin", o.bin},
         {"name", o.name},
         {"tax_period_year", o.tax_period_year},

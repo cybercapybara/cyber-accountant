@@ -178,7 +178,11 @@ public:
      * balance   = accrued − deductible (negative ⇒ к возврату, a refund
      *             position — `total_tiyn` and the column it is stored in are
      *             both signed, this is a normal, expected outcome, not an
-     *             error).
+     *             error);
+     * income    = credit turnover of the same 6000-group accounts WITHOUT
+     *             the vat_only filter — the revenue behind the VAT. Not part
+     *             of the balance; recorded in `result_snapshot` only, for
+     *             the ФНО 300.00 form's turnover line.
      *
      * The `vat` rate itself is NOT an input to this arithmetic — every
      * journal line already carries its own realized vat_amount (set when the
@@ -198,6 +202,16 @@ public:
         const long long deductible_tiyn = sum_line_amount_tiyn(
             org_id, kVatDeductibleAccounts, "debit", quarter_start, quarter_end, /*vat_only=*/true);
         const long long balance_tiyn = accrued_tiyn - deductible_tiyn;
+        // The revenue TURNOVER behind that VAT — the same credit turnover of
+        // the 6000-group accounts calculate_snr and threshold_alerts already
+        // sum, differing from `accrued_tiyn` above only in `vat_only=false`
+        // (the line's own amount rather than its vat_amount). It plays NO
+        // part in the balance arithmetic; it is snapshotted because the ФНО
+        // 300.00 printed form has a line for it (see TaxController's
+        // `sales_tenge`), and a figure the server can compute must never be
+        // supplied by the caller in a legal tax filing.
+        const long long income_tiyn =
+            sum_line_amount_tiyn(org_id, kIncomeAccounts, "credit", quarter_start, quarter_end, /*vat_only=*/false);
 
         nlohmann::json input_snapshot = {
             {"period_from", quarter_start},
@@ -213,6 +227,13 @@ public:
             {"accrued_tiyn", accrued_tiyn},
             {"deductible_tiyn", deductible_tiyn},
             {"balance_tiyn", balance_tiyn},
+            // Same key name calculate_snr uses for the same quantity.
+            // No backfill or compatibility path is needed for snapshots
+            // written before this key existed: `tax_calculations`
+            // (migration 014) is new in this unreleased branch and has no
+            // production rows, and a recalculation rewrites the row in place
+            // (upsert) anyway.
+            {"income_tiyn", income_tiyn},
         };
 
         return calc_repo_.upsert(

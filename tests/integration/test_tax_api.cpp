@@ -550,11 +550,12 @@ protected:
                     {"accountant", "Серикбаева Айгерим Кайратовна"}};
     }
 
-    /// Same for fno_300 — plus `sales_tenge`, the revenue turnover
-    /// calculate_vat never records (it sums vat_amount only).
+    /// Same for fno_300. `sales_tenge` is deliberately NOT here: the
+    /// revenue turnover is derived from calculate_vat's own
+    /// `result_snapshot.income_tiyn`, and supplying it is a 422 (see
+    /// FilingRejectsASuppliedSalesTurnoverAndDerivesItFromTheLedger).
     static json fno300_extra() {
-        return json{{"sales_tenge", "1000000.00"},
-                    {"balance_words", "Ноль тенге 00 тиын"},
+        return json{{"balance_words", "Ноль тенге 00 тиын"},
                     {"director", "Ахметов Ерлан Серикович"},
                     {"accountant", "Серикбаева Айгерим Кайратовна"}};
     }
@@ -757,7 +758,6 @@ TEST_F(TaxFilingApiTest, FilingRejectsAuthoritativeOverrideAndKeepsTheTrueFigure
     const json& stored = *document->input_snapshot;
     EXPECT_EQ(stored["balance_tenge"].get<std::string>(), true_balance);
     EXPECT_EQ(stored["org"]["bin"].get<std::string>(), "777180000011");
-    EXPECT_EQ(stored["sales_tenge"].get<std::string>(), "1000000.00");
 
     // The XML for the same filing agrees with the PDF input — the whole
     // point of the allowlist is that these two can never diverge.
@@ -800,6 +800,96 @@ TEST_F(TaxFilingApiTest, FilingRefusesACalculationMissingASnapshotFigure) {
     EXPECT_EQ(payload["errors"][0]["code"].get<std::string>(), "incomplete_calculation");
     EXPECT_NE(payload["errors"][0]["message"].get<std::string>().find("income_tiyn"), std::string::npos);
     EXPECT_EQ(queue_depth(), before);
+    Tax::TaxFilingRepository filings;
+    EXPECT_EQ(filings.count_in_org(org.id), 0);
+}
+
+// Re-review finding: `sales_tenge` (the revenue TURNOVER on the ФНО 300.00)
+// was wrongly allowlisted on the reasoning that nothing on the server could
+// produce it. calculate_vat does not NEED that figure for its own
+// arithmetic, but the query behind it is the one calculate_snr already runs,
+// so it is now snapshotted (`result_snapshot.income_tiyn`) and derived here.
+// An accountant may not declare their own revenue on a legal tax filing.
+//
+// This test bites twice: it fails if `sales_tenge` were allowlisted again
+// (the first request would be accepted), and it fails if the derived figure
+// were wrong, because the expected value is the turnover of two separate
+// ledger postings — not a number that happens to match one of them.
+TEST_F(TaxFilingApiTest, FilingRejectsASuppliedSalesTurnoverAndDerivesItFromTheLedger) {
+    auto org = seed_org("777180000013", "Filing Turnover Org LLP");
+    auto accountant = member("filing-acc13@example.com", org.id, "accountant");
+    auto user = seed_user("filing-journal13@example.com");
+    // Two sales in the SAME quarter: turnover 1 000 000 + 500 000 = 1 500 000 ₸,
+    // of which only the vat_amounts (160 000 + 80 000) drive the balance.
+    post_income(org.id, user.id, "2026-02-01", "1000000.00", std::string("160000.00"));
+    post_income(org.id, user.id, "2026-03-15", "500000.00", std::string("80000.00"));
+
+    Tax::TaxService svc;
+    auto calc = svc.calculate_vat(org.id, "2026-01-01", "2026-03-31");
+    ASSERT_TRUE(calc.result_snapshot.contains("income_tiyn"));
+    const std::string derived_turnover = Ledger::format_tiyn(calc.result_snapshot.at("income_tiyn").get<long long>());
+    EXPECT_EQ(derived_turnover, "1500000.00");
+    // The turnover is NOT the balance — a filing that confused the two would
+    // still pass a weaker assertion.
+    EXPECT_NE(derived_turnover, Ledger::format_tiyn(calc.total_tiyn));
+
+    const long before = queue_depth();
+    json malicious = fno300_extra();
+    malicious["sales_tenge"] = "1.00";
+    auto bad_req =
+        authed_json(accountant, json{{"kind", "300.00"}, {"calculation_id", calc.id}, {"document_input", malicious}});
+    HttpResponsePtr bad_resp;
+    ctrl.createFiling(bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; });
+    ASSERT_NE(bad_resp, nullptr);
+    ASSERT_EQ(bad_resp->statusCode(), k422UnprocessableEntity) << bad_resp->body();
+    auto bad_body = body_of(bad_resp);
+    EXPECT_EQ(bad_body["errors"][0]["field"].get<std::string>(), "sales_tenge");
+    EXPECT_EQ(bad_body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    Tax::TaxFilingRepository filings;
+    EXPECT_EQ(filings.count_in_org(org.id), 0);
+    EXPECT_EQ(queue_depth(), before);
+
+    // The filing succeeds WITHOUT sales_tenge in the body — the server put
+    // it there — and it carries the ledger's turnover, not "1.00".
+    auto filing_id = create_filing(accountant, "300.00", calc.id, fno300_extra());
+    ASSERT_TRUE(filing_id.has_value());
+    auto filing = filings.find_in_org(*filing_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(filing);
+    ASSERT_TRUE(filing->document_id);
+    Ledger::DocumentRepository documents;
+    auto document = documents.find_in_org(*filing->document_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(document);
+    ASSERT_TRUE(document->input_snapshot);
+    EXPECT_EQ((*document->input_snapshot)["sales_tenge"].get<std::string>(), derived_turnover);
+}
+
+// A VAT calculation whose snapshot predates the income_tiyn key cannot
+// supply the turnover line, and must say so rather than file a 0 ₸ turnover
+// — the fno_300 counterpart of
+// FilingRefusesACalculationMissingASnapshotFigure.
+TEST_F(TaxFilingApiTest, FilingRefusesAVatCalculationWithoutTheTurnoverFigure) {
+    auto org = seed_org("777180000014", "Filing Turnover Drift Org LLP");
+    auto accountant = member("filing-acc14@example.com", org.id, "accountant");
+    auto user = seed_user("filing-journal14@example.com");
+    post_income(org.id, user.id, "2026-02-01", "1000000.00", std::string("160000.00"));
+
+    Tax::TaxService svc;
+    auto calc = svc.calculate_vat(org.id, "2026-01-01", "2026-03-31");
+    Database::get().execute_write([&](auto& txn) {
+        txn.exec_params("UPDATE tax_calculations SET result_snapshot = result_snapshot - 'income_tiyn' WHERE id = $1",
+                        calc.id);
+        return 0;
+    });
+
+    auto req = authed_json(accountant,
+                           json{{"kind", "300.00"}, {"calculation_id", calc.id}, {"document_input", fno300_extra()}});
+    HttpResponsePtr resp;
+    ctrl.createFiling(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k422UnprocessableEntity) << resp->body();
+    auto payload = body_of(resp);
+    EXPECT_EQ(payload["errors"][0]["code"].get<std::string>(), "incomplete_calculation");
+    EXPECT_NE(payload["errors"][0]["message"].get<std::string>().find("income_tiyn"), std::string::npos);
     Tax::TaxFilingRepository filings;
     EXPECT_EQ(filings.count_in_org(org.id), 0);
 }

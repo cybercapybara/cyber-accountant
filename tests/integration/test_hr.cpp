@@ -3,8 +3,9 @@
  * @brief Integration tests for Hr::EmployeeRepository / Hr::HrRepository
  *        against a real Postgres (migration 012). Exercises employee
  *        create/find, the typed 409 on a duplicate (org_id, iin),
- *        dismiss()'s status+dismissed_on transition, list_active()
- *        excluding dismissed employees, the JSONB round-trip on hr_orders'
+ *        dismiss()'s status+dismissed_on transition, list_employed_during()
+ *        excluding somebody dismissed before the period, the JSONB
+ *        round-trip on hr_orders'
  *        payload, vacations.days persistence, and that employees/orders are
  *        isolated per organization the same way every other org-scoped
  *        table in this codebase is.
@@ -146,7 +147,17 @@ TEST_F(HrRepoTest, DismissSetsStatusAndDate) {
     EXPECT_EQ(*found->dismissed_on, "2026-06-30");
 }
 
-TEST_F(HrRepoTest, ListActiveExcludesDismissed) {
+// Was `ListActiveExcludesDismissed` against list_active(), which
+// PayrollService replaced with list_employed_during() and which has now been
+// removed as dead code. The property worth keeping is the same one — a
+// dismissal drops the employee out of the roster query — but stated against
+// the period-scoped method that survived, at the repository level (the
+// service-level equivalents live in test_payroll_service.cpp).
+//
+// All three are hired 2026-01-10; one is dismissed 2026-03-01. A Q2 period
+// therefore sees the two who are still employed and not the one who left
+// before it began.
+TEST_F(HrRepoTest, ListEmployedDuringExcludesSomebodyDismissedBeforeThePeriod) {
     Hr::EmployeeRepository repo;
     auto org_id = make_org("111270000105");
 
@@ -156,17 +167,22 @@ TEST_F(HrRepoTest, ListActiveExcludesDismissed) {
 
     ASSERT_TRUE(repo.dismiss(org_id, to_dismiss.id, "2026-03-01"));
 
-    auto active = repo.list_active(org_id);
-    ASSERT_EQ(active.size(), 2u);
+    auto employed = repo.list_employed_during(org_id, "2026-04-01", "2026-06-30");
+    ASSERT_EQ(employed.size(), 2u);
     std::vector<std::string> ids;
-    for (const auto& e : active)
+    for (const auto& e : employed)
         ids.push_back(e.id);
     EXPECT_NE(std::find(ids.begin(), ids.end(), active_one.id), ids.end());
     EXPECT_NE(std::find(ids.begin(), ids.end(), active_two.id), ids.end());
     EXPECT_EQ(std::find(ids.begin(), ids.end(), to_dismiss.id), ids.end());
 
+    // A period the dismissed employee DID work is not affected by the
+    // dismissal — proving the exclusion above is period-based, not a blanket
+    // "dismissed employees are invisible".
+    EXPECT_EQ(repo.list_employed_during(org_id, "2026-01-01", "2026-02-28").size(), 3u);
+
     // count_in_org (OrgCrudBase) still reports all three, dismissed included
-    // — list_active() is the narrowed view, not a replacement for the base.
+    // — the period query is the narrowed view, not a replacement for the base.
     EXPECT_EQ(repo.count_in_org(org_id), 3);
 }
 
@@ -254,7 +270,7 @@ TEST_F(HrRepoTest, CrossOrgIsolated) {
 
     // Reads scoped to org_b never surface org_a's employee or its documents.
     EXPECT_FALSE(employees.find_in_org(emp_a.id, org_b, /*from_primary=*/true));
-    EXPECT_TRUE(employees.list_active(org_b).empty());
+    EXPECT_TRUE(employees.list_employed_during(org_b, "2026-01-01", "2026-12-31").empty());
     EXPECT_EQ(employees.count_in_org(org_b), 0);
 
     EXPECT_TRUE(hr.list_orders(org_b, emp_a.id).empty());

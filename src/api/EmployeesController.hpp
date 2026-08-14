@@ -82,10 +82,11 @@ public:
 
     // -------------------------------------------------------------------
     // GET /api/v1/employees — paginated, org-scoped. Includes dismissed
-    // employees (the full roster) — same "list_in_org is the roster,
-    // list_active is the filtered view" split EmployeeRepository documents;
-    // a client that only wants active staff can filter client-side or a
-    // future ?status= filter can be layered on without changing this shape.
+    // employees: this is the full roster (OrgCrudBase::list_in_org), which
+    // is also the only roster query EmployeeRepository still exposes for
+    // "right now" — a client that only wants active staff filters
+    // client-side, or a future ?status= filter can be layered on without
+    // changing this shape.
     // -------------------------------------------------------------------
     void list(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
