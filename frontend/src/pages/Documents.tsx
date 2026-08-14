@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
@@ -83,6 +83,16 @@ const SOURCE_LABELS: Record<string, string> = {
   email: 'Email',
 };
 
+// FocusedDocumentAlert's polling cadence and hard cap. Fix round 1
+// (controller review): the previous version polled every 2s forever while
+// status stayed 'draft' — a LaTeX render failure or exhausted job retries
+// leave a document in 'draft' permanently, so that was an unbounded
+// background poll with no stop condition. Two minutes is generous for a
+// docgen render (seconds in practice); past that we stop and tell the user
+// plainly rather than keep claiming "рендер выполняется".
+const FOCUS_POLL_INTERVAL_MS = 2000;
+const FOCUS_POLL_TIMEOUT_MS = 120_000;
+
 // Thin-bordered, low-chroma badges — same palette family as Journal's
 // StatusBadge (pages/Journal.tsx) and admin/Jobs.tsx's, so a document's
 // "draft/final/sent/…" pill reads the same as any other status pill in the app.
@@ -131,12 +141,16 @@ async function sha256Hex(file: File): Promise<string> {
  * a client-driven upload flow (uploads → PUT presigned → confirm-upload),
  * a link to /documents/generate, and — when arriving from a successful
  * generate call via `?focus=<id>&queued=<0|1>` — a banner that polls that
- * one document until it leaves 'draft'.
+ * one document until it leaves 'draft' (bounded — see FocusedDocumentAlert).
  *
- * The table itself also polls (usePagedQuery's refetchInterval) whenever
- * the current page holds a generated document still in 'draft' — the
- * render job can finish while the user is just browsing the list, not
- * only right after generating.
+ * The table itself does NOT poll. An earlier version had the list refetch
+ * on an interval whenever the current page held a generated+draft row, but
+ * that has no natural stop condition of its own (a stuck draft — failed
+ * LaTeX render, exhausted job retries — would poll forever with no
+ * per-document timeout to anchor against, unlike the single focused
+ * document below). One bounded poll source is simpler and safer than two;
+ * a user who wants a fresher view of someone else's still-rendering draft
+ * can just reload the page.
  */
 export function DocumentsPage() {
   const toast = useToast();
@@ -149,7 +163,6 @@ export function DocumentsPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadDocType, setUploadDocType] = useState<DocType>('other');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [pollList, setPollList] = useState(false);
 
   const filters = useMemo<Record<string, string>>(() => {
     const f: Record<string, string> = {};
@@ -165,17 +178,7 @@ export function DocumentsPage() {
         query: { limit, offset, ...filters },
       }),
     perPage: PER_PAGE,
-    // See setPollList below — recomputed after every fetch, one render
-    // behind, which TanStack Query's observer still picks up (dynamic
-    // refetchInterval via a plain value re-passed on re-render).
-    refetchInterval: pollList ? 4000 : undefined,
   });
-
-  useEffect(() => {
-    const needsPoll =
-      data?.data.some((d) => d.source === 'generated' && d.status === 'draft') ?? false;
-    setPollList(needsPoll);
-  }, [data]);
 
   // Unpaginated (limit=200) counterparty lookup for the "Counterparty"
   // column — same rationale as Journal.tsx's select: P1 organizations are
@@ -442,9 +445,22 @@ export function DocumentsPage() {
 /**
  * Standalone poll for the just-generated document, independent of the
  * table's own paging/filters (it may well not be on the current page or
- * may not match the active filters at all). Polls at a tighter interval
- * than the table while status is 'draft', then stops — the exact
- * `refetchInterval` function form TanStack Query is built for.
+ * may not match the active filters at all).
+ *
+ * Two things bound the polling, both fixed in controller review round 1
+ * (an earlier version polled every 2s forever while status stayed
+ * 'draft', which is indistinguishable from "stuck forever" for a failed
+ * render or exhausted job retries):
+ *   - `queued=0` (render_queued was false) means no job was ever enqueued
+ *     — the document simply stays 'draft' until an operator re-enqueues
+ *     it by hand, so this component never polls at all in that case, and
+ *     says so plainly instead of the generic "rendering…" text.
+ *   - Otherwise, polling stops after FOCUS_POLL_TIMEOUT_MS (2 minutes) even
+ *     if status is still 'draft' — a real docgen render takes seconds, so
+ *     two minutes stuck at 'draft' means something failed server-side
+ *     (LaTeX error, exhausted retries). Past the cap the UI stops
+ *     claiming a render is in progress and offers a manual refetch
+ *     instead of an indefinite background poll.
  */
 function FocusedDocumentAlert({
   id,
@@ -456,10 +472,24 @@ function FocusedDocumentAlert({
   onDismiss: () => void;
 }) {
   const toast = useToast();
+  const startedAtRef = useRef(Date.now());
+  const [timedOut, setTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (queuedFailed) return; // never polling in this case — nothing to time out.
+    const timer = setTimeout(() => setTimedOut(true), FOCUS_POLL_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [queuedFailed]);
+
   const docQ = useQuery({
     queryKey: qk.documents.detail(id),
     queryFn: () => api.getJson<DocumentDetailResponse>(`/api/v1/documents/${id}`),
-    refetchInterval: (query) => (query.state.data?.data.status === 'draft' ? 2000 : false),
+    refetchInterval: (query) => {
+      if (queuedFailed) return false;
+      if (query.state.data?.data.status !== 'draft') return false;
+      if (Date.now() - startedAtRef.current > FOCUS_POLL_TIMEOUT_MS) return false;
+      return FOCUS_POLL_INTERVAL_MS;
+    },
   });
 
   const download = useApiMutation(
@@ -474,6 +504,8 @@ function FocusedDocumentAlert({
   );
 
   const doc = docQ.data?.data;
+  const stillRenderingHonestly = !queuedFailed && !timedOut && doc?.status === 'draft';
+  const stuck = !queuedFailed && timedOut && doc?.status === 'draft';
 
   return (
     <div className="space-y-3">
@@ -504,10 +536,30 @@ function FocusedDocumentAlert({
                   className={STATUS_STYLES[doc.status]}
                 />
               </p>
-              {doc.status === 'draft' && (
+              {queuedFailed && doc.status === 'draft' && (
+                <p className="text-muted-foreground">
+                  Задача рендера не поставлена. Попробуйте сгенерировать документ заново.
+                </p>
+              )}
+              {stillRenderingHonestly && (
                 <p className="text-muted-foreground">
                   Рендер выполняется, страница обновится автоматически…
                 </p>
+              )}
+              {stuck && (
+                <div className="space-y-2">
+                  <p className="text-muted-foreground">
+                    Рендер занимает дольше обычного — обновите страницу позже.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => docQ.refetch()}
+                    disabled={docQ.isFetching}
+                  >
+                    Обновить
+                  </Button>
+                </div>
               )}
               {doc.status !== 'draft' && (
                 <Button size="sm" onClick={() => download.mutate()} disabled={download.isPending}>
