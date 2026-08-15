@@ -21,11 +21,13 @@
  *   POST /api/v1/journal-entries/{id}/reverse   posted -> reversed + a new,
  *                                                 already-posted storno entry
  *
- * RBAC: every mutating route (create/post/reverse) additionally goes through
- * API_REQUIRE_ORG_PERM for `journal`/write against the §5.3 permission matrix
- * (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown role, resource or
- * action is a 403, so a role added later cannot fail open the way the old
- * `ctx.role == "viewer"` denylist let it. Reads are gated in a follow-up.
+ * RBAC: EVERY route goes through API_REQUIRE_ORG_PERM against the §5.3
+ * permission matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown
+ * role, resource or action is a 403, so a role added later cannot fail open
+ * the way the old `ctx.role == "viewer"` denylist let it. The mutating routes
+ * (create/post/reverse) need `journal`/write, the two GETs `journal`/read:
+ * "—" in that matrix means INVISIBLE, not read-only, so the `hr` role gets a
+ * 403 on the ledger listing and on a single entry alike.
  * `org_id`/`user_id` come EXCLUSIVELY from `ctx` (the access token's
  * membership-backed claims), never from the body or a query param.
  *
@@ -96,6 +98,7 @@ public:
     // -------------------------------------------------------------------
     void list(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kJournal, Tenancy::OrgPerm::Action::kRead);
 
         Validation::Errors errs;
         std::optional<std::string> from_filter;
@@ -205,6 +208,7 @@ public:
     // -------------------------------------------------------------------
     void get(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kJournal, Tenancy::OrgPerm::Action::kRead);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed journal entry id"));
             return;

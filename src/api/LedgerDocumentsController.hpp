@@ -27,8 +27,18 @@
  * role, resource or action is a 403, so a role added later cannot fail open
  * the way the old `ctx.role == "viewer"` denylist let it. `download-url`
  * never writes to the database (it only mints a presigned URL for an object
- * that already has an s3_key), so it carries no write gate; the read-side
- * gate for it and for the GETs lands in a follow-up task.
+ * that already has an s3_key), so it carries no WRITE gate — but it hands
+ * out the document's bytes, which makes it a READ, and it is gated as one.
+ *
+ * The read side cannot use API_REQUIRE_ORG_PERM with a fixed resource,
+ * because ONE table holds two §5.3 resources: кадровые documents
+ * (doc_type='hr') are `hr_docs`, which the `hr` role may read, while all
+ * other primary documents are `documents`, which it may not. Hence the two
+ * private helpers below — resource_for(doc) and ensure_document_access() —
+ * which every route that has already loaded a row must go through, and
+ * `list`'s unconditional narrowing: a caller holding only `hr_docs`/read
+ * gets doc_type='hr' forced onto BOTH the listing query and its count,
+ * regardless of what ?type it did or did not send.
  *
  * Presigning needs Storage::S3Storage::presign(), which is deliberately NOT
  * part of the StorageBackend interface (LocalStorage has no query-signing
@@ -164,6 +174,19 @@ public:
     void list(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
 
+        // Two §5.3 resources share this table (see the RBAC note in the file
+        // header), so the gate is a pair of allows() calls, not one macro:
+        // read on EITHER lets the caller see the registry at all.
+        const bool may_read_all =
+            Tenancy::OrgPerm::allows(ctx.role, Tenancy::OrgPerm::Resource::kDocuments, Tenancy::OrgPerm::Action::kRead);
+        const bool may_read_hr =
+            Tenancy::OrgPerm::allows(ctx.role, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kRead);
+        if (!may_read_all && !may_read_hr) {
+            callback(ErrorResponse::forbidden("org_role_denied",
+                                              "Your role in this organization is not allowed to read documents"));
+            return;
+        }
+
         Validation::Errors errs;
         std::optional<std::string> type_filter;
         std::optional<std::string> status_filter;
@@ -190,6 +213,18 @@ public:
             callback(Validation::response_422(errs));
             return;
         }
+
+        // The кадровик sees the registry, but only their own slice of it.
+        // ?type is OVERWRITTEN unconditionally, not merely checked: the
+        // narrowing has to be a property of the ROLE, not a consequence of
+        // the client politely sending ?type=hr — otherwise an empty request
+        // would hand back every invoice in the ledger. The assignment sits
+        // AFTER the ?type parsing for exactly that reason, and the SAME
+        // type_filter goes into list_filtered AND count_filtered below: a
+        // narrowing applied to only one of the pair would still tell the
+        // кадровик how many primary documents exist without showing them.
+        if (!may_read_all)
+            type_filter = std::string("hr");
 
         const auto page = parse_page_params(req, /*default_limit=*/50, /*max_limit=*/200);
         with_repo_errors(callback, "documents list", [&] {
@@ -220,13 +255,19 @@ public:
                 callback(ErrorResponse::not_found("document"));
                 return;
             }
+            if (!ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kRead))
+                return;
             callback(Response::ok({{"data", json(*found)}}));
         });
     }
 
     // -------------------------------------------------------------------
     // POST /api/v1/documents/{id}/download-url — presigned GET, TTL 300s.
-    // Read-only (mints a URL, writes nothing) — no viewer gate.
+    // POST, but semantically a READ: it writes nothing and hands out the
+    // document's bytes, so it carries the same per-document read gate as
+    // GET /documents/{id} — checked AFTER find_in_org, so a document that
+    // belongs to another organization stays a 404 rather than becoming a
+    // 403 that confirms its existence.
     // -------------------------------------------------------------------
     void downloadUrl(const HttpRequestPtr& req,
                      std::function<void(const HttpResponsePtr&)>&& callback,
@@ -244,6 +285,8 @@ public:
                 callback(ErrorResponse::not_found("document"));
                 return;
             }
+            if (!ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kRead))
+                return;
             if (!found->s3_key || found->s3_key->empty()) {
                 callback(ErrorResponse::conflict("no_file", "This document has no stored file yet"));
                 return;
@@ -446,6 +489,38 @@ public:
     }
 
 private:
+    /// Ресурс матрицы §5.3 для КОНКРЕТНОГО документа: кадровые документы —
+    /// hr_docs (кадровик их видит), вся остальная первичка — documents (не
+    /// видит). Обе живут в одной таблице, поэтому ресурс определяется
+    /// строкой, а не маршрутом.
+    static const char* resource_for(const Ledger::Document& doc) {
+        return doc.doc_type == "hr" ? Tenancy::OrgPerm::Resource::kHrDocs : Tenancy::OrgPerm::Resource::kDocuments;
+    }
+
+    /// Проверить право @p action на @p doc; при отказе ответить 403 и
+    /// вернуть false (вызывающий делает `return;`). Функция, а не макрос
+    /// вроде API_REQUIRE_ORG_PERM: решение зависит от УЖЕ ПРОЧИТАННОЙ
+    /// строки, то есть от значения, а не только от ctx, и вызывается
+    /// строго ПОСЛЕ find_in_org — «не в этой организации» обязано
+    /// оставаться 404, а не превращаться в 403.
+    ///
+    /// Все маршруты над ОДНИМ документом обязаны ходить через неё, а не
+    /// повторять условие у себя: сейчас их два (get, downloadUrl), задачи 9
+    /// и 11 добавят ещё пять (listVersions, createVersion,
+    /// versionDownloadUrl, remove, voidDocument), и семь копий одного
+    /// условия разъедутся при первой же правке матрицы.
+    static bool ensure_document_access(const std::function<void(const HttpResponsePtr&)>& callback,
+                                       const Tenancy::OrgContext& ctx,
+                                       const Ledger::Document& doc,
+                                       const char* action) {
+        if (Tenancy::OrgPerm::allows(ctx.role, resource_for(doc), action))
+            return true;
+        callback(ErrorResponse::forbidden(
+            "org_role_denied",
+            "Your role in this organization is not allowed to " + std::string(action) + " this document"));
+        return false;
+    }
+
     static bool is_allowed(const std::string& v, const std::vector<std::string>& allowed) {
         for (const auto& a : allowed)
             if (v == a)

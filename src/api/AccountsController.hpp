@@ -9,7 +9,13 @@
  *                            AccountRepository::list_visible(org_id), which
  *                            takes no limit/offset (same "small, unpaginated
  *                            list" idiom as GET /api/v1/orgs/mine)
- *   POST /api/v1/accounts   create a subaccount (accountant/owner only)
+ *   POST /api/v1/accounts   create a subaccount
+ *
+ * RBAC: the chart of accounts belongs to the `journal` resource of the §5.3
+ * matrix (Tenancy::OrgPerm) — GET needs `journal`/read, POST `journal`/write,
+ * both through API_REQUIRE_ORG_PERM, which DENIES BY DEFAULT. "—" in that
+ * matrix means INVISIBLE, not read-only, so the read side is gated too: the
+ * `hr` role gets a 403 here, not a filtered list.
  *
  * There is deliberately no GET /api/v1/accounts/{id} — the brief's Produces
  * list for this controller only calls out list_visible + create_subaccount,
@@ -65,6 +71,7 @@ public:
     // -------------------------------------------------------------------
     void list(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kJournal, Tenancy::OrgPerm::Action::kRead);
 
         with_repo_errors(callback, "accounts list", [&] {
             Ledger::AccountRepository repo;

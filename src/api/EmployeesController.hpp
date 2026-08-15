@@ -7,18 +7,21 @@
  * API_REQUIRE_ORG(req, callback, ctx) — same guard order as
  * CounterpartiesController/JournalController):
  *   GET   /api/v1/employees             list, paginated (parse_page_params)
- *   POST  /api/v1/employees             create (accountant/owner only)
+ *   POST  /api/v1/employees             create (owner/accountant/hr)
  *   GET   /api/v1/employees/{id}        fetch one
- *   PATCH /api/v1/employees/{id}        patch editable fields (accountant/owner only)
- *   POST  /api/v1/employees/{id}/dismiss  {dismissed_on} -> status='dismissed' (accountant/owner only)
+ *   PATCH /api/v1/employees/{id}        patch editable fields (owner/accountant/hr)
+ *   POST  /api/v1/employees/{id}/dismiss  {dismissed_on} -> status='dismissed' (owner/accountant/hr)
  *
- * RBAC: every mutating route (create/patch/dismiss) additionally goes through
- * API_REQUIRE_ORG_PERM for `employees`/write against the §5.3 permission
- * matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown role,
- * resource or action is a 403, so a role added later cannot fail open the way
- * the old `ctx.role == "viewer"` denylist let it. Reads are gated in a
- * follow-up. `org_id` comes EXCLUSIVELY from `ctx.org_id`, never the
- * path/body/a query param.
+ * RBAC: EVERY route goes through API_REQUIRE_ORG_PERM against the §5.3
+ * permission matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown
+ * role, resource or action is a 403, so a role added later cannot fail open
+ * the way the old `ctx.role == "viewer"` denylist let it. The mutating routes
+ * (create/patch/dismiss) need `employees`/write, the two GETs `employees`/
+ * read. The roster is the ONE ledger-adjacent resource `hr` holds in full —
+ * the кадровик writes it, which is why the route comments here say
+ * owner/accountant/hr rather than the "accountant/owner only" the rest of
+ * this codebase's write routes carry. `org_id` comes EXCLUSIVELY from
+ * `ctx.org_id`, never the path/body/a query param.
  *
  * Validation split (same 400-shape / 422-value line CounterpartiesController's
  * `identifier` and JournalController's `entry_date`/amount draw):
@@ -94,6 +97,7 @@ public:
     // -------------------------------------------------------------------
     void list(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kEmployees, Tenancy::OrgPerm::Action::kRead);
         const auto page = parse_page_params(req, /*default_limit=*/50, /*max_limit=*/200);
 
         with_repo_errors(callback, "employees list", [&] {
@@ -108,7 +112,7 @@ public:
     }
 
     // -------------------------------------------------------------------
-    // POST /api/v1/employees — accountant/owner only.
+    // POST /api/v1/employees — owner/accountant/hr (`employees`/write).
     // -------------------------------------------------------------------
     void create(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
@@ -133,6 +137,7 @@ public:
     // -------------------------------------------------------------------
     void get(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kEmployees, Tenancy::OrgPerm::Action::kRead);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed employee id"));
             return;
@@ -152,7 +157,7 @@ public:
     // -------------------------------------------------------------------
     // PATCH /api/v1/employees/{id} — patches every column
     // EmployeeRepository::update() allows (everything except
-    // hired_on/status/dismissed_on — see file header), accountant/owner only.
+    // hired_on/status/dismissed_on — see file header), owner/accountant/hr.
     // -------------------------------------------------------------------
     void patch(const HttpRequestPtr& req,
                std::function<void(const HttpResponsePtr&)>&& callback,

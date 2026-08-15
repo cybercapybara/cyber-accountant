@@ -21,6 +21,19 @@
  * who is owner of {id} but hasn't switched into it (org claim points
  * elsewhere, or is empty) is NOT treated as authorized here — only as admin,
  * if they happen to also be one.
+ *
+ * `members` в матрице §5.3 — owner-only; это уже обеспечено
+ * `require_admin_or_org_owner`, отдельный `API_REQUIRE_ORG_PERM` был бы
+ * дублированием и вторым источником истины. Матрица не ослабляет эти четыре
+ * маршрута — она даёт `members` только владельцу, ровно то же, что уже
+ * проверяет этот гейт (плюс запасной путь для системного админа, которого
+ * матрица тенантных ролей не описывает вовсе).
+ *
+ * `role` в теле addMember/updateMemberRole проверяется
+ * `Tenancy::is_valid_role` — с migrations/017_hr_role.sql это
+ * owner/accountant/hr/viewer. Последняя-владельца защита считает владельцев
+ * по `role == "owner"`, так что появление `hr` её не ослабляет: разжаловать
+ * единственного владельца в кадровика — тот же 409 last_owner.
  */
 
 #pragma once
@@ -379,7 +392,7 @@ public:
         }
         if (!body["role"].is_string() || !Tenancy::is_valid_role(body["role"].get<std::string>())) {
             Validation::Errors role_errs;
-            role_errs.add("role", "not_allowed", "must be one of: 'owner' 'accountant' 'viewer'");
+            role_errs.add("role", "not_allowed", "must be one of: 'owner' 'accountant' 'hr' 'viewer'");
             callback(Validation::response_400(role_errs));
             return;
         }
@@ -449,7 +462,7 @@ public:
         }
         if (!body["role"].is_string() || !Tenancy::is_valid_role(body["role"].get<std::string>())) {
             Validation::Errors role_errs;
-            role_errs.add("role", "not_allowed", "must be one of: 'owner' 'accountant' 'viewer'");
+            role_errs.add("role", "not_allowed", "must be one of: 'owner' 'accountant' 'hr' 'viewer'");
             callback(Validation::response_400(role_errs));
             return;
         }

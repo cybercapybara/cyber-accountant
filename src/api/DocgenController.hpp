@@ -12,17 +12,20 @@
  * API_REQUIRE_ORG(req, callback, ctx)):
  *   GET  /api/v1/doc-templates      registry scan: {slug, version, schema}
  *                                    for every template on disk — read-only,
- *                                    not yet permission-gated (a follow-up
- *                                    task adds the read-side gate).
+ *                                    gated as `documents`/read.
  *   POST /api/v1/documents/generate  body {template_slug, input,
  *                                    counterparty_id?, link_entry_id?} ->
  *                                    202 {document_id}.
  *
- * RBAC: `documents/generate` goes through API_REQUIRE_ORG_PERM for
- * `documents`/write against the §5.3 permission matrix (Tenancy::OrgPerm),
- * which DENIES BY DEFAULT — an unknown role, resource or action is a 403, so
- * a role added later cannot fail open the way the old `ctx.role == "viewer"`
- * denylist let it.
+ * RBAC: BOTH routes go through API_REQUIRE_ORG_PERM against the §5.3
+ * permission matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown
+ * role, resource or action is a 403, so a role added later cannot fail open
+ * the way the old `ctx.role == "viewer"` denylist let it.
+ * `documents/generate` needs `documents`/write; `doc-templates` needs
+ * `documents`/read even though it touches no per-org row — the template
+ * registry IS the shape of the primary documents a role cannot see, and "—"
+ * in §5.3 means INVISIBLE, so the `hr` role gets a 403 rather than a catalog
+ * of the invoice/АВР/накладная forms it may never generate or read.
  *
  * `docgen.render`'s job type string is duplicated here as `kRenderJobType`
  * rather than pulling in `docgen/RenderJob.hpp` for its `kJobType` constant:
@@ -156,11 +159,13 @@ public:
     static constexpr const char* kRenderJobType = "docgen.render";
 
     // -------------------------------------------------------------------
-    // GET /api/v1/doc-templates — registry scan. Read-only, no viewer gate.
+    // GET /api/v1/doc-templates — registry scan. Reads no per-org row, but
+    // still requires `documents`/read: see the RBAC note in this file's
+    // header for why the catalog itself is part of what "—" hides.
     // -------------------------------------------------------------------
     void listTemplates(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        (void)ctx;  // no per-org data here — the guard only establishes that the caller has org access at all
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kDocuments, Tenancy::OrgPerm::Action::kRead);
 
         Docgen::TemplateRegistry registry;
         json data = json::array();

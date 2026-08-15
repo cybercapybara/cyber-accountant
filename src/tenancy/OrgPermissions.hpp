@@ -116,6 +116,20 @@ constexpr const char* grant_for(const MatrixRow (&rows)[N], std::string_view rol
     return nullptr;  // неизвестный ресурс
 }
 
+/// Позиция каждой роли в kRoles, зафиксированная на этапе компиляции.
+/// Пропущенная колонка в строке kMatrix структурно безопасна (nullptr =
+/// отказ), а вот ПЕРЕСТАВЛЕННЫЙ порядок ролей молча сдвигает все гранты на
+/// одну колонку — кадровик получил бы колонку бухгалтера, и поймали бы это
+/// только тесты. Эти проверки ломают сборку прямо в файле, который правят,
+/// добавляя роль: новую роль дописывают В КОНЕЦ kRoles и добавляют сюда свою
+/// строку, а порядок уже существующих остаётся неподвижным.
+static_assert(kRoleCount == 4, "добавили роль — допишите её static_assert ниже и колонку в каждую строку kMatrix");
+static_assert(role_index("owner") == 0, "порядок kRoles изменился — гранты kMatrix сдвинулись");
+static_assert(role_index("accountant") == 1, "порядок kRoles изменился — гранты kMatrix сдвинулись");
+static_assert(role_index("hr") == 2, "порядок kRoles изменился — гранты kMatrix сдвинулись");
+static_assert(role_index("viewer") == 3, "порядок kRoles изменился — гранты kMatrix сдвинулись");
+static_assert(role_index("nope") == kRoleCount, "неизвестная роль обязана не иметь колонки вовсе");
+
 }  // namespace detail
 
 /**

@@ -24,7 +24,7 @@ export type CreateOrganizationValues = z.infer<typeof createOrganizationSchema>;
 // nowhere for an owner to discover a member's raw user_id.
 export const addOrgMemberByEmailSchema = z.object({
   email: z.string().trim().email('Введите корректный email'),
-  role: z.enum(['owner', 'accountant', 'viewer']),
+  role: z.enum(['owner', 'accountant', 'hr', 'viewer']),
 });
 
 export type AddOrgMemberByEmailValues = z.infer<typeof addOrgMemberByEmailSchema>;

@@ -1808,12 +1808,12 @@ export interface paths {
                         /** Format: uuid */
                         user_id: string;
                         /** @enum {string} */
-                        role: "owner" | "accountant" | "viewer";
+                        role: "owner" | "accountant" | "hr" | "viewer";
                     } | {
                         /** Format: email */
                         email: string;
                         /** @enum {string} */
-                        role: "owner" | "accountant" | "viewer";
+                        role: "owner" | "accountant" | "hr" | "viewer";
                     };
                 };
             };
@@ -1938,7 +1938,7 @@ export interface paths {
                 content: {
                     "application/json": {
                         /** @enum {string} */
-                        role: "owner" | "accountant" | "viewer";
+                        role: "owner" | "accountant" | "hr" | "viewer";
                     };
                 };
             };
@@ -2013,7 +2013,7 @@ export interface paths {
                         "application/json": components["schemas"]["CounterpartyListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read counterparties (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2119,7 +2119,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read counterparties (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2230,7 +2230,7 @@ export interface paths {
                         "application/json": components["schemas"]["AccountListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read the chart of accounts (journal/read) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2332,7 +2332,7 @@ export interface paths {
                         "application/json": components["schemas"]["DocumentListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read either documents or hr_docs (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2393,7 +2393,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2430,9 +2430,13 @@ export interface paths {
         put?: never;
         /**
          * Mint a presigned download URL for this document's stored file
-         * @description Read-only — mints a time-limited S3 GET URL (TTL 300s) and writes
-         *     nothing, so this route does NOT reject viewers the way the mutating
-         *     ledger routes do.
+         * @description POST, but semantically a READ — it mints a time-limited S3 GET URL
+         *     (TTL 300s) and writes nothing, so it carries no write gate. It DOES
+         *     carry the same per-document read gate as `GET /documents/{id}`:
+         *     `doc_type=hr` rows are the `hr_docs` resource, every other document
+         *     is `documents`, and a role without read on that resource gets 403
+         *     `org_role_denied` (checked after the row is located, so another
+         *     organization's document stays a 404).
          */
         post: {
             parameters: {
@@ -2461,7 +2465,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2705,7 +2709,7 @@ export interface paths {
                         "application/json": components["schemas"]["JournalEntryListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read the journal (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2811,7 +2815,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read the journal (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3005,7 +3009,7 @@ export interface paths {
                         "application/json": components["schemas"]["DocTemplateListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read documents (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3126,7 +3130,7 @@ export interface paths {
                         "application/json": components["schemas"]["EmployeeListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read employees (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3136,7 +3140,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create an employee (accountant/owner only) */
+        /** Create an employee (owner/accountant/hr) */
         post: {
             parameters: {
                 query?: never;
@@ -3232,7 +3236,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read employees (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3254,7 +3258,7 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Patch an employee's editable fields (accountant/owner only)
+         * Patch an employee's editable fields (owner/accountant/hr)
          * @description Patches every field Hr::EmployeeRepository::update() allows in one
          *     call — hired_on/status/dismissed_on are NOT among them.
          *     Including any of those three (non-null) in the body is rejected with
@@ -3337,7 +3341,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Dismiss an employee (accountant/owner only)
+         * Dismiss an employee (owner/accountant/hr)
          * @description Sets status='dismissed' and dismissed_on in one call — the only way
          *     to change either field (Hr::EmployeeRepository::dismiss()). A wrong
          *     org, a missing id, and an already-dismissed employee are all
@@ -3440,7 +3444,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read hr_docs (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3450,7 +3454,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create an HR order (accountant/owner only) */
+        /** Create an HR order (owner/accountant/hr) */
         post: {
             parameters: {
                 query?: never;
@@ -3514,7 +3518,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Generate the hr_order document for an HR order (accountant/owner only)
+         * Generate the hr_order document for an HR order (owner/accountant/hr)
          * @description Builds the hr_order template input from the order + its employee +
          *     the organization, deep-merges an optional request body on top for
          *     the free-text fields not on file (director, reason, details, ...),
@@ -3625,7 +3629,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read hr_docs (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3635,7 +3639,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create a labor contract (accountant/owner only) */
+        /** Create a labor contract (owner/accountant/hr) */
         post: {
             parameters: {
                 query?: never;
@@ -3699,7 +3703,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Generate the labor_contract document for a labor contract (accountant/owner only)
+         * Generate the labor_contract document for a labor contract (owner/accountant/hr)
          * @description Same shape as the hr-orders variant, sourced from the contract + its
          *     employee + the organization. labor_contracts has no document_id
          *     column, so there is no attach-back step here.
@@ -3808,7 +3812,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read hr_docs (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3818,7 +3822,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create a vacation record (accountant/owner only) */
+        /** Create a vacation record (owner/accountant/hr) */
         post: {
             parameters: {
                 query?: never;
@@ -3900,7 +3904,7 @@ export interface paths {
                         "application/json": components["schemas"]["PayrollRunListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read payroll (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4164,7 +4168,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read payroll (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4315,7 +4319,7 @@ export interface paths {
                         "application/json": components["schemas"]["TaxRatesResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4371,7 +4375,7 @@ export interface paths {
                         "application/json": components["schemas"]["TaxCalculationListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4480,7 +4484,7 @@ export interface paths {
                         "application/json": components["schemas"]["TaxAlertListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4540,7 +4544,7 @@ export interface paths {
                         "application/json": components["schemas"]["TaxDeadlineListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4594,7 +4598,7 @@ export interface paths {
                         "application/json": components["schemas"]["TaxFilingListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4720,7 +4724,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4760,8 +4764,9 @@ export interface paths {
          * @description `artifact=xml` points at the filing's own `xml_s3_key`;
          *     `artifact=pdf` points at the linked document's `s3_key`, written by
          *     the docgen.render worker — the two are always different objects.
-         *     Read-only (mints a URL, writes nothing), so this route does NOT
-         *     reject viewers.
+         *     POST, but semantically a READ — it mints a URL and writes nothing,
+         *     so it carries no write gate; it is gated as `tax`/read, exactly like
+         *     `GET /tax/filings/{id}`.
          */
         post: {
             parameters: {
@@ -4792,7 +4797,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -5225,7 +5230,7 @@ export interface components {
         };
         OrganizationWithRole: components["schemas"]["Organization"] & {
             /** @enum {string} */
-            role: "owner" | "accountant" | "viewer";
+            role: "owner" | "accountant" | "hr" | "viewer";
         };
         OrganizationListResponse: {
             data: components["schemas"]["Organization"][];
@@ -5247,7 +5252,7 @@ export interface components {
             /** Format: uuid */
             user_id: string;
             /** @enum {string} */
-            role: "owner" | "accountant" | "viewer";
+            role: "owner" | "accountant" | "hr" | "viewer";
             created_at: string;
             updated_at: string;
         };
@@ -5260,7 +5265,7 @@ export interface components {
             /** Format: email */
             email: string;
             /** @enum {string} */
-            role: "owner" | "accountant" | "viewer";
+            role: "owner" | "accountant" | "hr" | "viewer";
             created_at: string;
         };
         MembersListResponse: {

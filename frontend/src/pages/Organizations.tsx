@@ -40,13 +40,15 @@ import {
 } from '@/lib/schemas/orgs';
 
 const PER_PAGE = 20;
-const ORG_ROLES = ['owner', 'accountant', 'viewer'] as const;
+const ORG_ROLES = ['owner', 'accountant', 'hr', 'viewer'] as const;
 type OrgRole = (typeof ORG_ROLES)[number];
 
-// Термины — DESIGN.md §6: owner/accountant/viewer → Владелец/Бухгалтер/Наблюдатель.
+// Термины — DESIGN.md §6: owner/accountant/hr/viewer →
+// Владелец/Бухгалтер/Кадровик/Наблюдатель.
 const ROLE_LABELS: Record<OrgRole, string> = {
   owner: 'Владелец',
   accountant: 'Бухгалтер',
+  hr: 'Кадровик',
   viewer: 'Наблюдатель',
 };
 

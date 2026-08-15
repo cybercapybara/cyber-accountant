@@ -4,7 +4,12 @@
  *        `org_members` (migration 006). Every later repository/API task
  *        builds on these two tables, so this suite just pins the shape down:
  *        both tables exist, and org_members.role is constrained to the
- *        three tenancy roles ('owner' | 'accountant' | 'viewer').
+ *        four tenancy roles ('owner' | 'accountant' | 'hr' | 'viewer' —
+ *        'hr' added by migration 017). That the CHECK ACCEPTS 'hr' is
+ *        proven end-to-end by OrganizationsApiTest.HrIsAnAcceptedMemberRole
+ *        (tests/integration/test_organizations_api.cpp), which goes through
+ *        a real membership row; here we only pin that it still REJECTS a
+ *        value outside the roster.
  */
 
 #include <gtest/gtest.h>

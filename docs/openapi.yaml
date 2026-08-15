@@ -258,7 +258,7 @@ components:
         - type: object
           required: [role]
           properties:
-            role: { type: string, enum: [owner, accountant, viewer] }
+            role: { type: string, enum: [owner, accountant, hr, viewer] }
 
     OrganizationListResponse:
       type: object
@@ -293,7 +293,7 @@ components:
         id:         { type: string, format: uuid }
         org_id:     { type: string, format: uuid }
         user_id:    { type: string, format: uuid }
-        role:       { type: string, enum: [owner, accountant, viewer] }
+        role:       { type: string, enum: [owner, accountant, hr, viewer] }
         created_at: { type: string }
         updated_at: { type: string }
 
@@ -310,7 +310,7 @@ components:
       properties:
         user_id:    { type: string, format: uuid }
         email:      { type: string, format: email }
-        role:       { type: string, enum: [owner, accountant, viewer] }
+        role:       { type: string, enum: [owner, accountant, hr, viewer] }
         created_at: { type: string }
 
     MembersListResponse:
@@ -1777,12 +1777,12 @@ paths:
                   required: [user_id, role]
                   properties:
                     user_id: { type: string, format: uuid }
-                    role:    { type: string, enum: [owner, accountant, viewer] }
+                    role:    { type: string, enum: [owner, accountant, hr, viewer] }
                 - type: object
                   required: [email, role]
                   properties:
                     email: { type: string, format: email }
-                    role:  { type: string, enum: [owner, accountant, viewer] }
+                    role:  { type: string, enum: [owner, accountant, hr, viewer] }
       responses:
         '201':
           description: Member added
@@ -1810,7 +1810,7 @@ paths:
               type: object
               required: [role]
               properties:
-                role: { type: string, enum: [owner, accountant, viewer] }
+                role: { type: string, enum: [owner, accountant, hr, viewer] }
       responses:
         '200':
           description: Role updated
@@ -1849,7 +1849,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CounterpartyListResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read counterparties (org_role_denied)' }
     post:
       summary: Create a counterparty (accountant/owner only)
       tags: [counterparties]
@@ -1884,7 +1884,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CounterpartyDetailResponse' }
         '400': { description: Malformed id }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read counterparties (org_role_denied)' }
         '404': { description: Not found (including a counterparty belonging to another organization) }
     patch:
       summary: Replace a counterparty (accountant/owner only) — every editable field is patched in one call
@@ -1918,7 +1918,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AccountListResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read the chart of accounts (journal/read) (org_role_denied)' }
     post:
       summary: Create a subaccount under a visible parent (accountant/owner only)
       tags: [accounts]
@@ -1955,7 +1955,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DocumentListResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read either documents or hr_docs (org_role_denied)' }
         '422': { description: type or status is not one of the registered values }
 
   /api/v1/documents/{id}:
@@ -1972,7 +1972,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DocumentDetailResponse' }
         '400': { description: Malformed id }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied)' }
         '404': { description: Not found (including a document belonging to another organization) }
 
   /api/v1/documents/{id}/download-url:
@@ -1981,9 +1981,13 @@ paths:
     post:
       summary: Mint a presigned download URL for this document's stored file
       description: |
-        Read-only — mints a time-limited S3 GET URL (TTL 300s) and writes
-        nothing, so this route does NOT reject viewers the way the mutating
-        ledger routes do.
+        POST, but semantically a READ — it mints a time-limited S3 GET URL
+        (TTL 300s) and writes nothing, so it carries no write gate. It DOES
+        carry the same per-document read gate as `GET /documents/{id}`:
+        `doc_type=hr` rows are the `hr_docs` resource, every other document
+        is `documents`, and a role without read on that resource gets 403
+        `org_role_denied` (checked after the row is located, so another
+        organization's document stays a 404).
       tags: [documents]
       security: [{ BearerAuth: [] }]
       responses:
@@ -1993,7 +1997,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DownloadUrlResponse' }
         '400': { description: Malformed id }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied)' }
         '404': { description: Not found (including a document belonging to another organization) }
         '409': { description: This document has no stored file yet (empty s3_key) }
         '503': { description: Presigning requires the S3 storage backend }
@@ -2082,7 +2086,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/JournalEntryListResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read the journal (org_role_denied)' }
         '422': { description: from or to is not in YYYY-MM-DD format }
     post:
       summary: Create a draft journal entry (accountant/owner only)
@@ -2117,7 +2121,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/JournalEntryDetailResponse' }
         '400': { description: Malformed id }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read the journal (org_role_denied)' }
         '404': { description: Not found (including an entry belonging to another organization) }
 
   /api/v1/journal-entries/{id}/post:
@@ -2172,7 +2176,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DocTemplateListResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read documents (org_role_denied)' }
 
   /api/v1/documents/generate:
     post:
@@ -2215,9 +2219,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EmployeeListResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read employees (org_role_denied)' }
     post:
-      summary: Create an employee (accountant/owner only)
+      summary: Create an employee (owner/accountant/hr)
       tags: [hr]
       security: [{ BearerAuth: [] }]
       requestBody:
@@ -2250,10 +2254,10 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/EmployeeDetailResponse' }
         '400': { description: Malformed id }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read employees (org_role_denied)' }
         '404': { description: Not found (including an employee belonging to another organization) }
     patch:
-      summary: Patch an employee's editable fields (accountant/owner only)
+      summary: Patch an employee's editable fields (owner/accountant/hr)
       description: |
         Patches every field Hr::EmployeeRepository::update() allows in one
         call — hired_on/status/dismissed_on are NOT among them.
@@ -2284,7 +2288,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
-      summary: Dismiss an employee (accountant/owner only)
+      summary: Dismiss an employee (owner/accountant/hr)
       description: |
         Sets status='dismissed' and dismissed_on in one call — the only way
         to change either field (Hr::EmployeeRepository::dismiss()). A wrong
@@ -2324,9 +2328,9 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/HrOrderListResponse' }
         '400': { description: employee_id is present but not a well-formed uuid }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read hr_docs (org_role_denied)' }
     post:
-      summary: Create an HR order (accountant/owner only)
+      summary: Create an HR order (owner/accountant/hr)
       tags: [hr]
       security: [{ BearerAuth: [] }]
       requestBody:
@@ -2348,7 +2352,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
-      summary: Generate the hr_order document for an HR order (accountant/owner only)
+      summary: Generate the hr_order document for an HR order (owner/accountant/hr)
       description: |
         Builds the hr_order template input from the order + its employee +
         the organization, deep-merges an optional request body on top for
@@ -2390,9 +2394,9 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/LaborContractListResponse' }
         '400': { description: employee_id is missing or not a well-formed uuid }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read hr_docs (org_role_denied)' }
     post:
-      summary: Create a labor contract (accountant/owner only)
+      summary: Create a labor contract (owner/accountant/hr)
       tags: [hr]
       security: [{ BearerAuth: [] }]
       requestBody:
@@ -2414,7 +2418,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     post:
-      summary: Generate the labor_contract document for a labor contract (accountant/owner only)
+      summary: Generate the labor_contract document for a labor contract (owner/accountant/hr)
       description: |
         Same shape as the hr-orders variant, sourced from the contract + its
         employee + the organization. labor_contracts has no document_id
@@ -2454,9 +2458,9 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/VacationListResponse' }
         '400': { description: employee_id is present but not a well-formed uuid }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read hr_docs (org_role_denied)' }
     post:
-      summary: Create a vacation record (accountant/owner only)
+      summary: Create a vacation record (owner/accountant/hr)
       tags: [hr]
       security: [{ BearerAuth: [] }]
       requestBody:
@@ -2490,7 +2494,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PayrollRunListResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read payroll (org_role_denied)' }
         '422': { description: year is present but not an in-range 4-digit calendar year }
     post:
       summary: Calculate (or recalculate) a period's payroll run (accountant/owner only)
@@ -2575,7 +2579,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PayslipListResponse' }
         '400': { description: Malformed id }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read payroll (org_role_denied)' }
         '404': { description: Not found (including a run belonging to another organization) }
 
   /api/v1/payroll-runs/{id}/payslips/{employee_id}/generate-document:
@@ -2632,7 +2636,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TaxRatesResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read tax (org_role_denied)' }
         '422': { description: on is not a calendar-valid date }
 
   /api/v1/tax/calculations:
@@ -2651,7 +2655,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TaxCalculationListResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read tax (org_role_denied)' }
         '422': { description: 'kind is not one of the registered values, or year is not a 4-digit calendar year' }
     post:
       summary: Run a tax calculation for a period (accountant/owner only)
@@ -2694,7 +2698,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TaxAlertListResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read tax (org_role_denied)' }
         '422': { description: 'on is not a calendar-valid date, or a threshold constant is not in force on that date' }
 
   /api/v1/tax/deadlines:
@@ -2715,7 +2719,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TaxDeadlineListResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read tax (org_role_denied)' }
         '422': { description: on is not a calendar-valid date }
 
   /api/v1/tax/filings:
@@ -2733,7 +2737,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TaxFilingListResponse' }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read tax (org_role_denied)' }
         '422': { description: kind is not one of the registered form codes }
     post:
       summary: Generate a ФНО filing — XML into object storage plus a printable form (accountant/owner only)
@@ -2781,7 +2785,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/TaxFilingDetailResponse' }
         '400': { description: Malformed id }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read tax (org_role_denied)' }
         '404': { description: Not found (including a filing belonging to another organization) }
 
   /api/v1/tax/filings/{id}/download-url:
@@ -2793,8 +2797,9 @@ paths:
         `artifact=xml` points at the filing's own `xml_s3_key`;
         `artifact=pdf` points at the linked document's `s3_key`, written by
         the docgen.render worker — the two are always different objects.
-        Read-only (mints a URL, writes nothing), so this route does NOT
-        reject viewers.
+        POST, but semantically a READ — it mints a URL and writes nothing,
+        so it carries no write gate; it is gated as `tax`/read, exactly like
+        `GET /tax/filings/{id}`.
       tags: [tax]
       security: [{ BearerAuth: [] }]
       parameters:
@@ -2806,7 +2811,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/FilingDownloadUrlResponse' }
         '400': { description: Malformed id }
-        '403': { description: No org context }
+        '403': { description: 'No org context, or your organization role is not allowed to read tax (org_role_denied)' }
         '404': { description: Not found (including a filing belonging to another organization) }
         '409': { description: 'The requested artifact does not exist yet: no XML (no_xml), no printable document (no_document), or the document has not been rendered (not_rendered)' }
         '422': { description: artifact is neither xml nor pdf }

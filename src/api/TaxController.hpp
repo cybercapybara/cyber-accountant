@@ -27,15 +27,21 @@
  *   POST /api/v1/tax/filings/{id}/download-url  ?artifact=xml|pdf ->
  *                                               presigned GET, TTL 300s
  *
- * RBAC: `POST /tax/calculations` and `POST /tax/filings` go through
- * API_REQUIRE_ORG_PERM for `tax`/write against the §5.3 permission matrix
- * (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown role, resource or
- * action is a 403, so a role added later cannot fail open the way the old
- * `ctx.role == "viewer"` denylist let it. `download-url` is not gated here
- * (it mints a URL and writes nothing), exactly like
- * LedgerDocumentsController::downloadUrl; the read-side gate for it and for
- * the GETs lands in a follow-up task. `org_id` comes EXCLUSIVELY from
- * `ctx.org_id` — never a body field, a query param or a path segment.
+ * RBAC: EVERY route goes through API_REQUIRE_ORG_PERM against the §5.3
+ * permission matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown
+ * role, resource or action is a 403, so a role added later cannot fail open
+ * the way the old `ctx.role == "viewer"` denylist let it. `POST
+ * /tax/calculations` and `POST /tax/filings` need `tax`/write; all six GETs
+ * need `tax`/read; and `POST /tax/filings/{id}/download-url` needs `tax`/READ
+ * despite being a POST — it writes nothing, it hands out the filing's bytes,
+ * so it is a read and is gated as one. Gating it as a write would be BOTH
+ * wrong ways at once: it would let a read-only viewer be refused a document
+ * they may read, and it would classify a data-exfiltration path as a
+ * mutation. `GET /tax/rates` and `GET /tax/deadlines` return system-wide
+ * reference data, but they are still `tax`/read: a role that cannot see this
+ * org's tax position has no business enumerating the rate table it would be
+ * computed from. `org_id` comes EXCLUSIVELY from `ctx.org_id` — never a body
+ * field, a query param or a path segment.
  *
  * `GET /tax/rates` and `GET /tax/deadlines` return SYSTEM data — `tax_rates`/
  * `tax_constants` and `tax_deadlines` have no org_id at all (the documented
@@ -287,7 +293,7 @@ public:
     // -------------------------------------------------------------------
     void listRates(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        (void)ctx;  // system-wide reference data; the guard only proves org access
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
         std::string on;
         if (!parse_on_date(req, on, callback))
             return;
@@ -314,7 +320,7 @@ public:
     // -------------------------------------------------------------------
     void listDeadlines(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        (void)ctx;
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
         std::string on;
         if (!parse_on_date(req, on, callback))
             return;
@@ -340,6 +346,7 @@ public:
     // -------------------------------------------------------------------
     void listAlerts(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
         std::string on;
         if (!parse_on_date(req, on, callback))
             return;
@@ -437,6 +444,7 @@ public:
     // -------------------------------------------------------------------
     void listCalculations(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
 
         Validation::Errors errs;
         std::optional<std::string> kind_filter;
@@ -712,6 +720,7 @@ public:
     // -------------------------------------------------------------------
     void listFilings(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
 
         std::optional<std::string> kind_filter;
         const std::string kind_param = req->getParameter("kind");
@@ -742,6 +751,7 @@ public:
                    std::function<void(const HttpResponsePtr&)>&& callback,
                    const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed filing id"));
             return;
@@ -773,6 +783,8 @@ public:
                            std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
+        // POST, but semantically a READ — see this file's RBAC header note.
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed filing id"));
             return;
