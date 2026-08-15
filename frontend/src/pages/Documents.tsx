@@ -42,6 +42,7 @@ import type {
 import { formatIsoDateTimeRu } from '@/lib/dateFormat';
 import {
   documentActionAvailability,
+  isAwaitingVersionRender,
   snapshotToAvrValues,
   snapshotToHrOrderValues,
   snapshotToInvoiceValues,
@@ -228,14 +229,32 @@ function deleteBlockFromError(error: unknown): DeleteBlockCode | null {
  * /auth/me in task 14), and inventing a second source for it now would only
  * create a divergence that task then has to remove. The server is the source
  * of truth; the interface merely never lies about the outcome.
+ *
+ * `action` exists because ONE server code, 409 `document_voided`, answers two
+ * different requests: editing a voided document and deleting one. Both are
+ * only reachable through a concurrent void (the buttons disappear as soon as
+ * `voided_at` is set), and a message that names the wrong action is worse
+ * than a generic one — so each caller says which request it made.
  */
-function documentErrorMessage(error: unknown, fallback: string): string {
+type DocumentAction = 'edit' | 'delete' | 'void';
+
+const VOIDED_BLOCK_MESSAGE: Record<DocumentAction, string> = {
+  edit: 'Аннулированный документ изменить нельзя.',
+  delete: 'Аннулированный документ удалить нельзя: он остаётся в реестре как след решения.',
+  void: 'Документ уже аннулирован.',
+};
+
+function documentErrorMessage(
+  error: unknown,
+  fallback: string,
+  action: DocumentAction = 'edit',
+): string {
   if (error instanceof ApiClientError) {
     if (error.code === 'org_role_denied') return ROLE_DENIED_MESSAGE;
     if (error.code === 'not_editable')
       return 'Загруженные и присланные почтой документы не редактируются.';
     if (error.code === 'document_voided' && error.status === 409)
-      return 'Аннулированный документ изменить нельзя.';
+      return VOIDED_BLOCK_MESSAGE[action];
     if (error.code === 'already_voided') return 'Документ уже аннулирован.';
     const override = error.fields?.find((f) => f.code === 'not_allowed_override');
     if (override)
@@ -606,9 +625,11 @@ export function DocumentsPage() {
  *     is nothing to wait for at all;
  *   - an EDIT does not change `status`; what moves is the current-version
  *     pointer, so the wait is `latest_version_no > (номер текущей версии)`.
- *     That one is polled here, and only here — the two conditions are
- *     mutually exclusive by construction (see `awaitingRender` below), so
- *     the two mechanisms never both hammer the same endpoint.
+ *     That one is polled here, and only here. The two conditions are
+ *     mutually exclusive, and that is asserted rather than assumed:
+ *     isAwaitingVersionRender (lib/schemas/documents.ts) refuses to fire on
+ *     a 'draft' document, and documents.test.ts pins it — so the two
+ *     mechanisms never both hammer the same endpoint.
  * Both stop after RENDER_POLL_TIMEOUT_MS: a render that has not finished in
  * two minutes has failed, and a spinner that never stops is a lie.
  */
@@ -649,8 +670,9 @@ function DocumentCard({
       ? doc.latest_version_no
       : null;
   // A voided document is never re-rendered, and a still-'draft' one is the
-  // status poll's business — see this component's doc comment.
-  const awaitingRender = pendingVersionNo !== null && !doc?.voided_at && doc?.status !== 'draft';
+  // status poll's business — the exclusion lives in isAwaitingVersionRender
+  // (lib/schemas/documents.ts) and is pinned by a test there.
+  const awaitingRender = doc ? isAwaitingVersionRender(doc, currentVersionNo) : false;
 
   const refreshDocument = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: qk.documents.detail(id) });
@@ -721,7 +743,7 @@ function DocumentCard({
         );
       },
       onError: (_message, err) => {
-        toast.error(documentErrorMessage(err, 'Не удалось сохранить изменения.'));
+        toast.error(documentErrorMessage(err, 'Не удалось сохранить изменения.', 'edit'));
       },
     },
   );
@@ -759,7 +781,7 @@ function DocumentCard({
           setVoiding(true);
           return;
         }
-        toast.error(documentErrorMessage(err, 'Не удалось удалить документ.'));
+        toast.error(documentErrorMessage(err, 'Не удалось удалить документ.', 'delete'));
       },
     },
   );
@@ -776,7 +798,7 @@ function DocumentCard({
         toast.success('Документ аннулирован.');
       },
       onError: (_message, err) => {
-        toast.error(documentErrorMessage(err, 'Не удалось аннулировать документ.'));
+        toast.error(documentErrorMessage(err, 'Не удалось аннулировать документ.', 'void'));
       },
     },
   );

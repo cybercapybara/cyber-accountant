@@ -5,6 +5,7 @@ import { formatTiynRu } from '@/lib/money';
 import {
   documentActionAvailability,
   invoiceFormSchema,
+  isAwaitingVersionRender,
   reconciliationFormSchema,
   ruMoneyToDecimal,
   snapshotToInvoiceValues,
@@ -15,6 +16,7 @@ import {
   taxInvoiceFormSchema,
   vatRateFromSnapshot,
   voidDocumentSchema,
+  STATUS_POLL_STATUS,
   waybillFormSchema,
 } from './documents';
 
@@ -102,6 +104,86 @@ describe('documentActionAvailability', () => {
 
   it('does not offer an edit form for an unknown template', () => {
     expect(documentActionAvailability(doc({ template_slug: 'sputnik_v1' })).canEdit).toBe(false);
+  });
+});
+
+/**
+ * Every status the API can report (Document.status enum, docs/openapi.yaml).
+ * Spelled out here rather than imported from the page so that ADDING a status
+ * server-side and forgetting it in the exclusion rule shows up as a failure
+ * the moment this list is updated.
+ */
+const ALL_STATUSES: Document['status'][] = [
+  'inbox',
+  'recognized',
+  'linked',
+  'archived',
+  'draft',
+  'final',
+  'sent',
+];
+
+function renderDoc(
+  over: Partial<Document> = {},
+): Pick<Document, 'latest_version_no' | 'status' | 'voided_at'> {
+  return { latest_version_no: 2, status: 'final', voided_at: null, ...over };
+}
+
+describe('isAwaitingVersionRender', () => {
+  it('waits while the newest version has not become current yet', () => {
+    expect(isAwaitingVersionRender(renderDoc({ latest_version_no: 2 }), 1)).toBe(true);
+    expect(isAwaitingVersionRender(renderDoc({ latest_version_no: 5 }), 2)).toBe(true);
+  });
+
+  it('stops as soon as the render published the version', () => {
+    expect(isAwaitingVersionRender(renderDoc({ latest_version_no: 2 }), 2)).toBe(false);
+  });
+
+  it('does not start before the history is known', () => {
+    // currentVersionNo === null: nothing to compare against, so polling on it
+    // would be an unbounded wait for a number we have not read yet.
+    expect(isAwaitingVersionRender(renderDoc({ latest_version_no: 9 }), null)).toBe(false);
+  });
+
+  it('never waits on a voided document — it is never re-rendered', () => {
+    expect(
+      isAwaitingVersionRender(
+        renderDoc({ latest_version_no: 3, voided_at: '2026-08-14T10:00:00Z' }),
+        1,
+      ),
+    ).toBe(false);
+  });
+
+  /**
+   * The load-bearing one. Two independent polls run on this page:
+   * useDocumentRender waits on `status === 'draft'` (the FIRST render), and
+   * this predicate waits on the current-version pointer (an EDIT). They must
+   * never be true at once, or one document gets refetched twice as often
+   * under two unrelated timeouts. The comment used to assert this "by
+   * construction"; this pins it.
+   */
+  it('never overlaps the status poll', () => {
+    for (const status of ALL_STATUSES) {
+      for (const latest of [0, 1, 2, 7]) {
+        for (const current of [null, 0, 1, 2]) {
+          const document = renderDoc({ status, latest_version_no: latest });
+          const versionPoll = isAwaitingVersionRender(document, current);
+          const statusPoll = status === STATUS_POLL_STATUS;
+          expect(
+            versionPoll && statusPoll,
+            `status=${status} latest=${latest} current=${String(current)}`,
+          ).toBe(false);
+        }
+      }
+    }
+    // …and the exclusion is real, not vacuous: the same version gap that is
+    // ignored on 'draft' does start the poll on every other status.
+    expect(isAwaitingVersionRender(renderDoc({ status: 'draft', latest_version_no: 2 }), 1)).toBe(
+      false,
+    );
+    for (const status of ALL_STATUSES.filter((s) => s !== STATUS_POLL_STATUS)) {
+      expect(isAwaitingVersionRender(renderDoc({ status, latest_version_no: 2 }), 1)).toBe(true);
+    }
   });
 });
 

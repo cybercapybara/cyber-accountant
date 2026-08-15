@@ -285,6 +285,41 @@ export function documentActionAvailability(
   };
 }
 
+/**
+ * Статус, на котором поллит `useDocumentRender` (`refetchInterval` там стоит
+ * ровно на `status === 'draft'`). Вынесен в константу, чтобы условие второго
+ * поллинга ниже ссылалось на ТО ЖЕ значение, а не на свою копию строки.
+ */
+export const STATUS_POLL_STATUS = 'draft';
+
+/**
+ * Ждёт ли документ рендера НОВОЙ версии — того, что запускает правка.
+ *
+ * Это второй, независимый источник поллинга на странице документов, и он
+ * обязан не пересекаться с первым. Первый — `useDocumentRender` — ждёт
+ * ПЕРВОГО рендера и опрашивает сервер, пока `status === 'draft'`. Правка
+ * же `status` не трогает вовсе: двигается указатель текущей версии, и ждать
+ * приходится, пока `latest_version_no` не догонит его.
+ *
+ * Взаимоисключение держится на явной проверке `status !== 'draft'` ниже, а
+ * не на рассуждении «так получается»: два поллинга по одному документу
+ * удваивают нагрузку и путают таймауты. Свойство закреплено тестом
+ * (documents.test.ts, «never overlaps the status poll»).
+ *
+ * Аннулированный документ не перерендеривается никогда — ждать нечего.
+ * `currentVersionNo === null` означает, что история ещё не загружена или
+ * текущей версии нет вовсе: сравнивать не с чем, поллинг не начинаем.
+ */
+export function isAwaitingVersionRender(
+  doc: Pick<Document, 'latest_version_no' | 'status' | 'voided_at'>,
+  currentVersionNo: number | null,
+): boolean {
+  if (currentVersionNo === null) return false;
+  if (doc.voided_at) return false;
+  if (doc.status === STATUS_POLL_STATUS) return false;
+  return doc.latest_version_no > currentVersionNo;
+}
+
 // ── Снапшот версии → значения формы правки ──────────────────────────────────
 
 /**
