@@ -1,22 +1,31 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { LogOut, Menu, Moon, Sun, X } from 'lucide-react';
+import { ChevronDown, LogOut, Menu, Moon, Sun, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { BRAND } from '@/lib/brand';
 import { useLogout } from '@/hooks/useAuthMutations';
-import { useMe } from '@/hooks/useMe';
+import { useMe, useOrgRole } from '@/hooks/useMe';
 import { cn } from '@/lib/utils';
-import { userCan } from '@/lib/auth/permissions';
-import { routes, guardPermission, type RouteEntry } from '@/routes/manifest';
+import { routes } from '@/routes/manifest';
+import { groupNavLinks, ungroupedNavLinks, type NavGroupId } from '@/routes/navGroups';
+
+/** id выпадающей панели раздела и кнопки, которая ей управляет. */
+const groupPanelId = (id: NavGroupId) => `nav-group-${id}`;
+const groupButtonId = (id: NavGroupId) => `nav-group-${id}-button`;
 
 export function Nav() {
   const me = useMe();
   const user = me.data ?? null;
+  const orgRole = useOrgRole().data ?? null;
   const logout = useLogout();
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
+  // Какой раздел раскрыт на десктопе. Один за раз: два открытых выпадающих
+  // списка в строке меню перекрывали бы друг друга.
+  const [openGroup, setOpenGroup] = useState<NavGroupId | null>(null);
+  const groupsRef = useRef<HTMLDivElement>(null);
 
   // Minimal theme toggle: the .dark class drives Tailwind's dark: variants; the
   // initial class is set pre-paint by the inline script in index.html.
@@ -42,16 +51,49 @@ export function Nav() {
   const showAuthButtons = me.isSuccess && !user;
 
   // Nav links come straight from the routes manifest — every route that
-  // declares a navLabel, filtered by what this user is allowed to see.
-  // One source of truth for routes and nav kills the route↔nav drift.
-  const navLinks: RouteEntry[] = routes.filter(
-    (r) => r.navLabel && userCan(user, guardPermission(r)),
-  );
+  // declares a navLabel, filtered by BOTH the user's global permission bits
+  // and their role in the current organization (org_members.role from /me).
+  // One source of truth for routes and nav kills the route↔nav drift; the
+  // two-factor predicate kills the menu item that always answers 403.
+  //
+  // Оба рендера ниже (десктоп и #mobile-nav) берут ОДИН И ТОТ ЖЕ `groups`,
+  // в котором пустые разделы уже отфильтрованы — фильтровать повторно в
+  // JSX нельзя, именно так одну из двух копий и забывают.
+  const flatLinks = ungroupedNavLinks(routes, user, orgRole);
+  const groups = groupNavLinks(routes, user, orgRole);
 
   // A route is active when the current path matches exactly, or is a child of
   // it (so /admin/users still highlights "Admin"). "/" matches only itself.
   const isActive = (path: string) =>
     path === '/' ? location.pathname === '/' : location.pathname.startsWith(path);
+
+  // Выпадающий раздел закрывается по Escape и по клику вне кластера —
+  // без этого он остаётся висеть поверх страницы после перехода мышью.
+  useEffect(() => {
+    if (!openGroup) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (!groupsRef.current?.contains(e.target as Node)) setOpenGroup(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // Фокус мог быть внутри панели — возвращаем его на кнопку раздела,
+      // иначе после Escape он «падает» на <body> и Tab начинается заново.
+      document.getElementById(groupButtonId(openGroup))?.focus();
+      setOpenGroup(null);
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [openGroup]);
+
+  // Переход на другую страницу закрывает и раздел, и мобильную панель.
+  useEffect(() => {
+    setOpenGroup(null);
+    setMenuOpen(false);
+  }, [location.pathname]);
 
   const logoutAndRedirect = async () => {
     await logout.mutateAsync();
@@ -68,9 +110,9 @@ export function Nav() {
           >
             {BRAND}
           </Link>
-          {/* Desktop nav cluster */}
-          <div className="hidden items-center gap-4 text-sm md:flex">
-            {navLinks.map((r) => {
+          {/* Desktop nav cluster: плоские ссылки, затем разделы-выпадашки */}
+          <div ref={groupsRef} className="hidden items-center gap-4 text-sm md:flex">
+            {flatLinks.map((r) => {
               const Icon = r.navIcon;
               return (
                 <Link
@@ -85,6 +127,63 @@ export function Nav() {
                   {Icon && <Icon className="h-3.5 w-3.5" />}
                   {r.navLabel}
                 </Link>
+              );
+            })}
+            {groups.map((g) => {
+              const open = openGroup === g.id;
+              // Раздел подсвечен, когда открыт любой его пункт.
+              const groupActive = g.links.some((l) => isActive(l.path));
+              return (
+                <div key={g.id} className="relative">
+                  <button
+                    type="button"
+                    id={groupButtonId(g.id)}
+                    aria-expanded={open}
+                    aria-controls={groupPanelId(g.id)}
+                    onClick={() => setOpenGroup((cur) => (cur === g.id ? null : g.id))}
+                    className={cn(
+                      'flex items-center gap-1 rounded transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                      groupActive ? 'font-medium text-primary' : 'text-muted-foreground',
+                    )}
+                  >
+                    {g.label}
+                    <ChevronDown
+                      aria-hidden="true"
+                      className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')}
+                    />
+                  </button>
+                  {/* Панель всегда в DOM (aria-controls обязан указывать на
+                      существующий элемент); закрытая — display:none, значит
+                      невидима и для скринридера, и для Tab. */}
+                  <div
+                    id={groupPanelId(g.id)}
+                    role="group"
+                    aria-labelledby={groupButtonId(g.id)}
+                    className={cn(
+                      'absolute left-0 top-full z-50 mt-2 min-w-52 flex-col gap-1 rounded-md border border-border bg-background p-1 shadow-md',
+                      open ? 'flex' : 'hidden',
+                    )}
+                  >
+                    {g.links.map((r) => {
+                      const Icon = r.navIcon;
+                      return (
+                        <Link
+                          key={r.path}
+                          to={r.path}
+                          aria-current={isActive(r.path) ? 'page' : undefined}
+                          onClick={() => setOpenGroup(null)}
+                          className={cn(
+                            'flex items-center gap-2 whitespace-nowrap rounded px-2 py-1.5 transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                            isActive(r.path) ? 'font-medium text-primary' : 'text-muted-foreground',
+                          )}
+                        >
+                          {Icon && <Icon className="h-3.5 w-3.5" />}
+                          {r.navLabel}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -147,7 +246,7 @@ export function Nav() {
       {menuOpen && (
         <div id="mobile-nav" className="border-t border-border md:hidden">
           <div className="container mx-auto flex flex-col gap-1 py-3 text-sm">
-            {navLinks.map((r) => {
+            {flatLinks.map((r) => {
               const Icon = r.navIcon;
               return (
                 <Link
@@ -163,6 +262,40 @@ export function Nav() {
                   {Icon && <Icon className="h-4 w-4" />}
                   {r.navLabel}
                 </Link>
+              );
+            })}
+            {/* Тот же массив groups, что и на десктопе: пустые разделы уже
+                отфильтрованы, здесь фильтрация НЕ повторяется. Без выпадашек —
+                заголовок раздела и ссылки под ним с отступом. */}
+            {groups.map((g) => {
+              const headingId = `mobile-${groupPanelId(g.id)}`;
+              return (
+                <div key={g.id} role="group" aria-labelledby={headingId}>
+                  <div
+                    id={headingId}
+                    className="px-2 pb-1 pt-3 text-xs uppercase tracking-wide text-muted-foreground"
+                  >
+                    {g.label}
+                  </div>
+                  {g.links.map((r) => {
+                    const Icon = r.navIcon;
+                    return (
+                      <Link
+                        key={r.path}
+                        to={r.path}
+                        aria-current={isActive(r.path) ? 'page' : undefined}
+                        onClick={() => setMenuOpen(false)}
+                        className={cn(
+                          'flex items-center gap-2 rounded py-2 pl-6 pr-2 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                          isActive(r.path) ? 'font-medium text-primary' : 'text-muted-foreground',
+                        )}
+                      >
+                        {Icon && <Icon className="h-4 w-4" />}
+                        {r.navLabel}
+                      </Link>
+                    );
+                  })}
+                </div>
               );
             })}
             {user && (

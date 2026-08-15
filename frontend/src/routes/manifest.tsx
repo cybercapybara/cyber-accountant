@@ -13,6 +13,9 @@ import {
 } from 'lucide-react';
 
 import { Permission } from '@/lib/auth/permissions';
+// Только тип: манифест и navGroups импортируют друг у друга исключительно
+// типы, поэтому циклической рантайм-зависимости не возникает.
+import type { NavGroupId } from '@/routes/navGroups';
 
 import { HomePage } from '@/pages/Home';
 import { AboutPage } from '@/pages/About';
@@ -89,6 +92,10 @@ const AdminAuditPage = lazy(() =>
  * `requirePermission` lets a non-admin route still gate on a specific
  * bit; admin routes imply Permission.Administer via their guard, so they
  * don't repeat it.
+ *
+ * `navGroup` + `navRoles` drive the grouped, role-filtered top nav — see
+ * `@/routes/navGroups`, which owns the section list AND their order. The
+ * order of entries in THIS array never decides section order.
  */
 export type RouteGuard = 'public' | 'auth' | 'confirmed' | 'admin';
 
@@ -102,6 +109,16 @@ export interface RouteEntry {
   navIcon?: React.ComponentType<{ className?: string }>;
   /** Extra permission bit a non-admin route must carry (rare). */
   requirePermission?: number;
+  /** Раздел верхнего меню; отсутствие поля = ссылка рисуется плоско. */
+  navGroup?: NavGroupId;
+  /**
+   * Роли в организации (org_members.role), которым ссылка видна.
+   * Отсутствие = всем. Значения — по матрице прав P3 §5.3
+   * (src/tenancy/OrgPermissions.hpp): «—» в таблице означает НЕВИДИМО, а
+   * не «только чтение», поэтому пункт, на который сервер ответит 403,
+   * в меню не появляется вовсе.
+   */
+  navRoles?: readonly string[];
 }
 
 export const routes: RouteEntry[] = [
@@ -144,6 +161,7 @@ export const routes: RouteEntry[] = [
     guard: 'admin',
     navLabel: 'Администрирование',
     navIcon: Shield,
+    navGroup: 'settings',
   },
   { path: '/admin/users', element: <AdminUsersPage />, guard: 'admin' },
   { path: '/admin/users/:id', element: <AdminUserDetailPage />, guard: 'admin' },
@@ -163,6 +181,7 @@ export const routes: RouteEntry[] = [
     requirePermission: Permission.AuditRead,
     navLabel: 'Аудит',
     navIcon: ScrollText,
+    navGroup: 'settings',
   },
   {
     path: '/organizations',
@@ -170,6 +189,9 @@ export const routes: RouteEntry[] = [
     guard: 'confirmed',
     navLabel: 'Организации',
     navIcon: Building2,
+    navGroup: 'settings',
+    // navRoles намеренно не задан: список СВОИХ организаций видит любая
+    // роль, включая кадровика, — это и есть точка входа в смену тенанта.
   },
   {
     path: '/counterparties',
@@ -177,6 +199,8 @@ export const routes: RouteEntry[] = [
     guard: 'confirmed',
     navLabel: 'Контрагенты',
     navIcon: Users,
+    navGroup: 'accounting',
+    navRoles: ['owner', 'accountant', 'viewer'],
   },
   {
     path: '/journal',
@@ -184,6 +208,8 @@ export const routes: RouteEntry[] = [
     guard: 'confirmed',
     navLabel: 'Журнал проводок',
     navIcon: BookOpenText,
+    navGroup: 'accounting',
+    navRoles: ['owner', 'accountant', 'viewer'],
   },
   {
     path: '/documents',
@@ -191,6 +217,8 @@ export const routes: RouteEntry[] = [
     guard: 'confirmed',
     navLabel: 'Документы',
     navIcon: FileText,
+    navGroup: 'accounting',
+    navRoles: ['owner', 'accountant', 'viewer'],
   },
   // No navLabel: reached from DocumentsPage's "Создать документ" button,
   // not a top-level nav destination.
@@ -201,6 +229,8 @@ export const routes: RouteEntry[] = [
     guard: 'confirmed',
     navLabel: 'Сотрудники',
     navIcon: UsersRound,
+    navGroup: 'people',
+    navRoles: ['owner', 'accountant', 'hr', 'viewer'],
   },
   {
     path: '/hr',
@@ -208,6 +238,8 @@ export const routes: RouteEntry[] = [
     guard: 'confirmed',
     navLabel: 'Кадры',
     navIcon: BriefcaseBusiness,
+    navGroup: 'people',
+    navRoles: ['owner', 'accountant', 'hr', 'viewer'],
   },
   {
     path: '/payroll',
@@ -215,6 +247,8 @@ export const routes: RouteEntry[] = [
     guard: 'confirmed',
     navLabel: 'Зарплата',
     navIcon: Wallet,
+    navGroup: 'people',
+    navRoles: ['owner', 'accountant', 'viewer'],
   },
   {
     path: '/taxes',
@@ -222,6 +256,8 @@ export const routes: RouteEntry[] = [
     guard: 'confirmed',
     navLabel: 'Налоги',
     navIcon: Landmark,
+    navGroup: 'tax',
+    navRoles: ['owner', 'accountant', 'viewer'],
   },
 ];
 

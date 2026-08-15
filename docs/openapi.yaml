@@ -189,11 +189,14 @@ components:
 
     # GET /api/auth/me, POST /api/auth/login, POST /api/auth/refresh.
     # Mirrors AuthController::me/login/refresh — Response::ok({{"user", user}}).
+    # Only /me carries org_role (login/refresh omit the key entirely), which
+    # is why it is not in `required`.
     MeResponse:
       type: object
       required: [user]
       properties:
         user: { $ref: '#/components/schemas/User' }
+        org_role: { type: ['string', 'null'], enum: [owner, accountant, hr, viewer, null], description: 'The caller''s role in the organization the access token is scoped to; null when the token carries no org claim' }
 
     # GET/PATCH /api/admin/users/{id}, POST /api/admin/users.
     # Mirrors AdminController::getUser/updateUser/createUser —

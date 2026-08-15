@@ -5625,6 +5625,11 @@ export interface components {
         };
         MeResponse: {
             user: components["schemas"]["User"];
+            /**
+             * @description The caller's role in the organization the access token is scoped to; null when the token carries no org claim
+             * @enum {string|null}
+             */
+            org_role?: "owner" | "accountant" | "hr" | "viewer" | null;
         };
         UserDetailResponse: {
             data: components["schemas"]["User"];

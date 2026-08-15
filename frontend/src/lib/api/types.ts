@@ -70,8 +70,13 @@ export type TaxDeadline = Schemas['TaxDeadline'];
 export type TaxFiling = Schemas['TaxFiling'];
 export type TaxFilingCreate = Schemas['TaxFilingCreate'];
 
-/** GET /api/auth/me, POST /api/auth/login, POST /api/auth/refresh — { user }. */
+/** GET /api/auth/me — { user, org_role }; POST /api/auth/login, POST
+ * /api/auth/refresh — { user } only (they omit org_role, hence its `?`). */
 export type MeResponse = Schemas['MeResponse'];
+/** The caller's role in the current organization (org_members.role) — the
+ * tenant role from /me, NOT the global User.role. `null` = the token carries
+ * no org claim (or the membership was revoked). */
+export type OrgRole = NonNullable<MeResponse['org_role']>;
 /** GET/PATCH /api/admin/users/{id}, POST /api/admin/users — { data: User }. */
 export type UserDetailResponse = Schemas['UserDetailResponse'];
 /** GET /api/admin/roles — { data: Role[] }. */

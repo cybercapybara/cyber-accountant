@@ -18,7 +18,7 @@ vi.mock('@/lib/api/client', async () => {
 });
 
 // Imported after the mock is registered.
-import { fetchMe, shouldRetryMe } from './useMe';
+import { fetchMe, fetchMeEnvelope, shouldRetryMe } from './useMe';
 
 afterEach(() => {
   get.mockReset();
@@ -60,6 +60,34 @@ describe('fetchMe (useMe queryFn)', () => {
     get.mockResolvedValueOnce({ data: undefined, error: undefined });
 
     await expect(fetchMe()).rejects.toThrow(/failed to fetch \/me/);
+  });
+});
+
+describe('fetchMeEnvelope (the shared queryFn of useMe + useOrgRole)', () => {
+  it('returns user AND org_role from the one /me call', async () => {
+    const envelope = { user: { id: 'u1', email: 'a@b.c' }, org_role: 'hr' };
+    get.mockResolvedValueOnce({ data: envelope, error: undefined });
+
+    await expect(fetchMeEnvelope()).resolves.toEqual(envelope);
+    expect(get).toHaveBeenCalledTimes(1); // один запрос на оба среза кэша
+  });
+
+  it('resolves to null on 401, so useOrgRole reads null (fail-closed)', async () => {
+    get.mockResolvedValueOnce({
+      data: undefined,
+      error: new ApiClientError({ status: 401, message: 'missing_token' }),
+    });
+
+    await expect(fetchMeEnvelope()).resolves.toBeNull();
+  });
+
+  it('carries a null org_role through untouched (token without an org claim)', async () => {
+    get.mockResolvedValueOnce({
+      data: { user: { id: 'u1', email: 'a@b.c' }, org_role: null },
+      error: undefined,
+    });
+
+    await expect(fetchMeEnvelope()).resolves.toMatchObject({ org_role: null });
   });
 });
 
