@@ -27,6 +27,12 @@
  *        migrations/021_journal_carveout_schema_qualified.sql; все три теста
  *        проверены на том, что БЕЗ 021 они падают.
  *
+ *        Fix round 2 расширил тот же класс на ТИПЫ и на две соседние функции
+ *        из 009 (migrations/022_qualify_journal_trigger_names.sql): pg_temp
+ *        перехватывает имена типов так же, как имена таблиц, а
+ *        journal_entry_must_balance() ходила в journal_lines без схемы — на
+ *        этом обычная роль коммитила проводку с дебетом без кредита.
+ *
  *        Плюс DeletingTheAuthorChangesTheAuthorColumnAndNothingElse: ветка
  *        удаления автора сравнивает строку целиком (to_jsonb), а не список
  *        колонок — в 020 список из пяти имён оставлял id, created_at и
@@ -352,9 +358,13 @@ TEST_F(JournalCascadeTest, DeletingAUserWhoPostedAnEntrySetsTheAuthorToNull) {
 }
 
 /// Ветка «автор удалён» на настоящем каскаде: меняется РОВНО одна колонка.
-/// Сравнение идёт по всей строке (to_jsonb), поэтому тест поймает и добавление
-/// нового поля в каскад, и возврат к ручному списку колонок — под 020 список
-/// из пяти имён оставлял id, created_at и created_by_run_id незакреплёнными.
+///
+/// ЧЕСТНО о силе теста: он НЕ различает 020 и 022 — обычный FK-каскад и там,
+/// и там меняет ровно created_by_user_id, так что зелёным он будет при любой
+/// реализации закрепления. Он ловит другое: изменение ФОРМЫ каскада (новая
+/// колонка, которую начали трогать заодно). Разрушение самого закрепления
+/// ловит WholeRowPinRejectsTamperingInTheAuthorBranch ниже — вот он на 020
+/// падает.
 TEST_F(JournalCascadeTest, DeletingTheAuthorChangesTheAuthorColumnAndNothingElse) {
     const std::string org_id = seed_fully_wired_org();
     const std::string entry_id = posted_entry_of(org_id);
@@ -435,7 +445,6 @@ TEST_F(JournalCascadeTest, TempTableNamedUsersCannotOpenTheAuthorBranch) {
 /// проводилась.
 TEST_F(JournalCascadeTest, TempTableNamedJournalLinesCannotPostAnEmptyEntry) {
     const std::string org_id = seed_fully_wired_org();
-    QuietLogs quiet;
     std::string empty_id;
     Database::get().execute_write([&](auto& txn) {
         empty_id = txn.exec_params(
@@ -447,12 +456,148 @@ TEST_F(JournalCascadeTest, TempTableNamedJournalLinesCannotPostAnEmptyEntry) {
                        .template as<std::string>();
         return 0;
     });
+    // QuietLogs встаёт ПОСЛЕ засева: сбой самого засева должен быть слышен.
+    QuietLogs quiet;
     EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
         txn.exec_params("CREATE TEMP TABLE journal_lines ON COMMIT DROP AS SELECT $1::uuid AS entry_id", empty_id);
         txn.exec_params("UPDATE journal_entries SET status = 'posted' WHERE id = $1", empty_id);
         return 0;
     }),
                  pqxx::sql_error);
+}
+
+/// Та же подмена journal_lines, но против journal_entry_must_balance() —
+/// САМОЕ глубокое, что в этой системе можно испортить. Подставная таблица
+/// подсовывает проверке баланса свою сумму, и проводка с единственной
+/// дебетовой строкой 999.00 без кредита КОММИТИТСЯ. Дыра пришла из
+/// миграции 009 и жила в проде; закрыта в 022.
+TEST_F(JournalCascadeTest, TempTableNamedJournalLinesCannotCommitAnUnbalancedEntry) {
+    const std::string org_id = seed_fully_wired_org();
+    std::string entry_id;
+    Database::get().execute_write([&](auto& txn) {
+        entry_id = txn.exec_params(
+                          "INSERT INTO journal_entries (org_id, entry_date, description) "
+                          "VALUES ($1, '2026-07-01', 'Несбалансированная') RETURNING id",
+                          org_id)
+                       .at(0)
+                       .at(0)
+                       .template as<std::string>();
+        return 0;
+    });
+    QuietLogs quiet;
+    // Триггер баланса — DEFERRABLE INITIALLY DEFERRED, так что исключение
+    // приходит на COMMIT, то есть из самого execute_write, а не из INSERT.
+    EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec_params(
+            "CREATE TEMP TABLE journal_lines ON COMMIT DROP AS "
+            "SELECT $1::uuid AS entry_id, 'debit'::text AS side, 0::numeric AS amount",
+            entry_id);
+        // Настоящая таблица адресуется явно — временная её уже затеняет.
+        txn.exec_params(
+            "INSERT INTO public.journal_lines (org_id, entry_id, account_code, side, amount) "
+            "VALUES ($1, $2, '1030', 'debit', '999.00')",
+            org_id,
+            entry_id);
+        return 0;
+    }),
+                 pqxx::sql_error);
+    const auto lines = Database::get().execute_read([&](auto& txn) {
+        auto r = txn.exec_params("SELECT COUNT(*) FROM public.journal_lines WHERE entry_id = $1", entry_id);
+        return r.at(0).at(0).template as<long>();
+    });
+    EXPECT_EQ(lines, 0) << "несбалансированная строка не должна была закоммититься";
+}
+
+/// pg_temp перехватывает не только имена ТАБЛИЦ, но и имена ТИПОВ. Временная
+/// таблица с именем встроенного типа ломала тела триггерных функций: jsonb —
+/// каст 'null'::jsonb в journal_entries_immutability() (то есть ЛЮБОЙ UPDATE
+/// по journal_entries, включая легальное сторно и каскад DELETE FROM users),
+/// uuid — DECLARE eid UUID в journal_entry_must_balance(), text — DECLARE st
+/// TEXT в journal_lines_frozen_after_post(). Обхода это не давало (падает
+/// закрыто), но выключало запись в журнал целиком. Лечится тем же: каст снят,
+/// объявления стали pg_catalog.*.
+TEST_F(JournalCascadeTest, TempTablesNamedAfterBuiltInTypesCannotBreakJournalWrites) {
+    const std::string org_id = seed_fully_wired_org();
+    const std::string user_id = author_of_the_posted_entry(org_id);
+
+    // jsonb: путь UPDATE по journal_entries — каскад удаления автора.
+    EXPECT_NO_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec("CREATE TEMP TABLE jsonb (x int) ON COMMIT DROP");
+        txn.exec_params("DELETE FROM users WHERE id = $1", user_id);
+        return 0;
+    }));
+
+    // uuid и text: путь записи строк — проверка баланса и заморозка строк.
+    for (const char* type_name : {"uuid", "text"}) {
+        EXPECT_NO_THROW(Database::get().execute_write([&](auto& txn) {
+            txn.exec(std::string("CREATE TEMP TABLE ") + type_name + " (x int) ON COMMIT DROP");
+            auto entry_id = txn.exec_params(
+                                   "INSERT INTO journal_entries (org_id, entry_date, description) "
+                                   "VALUES ($1, '2026-07-03', 'Сбалансированная') RETURNING id",
+                                   org_id)
+                                .at(0)
+                                .at(0)
+                                .template as<std::string>();
+            txn.exec_params(
+                "INSERT INTO public.journal_lines (org_id, entry_id, account_code, side, amount) "
+                "VALUES ($1, $2, '1030', 'debit', '7.00'), ($1, $2, '6010', 'credit', '7.00')",
+                org_id,
+                entry_id);
+            return 0;
+        })) << "временная таблица с именем "
+            << type_name << " не должна ломать запись в журнал";
+    }
+}
+
+/// РАЗЛИЧАЮЩИЙ тест на закрепление всей строки в ветке удалённого автора.
+///
+/// Через сами journal_entries эту ветку с ИСПОРЧЕННОЙ строкой не достать:
+/// FK ON DELETE SET NULL обнуляет автора сам и ровно в одной колонке, а
+/// подмена users закрыта в 021. Поэтому функция проверяется на временной
+/// копии таблицы: та же структура (LIKE ... INCLUDING ALL), тот же триггер,
+/// но без FK на users — значит строку можно завести с автором, которого в
+/// public.users нет, то есть ровно с предусловием ветки.
+///
+/// Под 020 (список из пяти колонок) второй UPDATE ПРОХОДИЛ — проверено.
+TEST_F(JournalCascadeTest, WholeRowPinRejectsTamperingInTheAuthorBranch) {
+    const std::string org_id = seed_fully_wired_org();
+    // org_id должен существовать: иначе сработает каскадная ветка выше и
+    // пропустит всё подряд, и тест проверял бы не то.
+    const char* kProbeTable = "CREATE TEMP TABLE je_probe (LIKE journal_entries INCLUDING ALL) ON COMMIT DROP";
+    const char* kProbeTrigger =
+        "CREATE TRIGGER probe_immutable BEFORE UPDATE ON je_probe "
+        "    FOR EACH ROW EXECUTE FUNCTION journal_entries_immutability()";
+    const char* kSeedProbe =
+        "INSERT INTO je_probe (id, org_id, entry_date, description, status, created_by_user_id) "
+        "VALUES ('19191919-0000-0000-0000-000000000001', $1, '2026-01-10', 'Проведена', 'posted', "
+        "        'deadbeef-0000-0000-0000-000000000001')";
+
+    // Чистое обнуление автора — разрешено.
+    EXPECT_NO_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec(kProbeTable);
+        txn.exec(kProbeTrigger);
+        txn.exec_params(kSeedProbe, org_id);
+        txn.exec("UPDATE je_probe SET created_by_user_id = NULL");
+        return 0;
+    }));
+
+    // Обнуление автора ВМЕСТЕ с правкой любой другой колонки — запрещено.
+    QuietLogs quiet;
+    for (const char* tamper : {"created_at = '1970-01-01'",
+                               "created_by_run_id = '00000000-0000-0000-0000-000000000009'",
+                               "id = '0e0e0e0e-0000-0000-0000-000000000001'",
+                               "description = 'подделка'",
+                               "entry_date = '1970-01-01'"}) {
+        EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
+            txn.exec(kProbeTable);
+            txn.exec(kProbeTrigger);
+            txn.exec_params(kSeedProbe, org_id);
+            txn.exec(std::string("UPDATE je_probe SET created_by_user_id = NULL, ") + tamper);
+            return 0;
+        }),
+                     pqxx::sql_error)
+            << "ветка удалённого автора пропустила правку: " << tamper;
+    }
 }
 
 TEST_F(JournalCascadeTest, DirectDeleteOfAPostedEntryIsStillRejected) {
@@ -531,6 +676,46 @@ TEST_F(JournalCascadeTest, CarveOutUsesNeitherTriggerDepthNorASessionFlag) {
     // незакреплёнными и не защищал бы колонку, добавленную в будущем.
     EXPECT_NE(src.find("to_jsonb(NEW)"), std::string::npos)
         << "ветка удалённого автора обязана сравнивать всю строку, а не перечислять колонки";
+
+    // Имена ТИПОВ pg_temp перехватывает так же, как имена таблиц: временная
+    // таблица с именем jsonb превращала каждый UPDATE по journal_entries в
+    // «malformed record literal». Каст здесь не нужен вовсе — jsonb_set и так
+    // принимает jsonb третьим аргументом.
+    EXPECT_EQ(src.find("::jsonb"), std::string::npos)
+        << "приведение к типу без схемы перехватывается pg_temp — каст лишний, третий аргумент jsonb_set и так jsonb";
+}
+
+/// Те же требования к двум соседним функциям из 009: подмена journal_lines в
+/// проверке баланса позволяла закоммитить неравенство дебета и кредита, а
+/// объявленные типы UUID/TEXT валили обе функции целиком.
+///
+/// Ищем не голое "FROM journal_lines" — эта строка встречается в
+/// КОММЕНТАРИЯХ внутри тел (там же лежит и "DELETE FROM organizations"), —
+/// а конкретную форму запроса вместе с целевой переменной.
+TEST_F(JournalCascadeTest, BalanceAndFreezeTriggersAlsoQualifyEveryName) {
+    const auto body_of = [](const std::string& name) {
+        return Database::get().execute_read([&](auto& txn) {
+            return txn.exec_params("SELECT prosrc FROM pg_proc WHERE proname = $1", name)
+                .at(0)
+                .at(0)
+                .template as<std::string>();
+        });
+    };
+
+    const std::string balance = body_of("journal_entry_must_balance");
+    EXPECT_EQ(balance.find("INTO diff FROM journal_lines"), std::string::npos)
+        << "подмена journal_lines через pg_temp позволяла закоммитить несбалансированную проводку";
+    EXPECT_NE(balance.find("INTO diff FROM public.journal_lines"), std::string::npos);
+    EXPECT_NE(balance.find("pg_catalog.uuid"), std::string::npos)
+        << "DECLARE eid UUID без схемы: временная таблица с именем uuid валит функцию";
+    EXPECT_NE(balance.find("pg_catalog.numeric"), std::string::npos);
+
+    const std::string frozen = body_of("journal_lines_frozen_after_post");
+    EXPECT_EQ(frozen.find("INTO st FROM journal_entries"), std::string::npos)
+        << "обращение к journal_entries обязано быть public.journal_entries";
+    EXPECT_NE(frozen.find("INTO st FROM public.journal_entries"), std::string::npos);
+    EXPECT_NE(frozen.find("pg_catalog.text"), std::string::npos)
+        << "DECLARE st TEXT без схемы: временная таблица с именем text валит функцию";
 }
 
 }  // namespace
