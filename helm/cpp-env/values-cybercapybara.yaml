@@ -32,25 +32,47 @@
 #     no need to shrink further for this minimal profile; not inflated
 #     either since this is still a P0 skeleton, not production load.
 #
-# imagePullSecret: ghcr.io/cybercapybara/* packages are PRIVATE and no PAT is
-# available to this task. `ghcr-pull` is referenced below so the values file
-# is "one command away" from a working install — but the secret does NOT
-# exist in-cluster yet. Until the owner does ONE of:
-#   (a) makes the three GHCR packages public, or
-#   (b) creates the secret with a `read:packages` PAT:
+# ── IMAGE PULLS DEPEND ON THE GHCR PACKAGES STAYING PUBLIC ──────
+# There is NO imagePullSecret on this release, by design. All three
+# ghcr.io/cybercapybara/* packages (cyber-accountant, -worker, -frontend) are
+# PUBLIC, so the kubelet pulls them anonymously. Verified 2026-08-15 by
+# fetching each `0.4.1` manifest from ghcr.io with a token obtained WITHOUT
+# credentials — all three returned HTTP 200.
 #
-#     KUBECONFIG=../cluster/kubeconfig kubectl -n cyber-accountant \
-#       create secret docker-registry ghcr-pull \
-#       --docker-server=ghcr.io \
-#       --docker-username=<gh-username-or-org> \
-#       --docker-password=<PAT-with-read:packages-scope> \
-#       --docker-email=<any-email>
+# This is a real, load-bearing dependency, so treat it as one:
 #
-# ...pods will sit in ImagePullBackOff (expected — see task-11-report.md).
-# No re-install needed afterwards: Kubernetes retries image pulls on its own
-# once the secret exists (or once the packages go public), though a manual
-# `kubectl -n cyber-accountant rollout restart deploy/api deploy/worker deploy/web`
-# speeds that up.
+#   * If any of the three packages is flipped to PRIVATE, every pull starts
+#     failing with a 401/"denied" that reads like a cluster problem and says
+#     nothing about package visibility. Pods already running keep running;
+#     the breakage only shows up on the next rollout, restart, or reschedule
+#     onto a node with a cold image cache — i.e. potentially long after the
+#     change that caused it.
+#   * The fix in that case is to create the pull secret and re-add the
+#     reference to all three subchart blocks below:
+#
+#       kubectl -n cyber-accountant create secret docker-registry ghcr-pull \
+#         --docker-server=ghcr.io \
+#         --docker-username=<gh-username-or-org> \
+#         --docker-password=<PAT-with-read:packages-scope> \
+#         --docker-email=<any-email>
+#
+#     then add to EACH of `cyber-accountant`, `cyber-accountant-worker` and
+#     `cpp-frontend`:
+#
+#       imagePullSecrets:
+#         - name: ghcr-pull
+#
+#     No re-install is needed beyond that — Kubernetes retries pulls on its
+#     own once the secret exists, though
+#     `kubectl -n cyber-accountant rollout restart deploy/api deploy/worker deploy/web`
+#     speeds it up.
+#
+# HISTORY: this file used to carry `imagePullSecrets: [{name: ghcr-pull}]` on
+# all three subcharts while no such Secret existed in the namespace. That was
+# strictly worse than having nothing: pulls actually succeeded (because the
+# packages are public and the kubelet ignores a missing pull secret), so the
+# reference *looked* like the dependency was handled when it was not. Removed
+# 2026-08-15 in favour of this comment.
 #
 # Deploy:
 #   helm dependency build ./helm/cpp-env   # only if helm/cpp-env/charts/*.tgz are stale
@@ -142,8 +164,8 @@ cyber-accountant:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant
     tag: "0.4.1"  # payslips move to doc_type='payroll' (migration 023) so the hr role can no longer read them — NOT "v0.4.1" (release.yml strips the `v` prefix); confirmed present via /v2/.../tags/list before use
-  imagePullSecrets:
-    - name: ghcr-pull
+  # No imagePullSecrets: this package is public and pulled anonymously.
+  # See "IMAGE PULLS DEPEND ON THE GHCR PACKAGES STAYING PUBLIC" at the top.
   externalKafka:
     enabled: false
   tracing:
@@ -335,8 +357,8 @@ cyber-accountant-worker:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-worker
     tag: "0.4.1"  # see note above — unprefixed tag, payslip permission fix
-  imagePullSecrets:
-    - name: ghcr-pull
+  # No imagePullSecrets: this package is public and pulled anonymously.
+  # See "IMAGE PULLS DEPEND ON THE GHCR PACKAGES STAYING PUBLIC" at the top.
   tracing:
     enabled: false
   # Real public URL now that buh.cybercapybara.kz exists — was the unused
@@ -408,5 +430,5 @@ cpp-frontend:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-frontend
     tag: "0.4.1"  # see note above — unprefixed tag, payslip permission fix
-  imagePullSecrets:
-    - name: ghcr-pull
+  # No imagePullSecrets: this package is public and pulled anonymously.
+  # See "IMAGE PULLS DEPEND ON THE GHCR PACKAGES STAYING PUBLIC" at the top.
