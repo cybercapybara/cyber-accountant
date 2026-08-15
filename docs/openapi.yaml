@@ -673,7 +673,7 @@ components:
       required: [template_slug]
       properties:
         template_slug:   { type: string, enum: [invoice, avr, waybill, tax_invoice, reconciliation], description: 'Also the resulting document''s doc_type — the mapping is the identity function. A slug outside this enum that nevertheless exists on disk (payslip, fno_910, fno_300, hr_order, labor_contract) is now a 422 unsupported_template, not the 500 it produced before P3 — those templates belong to the tax-filing, payroll and HR endpoints that hold their authoritative data' }
-        input:            { type: object, additionalProperties: true, description: 'Validated against the template''s JSON Schema. Money is supplied as INTEGER tiyn — total_tiyn for invoice/avr/waybill; totals.amount_tiyn + totals.vat_tiyn + totals.with_vat_tiyn for tax_invoice, and they must sum exactly. The server formats every money STRING and derives the amount in words, so total/total_words/totals.amount/totals.vat/totals.with_vat in the request are a 422 not_allowed_override. Scope: the document TOTAL only — per-line items[] figures stay free-form and are not reconciled against it' }
+        input:            { type: object, additionalProperties: true, description: 'Validated against the template''s JSON Schema. Money is supplied as INTEGER tiyn — total_tiyn for invoice/avr/waybill, plus an OPTIONAL vat_tiyn for invoice/avr which must not exceed total_tiyn (422 exceeds_total); totals.amount_tiyn + totals.vat_tiyn + totals.with_vat_tiyn for tax_invoice, and those must sum exactly (422 inconsistent_total). The server formats every money STRING and derives the amount in words, so total/total_words/vat_amount/totals.amount/totals.vat/totals.with_vat in the request are a 422 not_allowed_override. vat_rate is a RATE, not an amount, and stays caller-authored free text. Scope: the document TOTAL lines only — per-line items[] figures stay free-form and are not reconciled against them' }
         counterparty_id:  { type: string, format: uuid, description: 'Must belong to the caller''s organization (422 foreign_counterparty otherwise)' }
         link_entry_id:    { type: string, format: uuid, description: 'Journal entry to link this document to (document_entries); must belong to the caller''s organization (422 foreign_journal_entry otherwise)' }
 
@@ -2475,7 +2475,7 @@ paths:
               schema: { $ref: '#/components/schemas/GenerateDocumentResponse' }
         '400': { description: 'Validation failed (missing/wrong-type field, or a malformed counterparty_id/link_entry_id)' }
         '403': { description: 'No org context, or caller''s role is viewer' }
-        '422': { description: 'unsupported_template (a real template, but not one this endpoint generates) / unknown_template / not_allowed_override / missing / not_integer / out_of_range / inconsistent_total (tax_invoice: amount_tiyn + vat_tiyn must equal with_vat_tiyn) / schema_validation_failed, or counterparty_id/link_entry_id does not belong to this organization' }
+        '422': { description: 'unsupported_template (a real template, but not one this endpoint generates) / unknown_template / not_allowed_override / missing / not_integer / out_of_range / exceeds_total (invoice, avr: vat_tiyn may not exceed total_tiyn) / inconsistent_total (tax_invoice: amount_tiyn + vat_tiyn must equal with_vat_tiyn) / schema_validation_failed, or counterparty_id/link_entry_id does not belong to this organization' }
         '503': { description: Job queue not enabled }
 
   /api/v1/employees:

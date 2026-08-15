@@ -16,8 +16,13 @@
         "price": {"type": "string"}, "amount": {"type": "string"}
       }}},
     "vat_rate": {"type": "string"}, "vat_amount": {"type": "string"},
+    "vat_tiyn": {"type": "integer", "minimum": 0},
     "total_tiyn": {"type": "integer", "minimum": 0},
     "total": {"type": "string"}, "total_words": {"type": "string"}
+  },
+  "dependencies": {
+    "vat_rate": ["vat_amount"],
+    "vat_amount": ["vat_rate"]
   },
   "definitions": {
     "party": {

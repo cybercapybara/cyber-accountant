@@ -127,6 +127,85 @@ TEST(InputPolicy, ApplyDerivedAmountRejectsClientSuppliedAmountAndWords) {
     EXPECT_EQ(code, "not_allowed_override");
 }
 
+// The defect that survived the first pass of P3: `vat_amount` was neither
+// derived nor rejected on invoice/avr, while both templates print it on the
+// line directly ABOVE the server-derived total (invoice template.tex:30-31,
+// avr:32-33). The exploit below issued a PDF reading «НДС (12%): 999 999,00 ₸»
+// over «Итого к оплате: 1 120,00 ₸» — one document contradicting itself.
+TEST(InputPolicy, InvoiceRejectsAClientSuppliedVatAmount) {
+    std::string field, code, message;
+    json exploit = {{"total_tiyn", 112000}, {"vat_rate", "12%"}, {"vat_amount", "999 999,00"}};
+    EXPECT_FALSE(Docgen::InputPolicy::apply_derived_amount("invoice", exploit, field, code, message));
+    EXPECT_EQ(field, "input.vat_amount");
+    EXPECT_EQ(code, "not_allowed_override");
+
+    // avr prints the same two lines and gets the same treatment.
+    json avr_exploit = {{"total_tiyn", 112000}, {"vat_rate", "12%"}, {"vat_amount", "999 999,00"}};
+    EXPECT_FALSE(Docgen::InputPolicy::apply_derived_amount("avr", avr_exploit, field, code, message));
+    EXPECT_EQ(field, "input.vat_amount");
+    EXPECT_EQ(code, "not_allowed_override");
+}
+
+TEST(InputPolicy, InvoiceVatMayNotExceedTheTotal) {
+    std::string field, code, message;
+    // The same forgery expressed honestly as an integer is still refused: the
+    // template prints no net line, so "VAT is a part of the amount due" is the
+    // strongest rule its actual output supports — and it is enough to make the
+    // two printed lines impossible to contradict.
+    json too_much = {{"total_tiyn", 112000}, {"vat_rate", "12%"}, {"vat_tiyn", 99999900}};
+    EXPECT_FALSE(Docgen::InputPolicy::apply_derived_amount("invoice", too_much, field, code, message));
+    EXPECT_EQ(field, "input.vat_tiyn");
+    EXPECT_EQ(code, "exceeds_total");
+    EXPECT_NE(message.find("99999900"), std::string::npos);
+
+    // Equal is legal: a document may be entirely VAT.
+    json all_vat = {{"total_tiyn", 112000}, {"vat_rate", "12%"}, {"vat_tiyn", 112000}};
+    EXPECT_TRUE(Docgen::InputPolicy::apply_derived_amount("invoice", all_vat, field, code, message)) << message;
+}
+
+TEST(InputPolicy, InvoiceFormatsVatFromTheIntegerAndOmitsItWhenAbsent) {
+    std::string field, code, message;
+    json with_vat = {{"total_tiyn", 112000}, {"vat_rate", "12%"}, {"vat_tiyn", 12000}};
+    ASSERT_TRUE(Docgen::InputPolicy::apply_derived_amount("invoice", with_vat, field, code, message)) << message;
+    EXPECT_EQ(with_vat["vat_amount"].get<std::string>(), "120,00");
+    EXPECT_EQ(with_vat["total"].get<std::string>(), "1 120,00");
+    EXPECT_EQ(with_vat["vat_rate"].get<std::string>(), "12%");  // a RATE, left as the caller's free text
+
+    // No VAT at all: no integer in, no string out — the template's
+    // `{% if vat_amount != "" %}` then prints no VAT line.
+    json no_vat = {{"total_tiyn", 112000}};
+    ASSERT_TRUE(Docgen::InputPolicy::apply_derived_amount("invoice", no_vat, field, code, message)) << message;
+    EXPECT_FALSE(no_vat.contains("vat_amount"));
+    EXPECT_EQ(no_vat["total"].get<std::string>(), "1 120,00");
+}
+
+TEST(InputPolicy, VatIntegerGoesThroughTheSameRangeChecksAsTheTotal) {
+    std::string field, code, message;
+    json not_int = {{"total_tiyn", 112000}, {"vat_tiyn", "1200"}};
+    EXPECT_FALSE(Docgen::InputPolicy::apply_derived_amount("invoice", not_int, field, code, message));
+    EXPECT_EQ(field, "input.vat_tiyn");
+    EXPECT_EQ(code, "not_integer");
+
+    json negative = {{"total_tiyn", 112000}, {"vat_tiyn", -1}};
+    EXPECT_FALSE(Docgen::InputPolicy::apply_derived_amount("invoice", negative, field, code, message));
+    EXPECT_EQ(code, "out_of_range");
+}
+
+TEST(InputPolicy, WaybillDeclaresNoVatPartBecauseItPrintsNoVatLine) {
+    auto waybill = Docgen::InputPolicy::derived_amount_for("waybill");
+    ASSERT_TRUE(waybill);
+    EXPECT_TRUE(waybill->optional_parts.empty());
+
+    auto invoice = Docgen::InputPolicy::derived_amount_for("invoice");
+    ASSERT_TRUE(invoice);
+    ASSERT_EQ(invoice->optional_parts.size(), 1u);
+    EXPECT_EQ(invoice->optional_parts[0].first, "vat_tiyn");
+    EXPECT_EQ(invoice->optional_parts[0].second, "vat_amount");
+    // The exact-sum breakdown stays a tax_invoice-only rule.
+    EXPECT_TRUE(invoice->components.empty());
+    EXPECT_TRUE(Docgen::InputPolicy::derived_amount_for("tax_invoice")->optional_parts.empty());
+}
+
 TEST(InputPolicy, ApplyDerivedAmountRejectsMissingBadAndOutOfRangeTiyn) {
     std::string field, code, message;
     json missing = json::object();

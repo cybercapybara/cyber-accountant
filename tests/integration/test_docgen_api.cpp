@@ -489,6 +489,78 @@ TEST_F(DocgenApiTest, GenerateFormatsAllThreeTaxInvoiceTotalsFromIntegers) {
               "Сто четыре тысячи четыреста тенге 00 тиын");
 }
 
+// The invoice VAT hole, end to end. templates/latex/invoice/v1/template.tex
+// prints «НДС ({{ vat_rate }}): {{ vat_amount }} ₸» on line 30 and
+// «Итого к оплате: {{ total }} ₸» on line 31 — adjacent lines of the SAME
+// issued PDF. While vat_amount was client-authored, those two lines could be
+// made to contradict each other outright.
+TEST_F(DocgenApiTest, GenerateRejectsAClientSuppliedInvoiceVatAmount) {
+    auto org = seed_org("444260000016", "Invoice Vat Org LLP");
+    auto accountant = member("invoice-vat@example.com", org.id, "accountant");
+
+    json input = valid_invoice_input();
+    input["total_tiyn"] = 112000;
+    input["vat_rate"] = "12%";
+    input["vat_amount"] = "999 999,00";
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input.vat_amount");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+TEST_F(DocgenApiTest, GenerateRejectsAnInvoiceWhoseVatExceedsItsTotal) {
+    auto org = seed_org("444260000017", "Invoice Vat Bound Org LLP");
+    auto accountant = member("invoice-vat-bound@example.com", org.id, "accountant");
+
+    json input = valid_invoice_input();
+    input["total_tiyn"] = 112000;
+    input["vat_rate"] = "12%";
+    input["vat_tiyn"] = 99999900;  // the same forgery, stated as an integer
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input.vat_tiyn");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "exceeds_total");
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+// The legitimate counterpart: one integer per figure in, three mutually
+// consistent printed strings out.
+TEST_F(DocgenApiTest, GenerateFormatsInvoiceVatAndTotalFromIntegers) {
+    auto org = seed_org("444260000018", "Invoice Vat Ok Org LLP");
+    auto accountant = member("invoice-vat-ok@example.com", org.id, "accountant");
+
+    json input = valid_invoice_input();
+    input["total_tiyn"] = 112000;
+    input["vat_rate"] = "12%";
+    input["vat_tiyn"] = 12000;
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k202Accepted) << resp->body();
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.find_in_org(
+        json::parse(std::string(resp->body()))["document_id"].get<std::string>(), org.id, /*from_primary=*/true);
+    ASSERT_TRUE(doc.has_value());
+    ASSERT_TRUE(doc->input_snapshot.has_value());
+    const json& stored = *doc->input_snapshot;
+    EXPECT_EQ(stored["vat_amount"].get<std::string>(), "120,00");
+    EXPECT_EQ(stored["total"].get<std::string>(), "1 120,00");
+    EXPECT_EQ(stored["total_words"].get<std::string>(), "Одна тысяча сто двадцать тенге 00 тиын");
+    // vat_rate is a RATE, not an amount — it stays the caller's own text.
+    EXPECT_EQ(stored["vat_rate"].get<std::string>(), "12%");
+}
+
 // Release defect v0.3.1: these five templates exist on disk and resolved
 // through the registry, then went into documents.doc_type verbatim and blew
 // up on documents_doc_type_check inside the INSERT — a 500 for a request the

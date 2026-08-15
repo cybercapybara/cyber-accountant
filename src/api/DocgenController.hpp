@@ -70,13 +70,18 @@
  *
  * P3, money: every printed money string on these documents is derived by
  * the SERVER from an integer tiyn field (`total_tiyn` for invoice/avr/
- * waybill, `totals.{amount,vat,with_vat}_tiyn` for tax_invoice) via
+ * waybill, plus an optional `vat_tiyn` for invoice/avr;
+ * `totals.{amount,vat,with_vat}_tiyn` for tax_invoice) via
  * Docgen::InputPolicy::apply_derived_amount(), and a client-supplied
- * `total`/`total_words`/`totals.*` string is a 422 `not_allowed_override`.
- * Honest scope: this makes the document's TOTAL line self-consistent (and,
- * for a счёт-фактура, forces amount + vat == with_vat). The per-line
- * `items[]` figures stay free-form and are NOT reconciled against that
- * total — that is separate work, outside P3.
+ * `total`/`total_words`/`vat_amount`/`totals.*` string is a 422
+ * `not_allowed_override`. Honest scope: this makes the document's TOTAL
+ * lines self-consistent — a счёт-фактура must satisfy
+ * amount + vat == with_vat, and an invoice/АВР must satisfy vat <= total
+ * (their templates print a VAT line and a grand total, but no net line, so
+ * that bound is the strongest rule their actual output supports). The
+ * per-line `items[]` figures stay free-form and are NOT reconciled against
+ * those totals — that is separate work, outside P3. `vat_rate` is a rate,
+ * not an amount, and stays caller-authored.
  *
  * Cross-org reference decision (counterparty_id / link_entry_id, both
  * optional body fields): TREATED IDENTICALLY, both a 422 keyed to their own

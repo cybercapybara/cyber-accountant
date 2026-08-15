@@ -89,16 +89,38 @@ struct DerivedAmount {
     /// оборот, всё ещё выпускается. Сверка позиций — отдельная работа, вне
     /// области P3.
     std::vector<std::pair<std::string, std::string>> components;
+    /// НЕОБЯЗАТЕЛЬНЫЕ части итога: {путь целого, путь его строки}. От
+    /// `components` отличаются двумя вещами. (1) Часть можно не присылать
+    /// вовсе — тогда её строка не пишется и шаблон свою строку не печатает.
+    /// (2) Суммы они не образуют: проверяется только «часть не больше
+    /// итога». Слабее — потому что счёт и АВР печатают ровно две итоговые
+    /// денежные строки, НДС и «Итого к оплате», а нетто-строки в шаблоне
+    /// нет; выводить из двух чисел третье было бы догадкой о том, включён
+    /// НДС в итог или нет.
+    ///
+    /// Строка части ВСЕГДА серверная, ровно как строка итога: до P3
+    /// `vat_amount` приходил от клиента свободной строкой и печатался
+    /// строкой ВЫШЕ выведенного итога, так что счёт мог заявлять «НДС:
+    /// 999 999,00 ₸» над «Итого к оплате: 1 120,00 ₸» — тот же класс
+    /// подделки, что закрыт для счёта-фактуры, просто в другом шаблоне.
+    std::vector<std::pair<std::string, std::string>> optional_parts;
 };
 
 inline std::optional<DerivedAmount> derived_amount_for(const std::string& slug) {
-    if (slug == "invoice" || slug == "avr" || slug == "waybill")
-        return DerivedAmount{"total_tiyn", "total", "total_words", {}};
+    // Счёт и АВР печатают строку НДС над строкой итога (см. строки 30-31
+    // templates/latex/invoice/v1/template.tex и 32-33 у avr) — поэтому у
+    // них есть необязательная часть. Накладная НДС не печатает вовсе, и её
+    // схема поля НДС не объявляет.
+    if (slug == "invoice" || slug == "avr")
+        return DerivedAmount{"total_tiyn", "total", "total_words", {}, {{"vat_tiyn", "vat_amount"}}};
+    if (slug == "waybill")
+        return DerivedAmount{"total_tiyn", "total", "total_words", {}, {}};
     if (slug == "tax_invoice")
         return DerivedAmount{"totals.with_vat_tiyn",
                              "totals.with_vat",
                              "total_words",
-                             {{"totals.amount_tiyn", "totals.amount"}, {"totals.vat_tiyn", "totals.vat"}}};
+                             {{"totals.amount_tiyn", "totals.amount"}, {"totals.vat_tiyn", "totals.vat"}},
+                             {}};
     return std::nullopt;  // reconciliation и все серверные формы
 }
 
@@ -192,13 +214,16 @@ inline bool read_tiyn(const json& input,
  * @brief Проверить целые денежные поля и записать в @p input их строковые
  *        представления и пропись итога. Для слага без деривации — no-op с
  *        результатом true.
- * @details Три обязанности: (1) отвергнуть любое серверно-выводимое поле,
+ * @details Четыре обязанности: (1) отвергнуть любое серверно-выводимое поле,
  *          присланное каллером; (2) прочитать итог и все его слагаемые как
  *          целые в допустимом диапазоне; (3) если разбивка объявлена —
- *          проверить, что слагаемые дают РОВНО итог. Последнее делает
- *          несходящуюся ИТОГОВУЮ строку невозможной: печатать оборот и
- *          НДС, не дающие в сумме напечатанный итог, больше нельзя.
- *          Позиции документа этой проверкой не покрыты (см. DerivedAmount).
+ *          проверить, что слагаемые дают РОВНО итог; (4) необязательные
+ *          части итога, если присланы, прочитать целыми и потребовать, что
+ *          ни одна не больше итога. (3) и (4) вместе делают несходящуюся
+ *          ИТОГОВУЮ строку невозможной: ни печатать оборот и НДС, не
+ *          дающие в сумме напечатанный итог, ни печатать НДС больше самого
+ *          итога больше нельзя. Позиции документа этой проверкой не
+ *          покрыты (см. DerivedAmount).
  * @return false + заполненные @p error_field / @p error_code /
  *         @p error_message. Каллер обязан превратить это в 422 — все три
  *         случая (чужое поле, кривое целое, несходящаяся разбивка) суть
@@ -214,10 +239,15 @@ inline bool apply_derived_amount(const std::string& slug,
         return true;
 
     // (1) Ни одна строка, которую пишет сервер, не принимается от каллера —
-    // включая строки слагаемых.
+    // включая строки слагаемых и НЕОБЯЗАТЕЛЬНЫХ частей. Для последних это
+    // проверяется безусловно, даже если целое не прислано: иначе `vat_amount`
+    // без `vat_tiyn` проскочил бы как свободная строка — ровно та дыра,
+    // которая пережила P3 в счёте и АВР.
     std::vector<std::string> server_written = {derived->amount_path, derived->words_path};
     for (const auto& c : derived->components)
         server_written.push_back(c.second);
+    for (const auto& p : derived->optional_parts)
+        server_written.push_back(p.second);
     for (const auto& path : server_written) {
         if (at_path(input, path) != nullptr) {
             error_field = "input." + path;
@@ -263,10 +293,34 @@ inline bool apply_derived_amount(const std::string& slug,
         }
     }
 
+    // (4) Необязательные части: присланные читаются как целые и обязаны не
+    // превосходить итог; неприсланные не порождают строки вовсе, и шаблон
+    // свою условную строку не печатает.
+    std::vector<std::pair<std::string, long long>> optional_values;
+    optional_values.reserve(derived->optional_parts.size());
+    for (const auto& p : derived->optional_parts) {
+        if (at_path(input, p.first) == nullptr)
+            continue;
+        long long value = 0;
+        if (!detail::read_tiyn(input, p.first, value, error_field, error_code, error_message))
+            return false;
+        if (value > total_tiyn) {
+            error_field = "input." + p.first;
+            error_code = "exceeds_total";
+            error_message = "'" + p.first + "' (" + std::to_string(value) + " tiyn) is larger than " +
+                            derived->tiyn_path + " (" + std::to_string(total_tiyn) +
+                            " tiyn) — a part of the amount due cannot exceed the amount due";
+            return false;
+        }
+        optional_values.emplace_back(p.second, value);
+    }
+
     set_path(input, derived->amount_path, json(Money::format_tiyn_ru(total_tiyn)));
     set_path(input, derived->words_path, json(Money::to_words_ru(total_tiyn)));
     for (std::size_t i = 0; i < derived->components.size(); ++i)
         set_path(input, derived->components[i].second, json(Money::format_tiyn_ru(component_values[i])));
+    for (const auto& v : optional_values)
+        set_path(input, v.first, json(Money::format_tiyn_ru(v.second)));
     return true;
 }
 
