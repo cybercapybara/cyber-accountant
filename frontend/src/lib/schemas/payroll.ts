@@ -24,13 +24,12 @@ import type { PayrollRun, PayrollRunCreate, Payslip, PayslipDocumentExtra } from
  *     approved one is a 409 `invalid_run_state`. `payrollRunActions` is the
  *     single source of which of the three actions is offered at all.
  *
- *  3. The payslip …/generate-document endpoint derives every figure itself
- *     and requires exactly ONE field the codebase cannot derive:
- *     `net_words`, the net amount spelled out in Russian (there is no
- *     money-to-words converter anywhere). `buildPayslipDocumentExtra` emits
- *     that and nothing else, so echoing a server-derived value back — which
- *     the template's strict schema check rejects with a 422 — is impossible
- *     by construction.
+ *  3. The payslip …/generate-document endpoint derives every figure itself,
+ *     the net amount spelled out in Russian included — so its allowlist is
+ *     EMPTY and the only valid body is `{}`. `buildPayslipDocumentExtra`
+ *     returns exactly that, so echoing a server-derived value back — which
+ *     the endpoint rejects with a 422 `not_allowed_override` — is
+ *     impossible by construction.
  *
  * Every amount on a payslip is an integer count of TIYN (the columns are
  * BIGINT, unlike the ledger's decimal-string amounts), so the totals below
@@ -168,16 +167,14 @@ export function sumPayslips(payslips: readonly PayslipAmounts[]): PayslipAmounts
 // ── Расчётный листок (generate-document) ────────────────────────────────────
 
 /**
- * templates/latex/payslip/v1/schema.json requires `net_words` on top of
- * everything the server derives — and nothing else is accepted from the
- * client here.
+ * Since P3 the payslip has NO caller-supplied field left: the net amount in
+ * words is spelled out server-side from `payslip.net`, and the allowlist is
+ * empty (Docgen::InputPolicy::editable_fields returns none for "payslip").
+ * The request body is an empty object; any key at all comes back as a 422
+ * `not_allowed_override`. The builder is kept — rather than inlining `{}` at
+ * the call site — so this rule has one place to live if a field is ever
+ * added back.
  */
-export const payslipDocumentSchema = z.object({
-  net_words: z.string().trim().min(1, 'Укажите сумму к выплате прописью'),
-});
-
-export type PayslipDocumentValues = z.infer<typeof payslipDocumentSchema>;
-
-export function buildPayslipDocumentExtra(values: PayslipDocumentValues): PayslipDocumentExtra {
-  return { net_words: values.net_words.trim() };
+export function buildPayslipDocumentExtra(): PayslipDocumentExtra {
+  return {};
 }

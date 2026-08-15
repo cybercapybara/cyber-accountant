@@ -34,14 +34,16 @@ import type {
  *     treat a repeat as normal rather than as a duplicate.
  *
  *  4. The ФНО print templates require free-text fields no column holds —
- *     `director`, `accountant`, and the amount in words (`tax_words` for
- *     910.00, `balance_words` for 300.00). Those THREE per form are the
- *     server's entire allowlist (TaxController's
- *     fno_910_allowed_extra_fields()/fno_300_allowed_extra_fields()), and it
- *     is a strict one: any other key in `document_input` is a
+ *     `director` and `accountant`. Those TWO per form are the server's
+ *     entire allowlist (Docgen::InputPolicy::editable_fields), and it is a
+ *     strict one: any other key in `document_input` is a
  *     `422 not_allowed_override`, not a silently ignored field. The two
  *     builders below emit exactly those allowlists — everything else is
  *     derived server-side and deep-merged underneath (RFC 7396).
+ *
+ *     The amount in words is one of the fields that is now derived: since
+ *     P3 the server spells it out from the calculation's own integer total,
+ *     so `tax_words`/`balance_words` may not be sent and are not asked for.
  *
  *     `sales_tenge` (the revenue turnover on line 001 of 300.00) used to be
  *     supplied here. It no longer is, and must not be re-added: the server
@@ -269,17 +271,13 @@ const SIGNATORY_FIELDS = {
   accountant: z.string().trim().min(1, 'Укажите ФИО бухгалтера'),
 };
 
-/** The 910.00 allowlist: two signatories plus the tax amount in words. */
-export const fno910DocumentSchema = z.object({
-  ...SIGNATORY_FIELDS,
-  tax_words: z.string().trim().min(1, 'Укажите сумму налога прописью'),
-});
+/** The 910.00 allowlist: two signatories. The tax amount in words is
+ *  derived server-side from the calculation's integer total. */
+export const fno910DocumentSchema = z.object({ ...SIGNATORY_FIELDS });
 
-/** The 300.00 allowlist: the same shape, with the balance amount in words. */
-export const fno300DocumentSchema = z.object({
-  ...SIGNATORY_FIELDS,
-  balance_words: z.string().trim().min(1, 'Укажите сумму к уплате/возврату прописью'),
-});
+/** The 300.00 allowlist: the same shape — the balance in words is derived
+ *  server-side too. */
+export const fno300DocumentSchema = z.object({ ...SIGNATORY_FIELDS });
 
 export type Fno910DocumentValues = z.infer<typeof fno910DocumentSchema>;
 export type Fno300DocumentValues = z.infer<typeof fno300DocumentSchema>;
@@ -288,7 +286,6 @@ export function buildFno910DocumentInput(values: Fno910DocumentValues): Record<s
   return {
     director: values.director.trim(),
     accountant: values.accountant.trim(),
-    tax_words: values.tax_words.trim(),
   };
 }
 
@@ -296,7 +293,6 @@ export function buildFno300DocumentInput(values: Fno300DocumentValues): Record<s
   return {
     director: values.director.trim(),
     accountant: values.accountant.trim(),
-    balance_words: values.balance_words.trim(),
   };
 }
 

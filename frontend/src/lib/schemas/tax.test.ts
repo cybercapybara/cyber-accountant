@@ -18,6 +18,7 @@ import {
   taxCalculationSchema,
   DEADLINE_WARNING_DAYS,
   type Fno300DocumentValues,
+  type Fno910DocumentValues,
 } from './tax';
 
 describe('calculationPeriod', () => {
@@ -145,36 +146,48 @@ describe('filingKindFor / buildTaxFilingCreate', () => {
 });
 
 describe('buildFno910DocumentInput', () => {
-  it('sends exactly the three fields the template cannot derive, trimmed', () => {
+  it('sends exactly the two fields the template cannot derive, trimmed', () => {
     const input = buildFno910DocumentInput({
       director: '  Смирнов С.С. ',
       accountant: ' Иванова И.И.  ',
-      tax_words: ' сто тысяч тенге 00 тиын ',
     });
-    expect(input).toEqual({
-      director: 'Смирнов С.С.',
-      accountant: 'Иванова И.И.',
-      tax_words: 'сто тысяч тенге 00 тиын',
-    });
+    expect(input).toEqual({ director: 'Смирнов С.С.', accountant: 'Иванова И.И.' });
     // Echoing a server-derived value back is a 422 under the strict schema
     // check — the allowlist must never grow one by accident.
-    expect(Object.keys(input).sort()).toEqual(['accountant', 'director', 'tax_words']);
+    expect(Object.keys(input).sort()).toEqual(['accountant', 'director']);
+  });
+
+  it('NEVER sends the tax amount in words — the server spells it out', () => {
+    // The P3 fix: the printed sum used to be whatever the client typed,
+    // which let a declaration state one figure in its PDF and another in
+    // the XML of the same filing. `tax_words` is now a 422
+    // not_allowed_override, so not one key of that kind may leak through.
+    const input = buildFno910DocumentInput({
+      director: 'Смирнов С.С.',
+      accountant: 'Иванова И.И.',
+      tax_words: 'один тенге 00 тиын',
+    } as Fno910DocumentValues);
+    expect(Object.keys(input).some((k) => k.endsWith('_words'))).toBe(false);
   });
 });
 
 describe('buildFno300DocumentInput', () => {
-  it('sends the three fields fno_300 allows, trimmed, and no derived ones', () => {
+  it('sends the two fields fno_300 allows, trimmed, and no derived ones', () => {
+    const input = buildFno300DocumentInput({
+      director: 'Смирнов С.С.',
+      accountant: ' Иванова И.И. ',
+    });
+    expect(input).toEqual({ director: 'Смирнов С.С.', accountant: 'Иванова И.И.' });
+    expect(Object.keys(input).sort()).toEqual(['accountant', 'director']);
+  });
+
+  it('NEVER sends the balance in words — the server spells it out', () => {
     const input = buildFno300DocumentInput({
       director: 'Смирнов С.С.',
       accountant: 'Иванова И.И.',
-      balance_words: ' сто тысяч тенге 00 тиын ',
-    });
-    expect(input).toEqual({
-      director: 'Смирнов С.С.',
-      accountant: 'Иванова И.И.',
-      balance_words: 'сто тысяч тенге 00 тиын',
-    });
-    expect(Object.keys(input).sort()).toEqual(['accountant', 'balance_words', 'director']);
+      balance_words: 'один тенге 00 тиын',
+    } as Fno300DocumentValues);
+    expect(Object.keys(input).some((k) => k.endsWith('_words'))).toBe(false);
   });
 
   it('NEVER sends sales_tenge — the turnover is derived from the ledger server-side', () => {
@@ -187,7 +200,6 @@ describe('buildFno300DocumentInput', () => {
     const input = buildFno300DocumentInput({
       director: 'Смирнов С.С.',
       accountant: 'Иванова И.И.',
-      balance_words: 'сто тысяч тенге 00 тиын',
       // A caller that still holds a turnover value must not smuggle it
       // through the builder.
       sales_tenge: '9999999.00',
@@ -197,39 +209,27 @@ describe('buildFno300DocumentInput', () => {
 });
 
 describe('the ФНО document schemas', () => {
-  it('require the signatories and the amount in words', () => {
-    expect(
-      fno910DocumentSchema.safeParse({ director: '', accountant: 'И.И.', tax_words: 'сто' })
-        .success,
-    ).toBe(false);
-    expect(
-      fno910DocumentSchema.safeParse({ director: 'С.С.', accountant: 'И.И.', tax_words: '  ' })
-        .success,
-    ).toBe(false);
-    expect(
-      fno300DocumentSchema.safeParse({ director: 'С.С.', accountant: '', balance_words: 'сто' })
-        .success,
-    ).toBe(false);
-    expect(
-      fno300DocumentSchema.safeParse({ director: 'С.С.', accountant: 'И.И.', balance_words: ' ' })
-        .success,
-    ).toBe(false);
+  it('require both signatories', () => {
+    expect(fno910DocumentSchema.safeParse({ director: '', accountant: 'И.И.' }).success).toBe(
+      false,
+    );
+    expect(fno910DocumentSchema.safeParse({ director: 'С.С.', accountant: ' ' }).success).toBe(
+      false,
+    );
+    expect(fno300DocumentSchema.safeParse({ director: 'С.С.', accountant: '' }).success).toBe(
+      false,
+    );
+    expect(fno300DocumentSchema.safeParse({ director: '  ', accountant: 'И.И.' }).success).toBe(
+      false,
+    );
   });
 
   it('declare EXACTLY the fields the server allowlists, and no others', () => {
-    // TaxController::fno_910_allowed_extra_fields() / fno_300_… — the
+    // Docgen::InputPolicy::editable_fields("fno_910"/"fno_300") — the
     // server rejects any other key with a 422 not_allowed_override, so
     // these two shapes must not drift.
-    expect(Object.keys(fno910DocumentSchema.shape).sort()).toEqual([
-      'accountant',
-      'director',
-      'tax_words',
-    ]);
-    expect(Object.keys(fno300DocumentSchema.shape).sort()).toEqual([
-      'accountant',
-      'balance_words',
-      'director',
-    ]);
+    expect(Object.keys(fno910DocumentSchema.shape).sort()).toEqual(['accountant', 'director']);
+    expect(Object.keys(fno300DocumentSchema.shape).sort()).toEqual(['accountant', 'director']);
   });
 });
 

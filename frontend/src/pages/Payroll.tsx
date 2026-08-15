@@ -18,7 +18,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/toaster';
 import { useApiMutation } from '@/hooks/useApiMutation';
 import { usePagedQuery } from '@/hooks/usePagedQuery';
-import { ApiClientError, api, apiErrorMessage } from '@/lib/api/client';
+import { ApiClientError, api } from '@/lib/api/client';
 import { qk } from '@/lib/api/queryKeys';
 import type {
   EmployeeListResponse,
@@ -41,14 +41,12 @@ import {
   payrollPeriodSchema,
   payrollRunActions,
   payrollRunStage,
-  payslipDocumentSchema,
   PAYSLIP_AMOUNT_FIELDS,
   sumPayslips,
   type PayrollPeriodValues,
   type PayrollRunStage,
   type PayslipAmountField,
   type PayslipAmounts,
-  type PayslipDocumentValues,
 } from '@/lib/schemas/payroll';
 
 const PER_PAGE = 20;
@@ -478,9 +476,10 @@ function RunDetail({
  */
 function PayslipsSection({ run }: { run: PayrollRun }) {
   const toast = useToast();
-  const [generatingFor, setGeneratingFor] = useState<Payslip | null>(null);
+  // Employee id of the payslip whose document is being rendered right now —
+  // only that row's button says «Формирование…».
+  const [generatingFor, setGeneratingFor] = useState<string | null>(null);
   const [generated, setGenerated] = useState<GeneratedDocument | null>(null);
-  const [generateError, setGenerateError] = useState<string | null>(null);
 
   const payslipsQ = useQuery({
     queryKey: qk.payroll.payslips(run.id),
@@ -501,6 +500,10 @@ function PayslipsSection({ run }: { run: PayrollRun }) {
     return (id: string) => map.get(id) ?? '—';
   }, [employeesQ.data]);
 
+  // The body is empty: every figure on the листок, the net amount in words
+  // included, is derived from the stored payslip (buildPayslipDocumentExtra).
+  // There is nothing for the user to fill in, so the row's button generates
+  // the document directly instead of opening a form.
   const generate = useApiMutation(
     (vars: { employeeId: string; extra: PayslipDocumentExtra }) =>
       api.postJson<GenerateDocumentResponse>(
@@ -511,17 +514,14 @@ function PayslipsSection({ run }: { run: PayrollRun }) {
       invalidate: [qk.documents.all()],
       onSuccess: (res) => {
         setGeneratingFor(null);
-        setGenerateError(null);
         setGenerated({ documentId: res.document_id, renderQueued: res.render_queued });
         if (res.render_queued) toast.success('Расчётный листок поставлен в очередь на генерацию.');
       },
-      onError: (message, err) => {
-        // A 422 here is the template's own schema check over `net_words` —
-        // it belongs next to the field, not in an anonymous toast.
-        if (err instanceof ApiClientError && err.status === 422) {
-          setGenerateError(apiErrorMessage(err, 'Не удалось сформировать расчётный листок.'));
-          return;
-        }
+      onError: (message) => {
+        // With no caller-supplied field left there is no input to correct,
+        // so even a 422 is a server-side failure — a toast, not an inline
+        // field error.
+        setGeneratingFor(null);
         toast.error(message);
       },
     },
@@ -556,13 +556,16 @@ function PayslipsSection({ run }: { run: PayrollRun }) {
           <Button
             size="sm"
             variant="outline"
+            disabled={generate.isPending}
             onClick={() => {
-              setGenerateError(null);
+              const employeeId = r.payslip?.employee_id;
+              if (!employeeId) return;
               setGenerated(null);
-              setGeneratingFor(r.payslip ?? null);
+              setGeneratingFor(employeeId);
+              generate.mutate({ employeeId, extra: buildPayslipDocumentExtra() });
             }}
           >
-            Расчётный листок
+            {generatingFor === r.payslip.employee_id ? 'Формирование…' : 'Расчётный листок'}
           </Button>
         ) : null,
     },
@@ -575,7 +578,10 @@ function PayslipsSection({ run }: { run: PayrollRun }) {
           <CardTitle>Расчётные листки</CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
-          <p className="mb-3 text-sm text-muted-foreground">Все суммы в тенге (₸).</p>
+          <p className="mb-3 text-sm text-muted-foreground">
+            Все суммы в тенге (₸). Расчётный листок формируется сразу: все данные, включая сумму к
+            выплате прописью, берутся из расчёта — вводить ничего не нужно.
+          </p>
           <DataTable
             columns={columns}
             rows={tableRows}
@@ -587,31 +593,6 @@ function PayslipsSection({ run }: { run: PayrollRun }) {
           />
         </CardContent>
       </Card>
-
-      {generatingFor && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Расчётный листок — {employeeName(generatingFor.employee_id)}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <PayslipDocumentForm
-              netTiyn={generatingFor.net}
-              submitting={generate.isPending}
-              serverError={generateError}
-              onSubmit={(values) =>
-                generate.mutate({
-                  employeeId: generatingFor.employee_id,
-                  extra: buildPayslipDocumentExtra(values),
-                })
-              }
-              onCancel={() => {
-                setGeneratingFor(null);
-                setGenerateError(null);
-              }}
-            />
-          </CardContent>
-        </Card>
-      )}
 
       {generated && (
         <GeneratedDocumentCard
@@ -630,61 +611,5 @@ function PayslipsSection({ run }: { run: PayrollRun }) {
         </GeneratedDocumentCard>
       )}
     </>
-  );
-}
-
-/**
- * The payslip template derives every figure itself and needs exactly one
- * thing this codebase cannot produce: the net amount in Russian words.
- */
-function PayslipDocumentForm({
-  netTiyn,
-  submitting,
-  serverError,
-  onSubmit,
-  onCancel,
-}: {
-  netTiyn: number;
-  submitting: boolean;
-  serverError: string | null;
-  onSubmit: (values: PayslipDocumentValues) => void;
-  onCancel: () => void;
-}) {
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<PayslipDocumentValues>({
-    resolver: zodResolver(payslipDocumentSchema),
-    defaultValues: { net_words: '' },
-  });
-
-  return (
-    <form className="space-y-4" onSubmit={handleSubmit(onSubmit)}>
-      <p className="text-sm text-muted-foreground">
-        ФИО и ИИН сотрудника, должность, все суммы и реквизиты организации подставляются
-        автоматически. Укажите только сумму к выплате прописью: <Money tiyn={netTiyn} />.
-      </p>
-      <FormField
-        id="payslip-net-words"
-        label="Сумма к выплате прописью"
-        placeholder="двести пятьдесят тысяч тенге 00 тиын"
-        error={errors.net_words?.message}
-        {...register('net_words')}
-      />
-      {serverError && (
-        <p className="text-sm text-destructive" role="alert">
-          {serverError}
-        </p>
-      )}
-      <div className="flex gap-2">
-        <Button type="submit" disabled={submitting}>
-          {submitting ? 'Формирование…' : 'Сформировать документ'}
-        </Button>
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          Отмена
-        </Button>
-      </div>
-    </form>
   );
 }

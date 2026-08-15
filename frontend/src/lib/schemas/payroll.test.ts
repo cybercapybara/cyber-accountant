@@ -160,9 +160,12 @@ describe('payrollPeriodLabel', () => {
 });
 
 describe('buildPayslipDocumentExtra', () => {
-  it('sends net_words and NOTHING else — every other field is derived server-side', () => {
-    const extra = buildPayslipDocumentExtra({ net_words: '  двести тысяч тенге 00 тиын  ' });
-    expect(extra).toEqual({ net_words: 'двести тысяч тенге 00 тиын' });
-    expect(Object.keys(extra)).toEqual(['net_words']);
+  it('sends an empty body — every payslip field is derived server-side', () => {
+    // The payslip allowlist is empty since P3: the net amount in words is
+    // spelled out from `payslip.net`, and ANY key in this body — `net_words`
+    // first among them — comes back a 422 not_allowed_override.
+    const extra = buildPayslipDocumentExtra();
+    expect(extra).toEqual({});
+    expect(Object.keys(extra)).toEqual([]);
   });
 });

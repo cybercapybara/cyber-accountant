@@ -56,7 +56,9 @@ export type GenerateHrDocumentExtra = Schemas['GenerateHrDocumentExtra'];
 export type PayrollRun = Schemas['PayrollRun'];
 export type PayrollRunCreate = Schemas['PayrollRunCreate'];
 export type Payslip = Schemas['Payslip'];
-/** Body of …/payslips/{employee_id}/generate-document — `net_words` and nothing else. */
+/** Body of …/payslips/{employee_id}/generate-document — EMPTY: since P3 every
+ * field, the net amount in words included, is derived from the stored
+ * payslip, and any key at all is a 422 `not_allowed_override`. */
 export type PayslipDocumentExtra = Schemas['PayslipDocumentExtra'];
 export type TaxRate = Schemas['TaxRate'];
 export type TaxConstant = Schemas['TaxConstant'];

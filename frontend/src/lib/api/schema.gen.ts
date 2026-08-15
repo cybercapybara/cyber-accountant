@@ -3075,7 +3075,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description template_slug is not a registered template, input fails the template's JSON Schema, or counterparty_id/link_entry_id does not belong to this organization */
+                /** @description unsupported_template (a real template, but not one this endpoint generates) / unknown_template / not_allowed_override / missing / not_integer / out_of_range / inconsistent_total (tax_invoice: amount_tiyn + vat_tiyn must equal with_vat_tiyn) / schema_validation_failed, or counterparty_id/link_entry_id does not belong to this organization */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -4203,15 +4203,14 @@ export interface paths {
         /**
          * Generate the payslip document for one employee of a run (accountant/owner only)
          * @description Builds the `payslip` template input from the payslip + employee +
-         *     organization, deep-merges an optional request body on top for the
-         *     one field not on file (`net_words`), creates a draft document
-         *     (doc_type='hr', source='generated') and enqueues a docgen.render job
-         *     — same async contract as POST /documents/generate. Every other field
-         *     is authoritative (the payslip's own amounts, the employee's iin/name,
-         *     the organization's bin/name) and CANNOT be overridden: any other body
-         *     key is a 422 `not_allowed_override` naming that field, checked before
-         *     the merge. Amounts are rendered with Ledger::format_tiyn
-         *     ("300000.00").
+         *     organization, creates a draft document (doc_type='hr',
+         *     source='generated') and enqueues a docgen.render job — same async
+         *     contract as POST /documents/generate. Every field is authoritative
+         *     (the payslip's own amounts, the employee's iin/name, the
+         *     organization's bin/name, and `net_words` derived from the payslip's
+         *     net) and CANNOT be overridden: any body key is a 422
+         *     `not_allowed_override` naming that field, checked before the merge.
+         *     Amounts are rendered with Ledger::format_tiyn ("300000.00").
          */
         post: {
             parameters: {
@@ -4259,7 +4258,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the payslip template's JSON Schema (e.g. net_words was not supplied) */
+                /** @description The body tries to override a field derived from stored data (not_allowed_override — since P3 that is ANY key, `net_words` included), or the input fails the payslip template's JSON Schema */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -5478,11 +5477,11 @@ export interface components {
         };
         GenerateDocumentCreate: {
             /**
-             * @description Also the resulting document's doc_type — the mapping is the identity function
+             * @description Also the resulting document's doc_type — the mapping is the identity function. A slug outside this enum that nevertheless exists on disk (payslip, fno_910, fno_300, hr_order, labor_contract) is now a 422 unsupported_template, not the 500 it produced before P3 — those templates belong to the tax-filing, payroll and HR endpoints that hold their authoritative data
              * @enum {string}
              */
             template_slug: "invoice" | "avr" | "waybill" | "tax_invoice" | "reconciliation";
-            /** @description Validated against the template's JSON Schema */
+            /** @description Validated against the template's JSON Schema. Money is supplied as INTEGER tiyn — total_tiyn for invoice/avr/waybill; totals.amount_tiyn + totals.vat_tiyn + totals.with_vat_tiyn for tax_invoice, and they must sum exactly. The server formats every money STRING and derives the amount in words, so total/total_words/totals.amount/totals.vat/totals.with_vat in the request are a 422 not_allowed_override. Scope: the document TOTAL only — per-line items[] figures stay free-form and are not reconciled against it */
             input?: {
                 [key: string]: unknown;
             };
@@ -5626,7 +5625,7 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid. ALLOWLISTED — hr_order accepts director/reason/details; labor_contract accepts salary_words/work_schedule/probation_months/employer.director/employer.address/employee.address. Anything else is rejected 422 not_allowed_override naming that field */
+        /** @description Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid. ALLOWLISTED — hr_order accepts director/reason/details; labor_contract accepts work_schedule/probation_months/employer.director/employer.address/employee.address. Anything else — including salary_words and salary_words_kk, which the server derives from employees.salary_tiyn — is rejected 422 not_allowed_override naming that field */
         GenerateHrDocumentExtra: {
             [key: string]: unknown;
         };
@@ -5813,7 +5812,7 @@ export interface components {
              */
             entry_id: string;
         };
-        /** @description Merged on top of the auto-derived base input before template-schema validation. ALLOWLISTED — `net_words` is the only accepted key; anything else is rejected 422 not_allowed_override naming that field */
+        /** @description Merged on top of the auto-derived base input before template-schema validation. ALLOWLISTED — the allowlist is EMPTY since P3 (`net_words` is derived from the payslip's net), so an empty/absent body is the only valid body; any key is rejected 422 not_allowed_override naming that field */
         PayslipDocumentExtra: {
             [key: string]: unknown;
         };
@@ -5989,7 +5988,7 @@ export interface components {
              * @description 910.00 needs a snr_simplified calculation, 300.00 a vat one (422 kind_mismatch otherwise); must belong to the caller's organization
              */
             calculation_id: string;
-            /** @description Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. ALLOWLISTED — only the fields the database cannot hold may appear: director, accountant, tax_words (910.00); director, accountant, balance_words (300.00). Any other key — the org identity, the period, and every amount including the ФНО 300.00 revenue turnover `sales_tenge`, which is derived from the calculation's own snapshot — is rejected 422 not_allowed_override naming that field, before the merge happens. Left open here (additionalProperties) because the accepted set depends on `kind`; the server is the authority */
+            /** @description Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. ALLOWLISTED — only the fields the database cannot hold may appear: director and accountant, for both forms. Any other key — including tax_words (910.00) and balance_words (300.00), which the server now derives from the same integers the XML filing is built from — the org identity, the period, and every amount including the ФНО 300.00 revenue turnover `sales_tenge`, which is derived from the calculation's own snapshot — is rejected 422 not_allowed_override naming that field, before the merge happens. Left open here (additionalProperties) because the accepted set depends on `kind`; the server is the authority */
             document_input?: {
                 [key: string]: unknown;
             };

@@ -222,7 +222,6 @@ describe('buildHrOrderDocumentExtra', () => {
 describe('buildLaborContractDocumentExtra', () => {
   const values = {
     director: 'Смирнов С.С.',
-    salary_words: 'триста тысяч тенге',
     work_schedule: 'пятидневная рабочая неделя',
     probation_months: '',
     employer_address: '',
@@ -232,7 +231,7 @@ describe('buildLaborContractDocumentExtra', () => {
   it('nests director under employer without re-sending the org name or БИН', () => {
     const extra = buildLaborContractDocumentExtra(values);
     expect(extra.employer).toEqual({ director: 'Смирнов С.С.' });
-    expect(Object.keys(extra).sort()).toEqual(['employer', 'salary_words', 'work_schedule']);
+    expect(Object.keys(extra).sort()).toEqual(['employer', 'work_schedule']);
   });
 
   it('never echoes back the employee’s ИИН, name, position or salary', () => {
@@ -243,6 +242,9 @@ describe('buildLaborContractDocumentExtra', () => {
       employee_address: 'г. Алматы, ул. Сатпаева 2',
     });
     expect(extra).not.toHaveProperty('salary_tenge');
+    // The salary in words is spelled out server-side since P3 — sending it
+    // is a 422 not_allowed_override.
+    expect(extra).not.toHaveProperty('salary_words');
     expect(extra).not.toHaveProperty('number');
     expect(extra.employee).toEqual({ address: 'г. Алматы, ул. Сатпаева 2' });
     expect(extra.employer).toEqual({

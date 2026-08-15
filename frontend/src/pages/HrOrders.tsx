@@ -97,12 +97,12 @@ type TabId = (typeof TABS)[number]['id'];
  *
  * «Сформировать документ» asks only for the free-text fields the LaTeX
  * template needs and that the database has no column for (руководитель,
- * оклад прописью, режим работы, адреса). Everything else — ФИО, ИИН,
- * должность, оклад, реквизиты организации — is derived server-side and
- * merged underneath, so this form never echoes a server-owned value back
- * (see lib/schemas/hr.ts). A 422 from that endpoint is a validation failure
- * of these fields, so it is rendered inline under the form rather than
- * thrown at the user as an anonymous toast.
+ * режим работы, адреса). Everything else — ФИО, ИИН, должность, оклад и
+ * оклад прописью, реквизиты организации — is derived server-side and merged
+ * underneath, so this form never echoes a server-owned value back (see
+ * lib/schemas/hr.ts). A 422 from that endpoint is a validation failure of
+ * these fields, so it is rendered inline under the form rather than thrown
+ * at the user as an anonymous toast.
  */
 export function HrOrdersPage() {
   const [tab, setTab] = useState<TabId>('orders');
@@ -946,7 +946,6 @@ function LaborContractDocumentForm({
     resolver: zodResolver(laborContractDocumentSchema),
     defaultValues: {
       director: '',
-      salary_words: '',
       work_schedule: '',
       probation_months: '',
       employer_address: '',
@@ -957,25 +956,16 @@ function LaborContractDocumentForm({
   return (
     <form className="space-y-4" onSubmit={handleSubmit(onSubmit)}>
       <p className="text-sm text-muted-foreground">
-        ФИО и ИИН сотрудника, должность, оклад и реквизиты организации подставляются автоматически —
-        заполните только то, чего нет в системе.
+        ФИО и ИИН сотрудника, должность, оклад (в том числе прописью) и реквизиты организации
+        подставляются автоматически — заполните только то, чего нет в системе.
       </p>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <FormField
-          id="contract-doc-director"
-          label="Руководитель (ФИО, должность)"
-          placeholder="Директор Смирнов С.С."
-          error={errors.director?.message}
-          {...register('director')}
-        />
-        <FormField
-          id="contract-doc-salary-words"
-          label="Оклад прописью"
-          placeholder="триста тысяч тенге 00 тиын"
-          error={errors.salary_words?.message}
-          {...register('salary_words')}
-        />
-      </div>
+      <FormField
+        id="contract-doc-director"
+        label="Руководитель (ФИО, должность)"
+        placeholder="Директор Смирнов С.С."
+        error={errors.director?.message}
+        {...register('director')}
+      />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <FormField
           id="contract-doc-schedule"

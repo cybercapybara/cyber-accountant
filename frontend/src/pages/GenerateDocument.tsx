@@ -68,6 +68,13 @@ import {
  *
  * On success (202) this navigates to /documents?focus=<id>&queued=<0|1>,
  * where DocumentsPage polls that one document until it leaves 'draft'.
+ *
+ * The four money-bearing `build*Input` functions are exported so
+ * GenerateDocument.test.ts can assert the integer-tiyn contract without
+ * rendering a form — same reason JoinFromInvite.tsx exports
+ * submitJoinFromInvite, and the same react-refresh warning is accepted for
+ * it. What they must never grow back is a formatted total or an amount in
+ * words: both are server-derived since P3.
  */
 const TEMPLATE_LABELS: Record<string, string> = {
   invoice: 'Счёт на оплату',
@@ -80,7 +87,10 @@ const TEMPLATE_LABELS: Record<string, string> = {
 // The only slugs POST /api/v1/documents/generate accepts
 // (GenerateDocumentCreate.template_slug enum, docs/openapi.yaml) — and the
 // only five typed forms below. A template registered under any other slug
-// is simply not offered on this page.
+// is simply not offered on this page: since P3 the endpoint answers a real
+// but foreign template (payslip, fno_910, fno_300, hr_order,
+// labor_contract — each owned by the endpoint that holds its data) with a
+// 422 `unsupported_template`, and anything else with `unknown_template`.
 const KNOWN_SLUGS = ['invoice', 'avr', 'waybill', 'tax_invoice', 'reconciliation'] as const;
 type KnownSlug = (typeof KNOWN_SLUGS)[number];
 
@@ -356,7 +366,18 @@ function normalizeRatePercent(rate: string): string {
 
 // ── Invoice ──────────────────────────────────────────────────────────────
 
-function buildInvoiceInput(values: InvoiceFormValues, buyer: PartyValues): Record<string, unknown> {
+/**
+ * The document total leaves as ONE integer, `total_tiyn`: the server formats
+ * `total` and spells out `total_words` from it (src/docgen/InputPolicy.hpp)
+ * and rejects either of those strings coming from the client with a 422
+ * `not_allowed_override`. That is the P2 forgery fix — a printed amount can
+ * no longer disagree with the figure it was printed from — so nothing here
+ * may format a total again, and no form may ask a user to type one.
+ */
+export function buildInvoiceInput(
+  values: InvoiceFormValues,
+  buyer: PartyValues,
+): Record<string, unknown> {
   const subtotalTiyn = sumLineAmounts(values.items);
   const rate = parseVatRatePercent(values.vat_rate);
   const hasVat = values.vat_rate.trim() !== '' && rate > 0;
@@ -367,8 +388,7 @@ function buildInvoiceInput(values: InvoiceFormValues, buyer: PartyValues): Recor
     seller: buildPartyInput(values.seller),
     buyer: buildPartyInput(buyer),
     items: buildLineItemsJson(values.items),
-    total: formatTiynRu(subtotalTiyn + vatTiyn),
-    total_words: values.total_words.trim(),
+    total_tiyn: subtotalTiyn + vatTiyn,
   };
   if (values.contract.trim()) input.contract = values.contract.trim();
   if (hasVat) {
@@ -403,7 +423,6 @@ function InvoiceForm({
       contract: '',
       items: [{ ...EMPTY_LINE_ITEM }],
       vat_rate: '',
-      total_words: '',
     },
   });
   const { fields, append, remove } = useFieldArray({ control, name: 'items' });
@@ -575,15 +594,11 @@ function InvoiceForm({
               <p>
                 Итого: <Money tiyn={subtotalTiyn + vatTiyn} />
               </p>
+              <p className="text-muted-foreground">
+                Сумма прописью печатается в документе автоматически.
+              </p>
             </div>
           </div>
-
-          <FormField
-            id="inv-total-words"
-            label="Сумма прописью"
-            error={errors.total_words?.message}
-            {...register('total_words')}
-          />
 
           <Button type="submit" disabled={submitting}>
             {submitting ? 'Создание…' : 'Создать документ'}
@@ -596,7 +611,7 @@ function InvoiceForm({
 
 // ── AVR (акт выполненных работ) ─────────────────────────────────────────────
 
-function buildAvrInput(values: AvrFormValues, buyer: PartyValues): Record<string, unknown> {
+export function buildAvrInput(values: AvrFormValues, buyer: PartyValues): Record<string, unknown> {
   return { ...buildInvoiceInput(values, buyer), act_period: values.act_period.trim() };
 }
 
@@ -625,7 +640,6 @@ function AvrForm({
       contract: '',
       items: [{ ...EMPTY_LINE_ITEM }],
       vat_rate: '',
-      total_words: '',
       act_period: '',
     },
   });
@@ -805,15 +819,11 @@ function AvrForm({
               <p>
                 Итого: <Money tiyn={subtotalTiyn + vatTiyn} />
               </p>
+              <p className="text-muted-foreground">
+                Сумма прописью печатается в документе автоматически.
+              </p>
             </div>
           </div>
-
-          <FormField
-            id="avr-total-words"
-            label="Сумма прописью"
-            error={errors.total_words?.message}
-            {...register('total_words')}
-          />
 
           <Button type="submit" disabled={submitting}>
             {submitting ? 'Создание…' : 'Создать документ'}
@@ -826,7 +836,10 @@ function AvrForm({
 
 // ── Waybill (накладная) ─────────────────────────────────────────────────────
 
-function buildWaybillInput(values: WaybillFormValues, buyer: PartyValues): Record<string, unknown> {
+export function buildWaybillInput(
+  values: WaybillFormValues,
+  buyer: PartyValues,
+): Record<string, unknown> {
   const totalTiyn = sumLineAmounts(values.items);
   return {
     number: values.number.trim(),
@@ -835,8 +848,7 @@ function buildWaybillInput(values: WaybillFormValues, buyer: PartyValues): Recor
     buyer: buildPartyInput(buyer),
     basis: values.basis.trim(),
     items: buildLineItemsJson(values.items),
-    total: formatTiynRu(totalTiyn),
-    total_words: values.total_words.trim(),
+    total_tiyn: totalTiyn,
     released_by: values.released_by.trim(),
     received_by: values.received_by.trim(),
   };
@@ -866,7 +878,6 @@ function WaybillForm({
       buyerCounterpartyId: '',
       basis: '',
       items: [{ ...EMPTY_LINE_ITEM }],
-      total_words: '',
       released_by: '',
       received_by: '',
     },
@@ -1017,16 +1028,14 @@ function WaybillForm({
             )}
           </div>
 
-          <p className="text-sm">
-            Итого: <Money tiyn={totalTiyn} />
-          </p>
-
-          <FormField
-            id="wb-total-words"
-            label="Сумма прописью"
-            error={errors.total_words?.message}
-            {...register('total_words')}
-          />
+          <div className="space-y-1 text-sm">
+            <p>
+              Итого: <Money tiyn={totalTiyn} />
+            </p>
+            <p className="text-muted-foreground">
+              Сумма прописью печатается в документе автоматически.
+            </p>
+          </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <FormField
@@ -1061,14 +1070,13 @@ function vatLineAmounts(item: VatLineItemValues) {
   return { amountTiyn, vatAmountTiyn, totalWithVatTiyn: amountTiyn + vatAmountTiyn };
 }
 
-function buildTaxInvoiceInput(
+export function buildTaxInvoiceInput(
   values: TaxInvoiceFormValues,
   buyer: PartyValues,
 ): Record<string, unknown> {
   const lines = values.items.map((it) => ({ item: it, amounts: vatLineAmounts(it) }));
-  const amount = lines.reduce((s, l) => s + l.amounts.amountTiyn, 0);
-  const vat = lines.reduce((s, l) => s + l.amounts.vatAmountTiyn, 0);
-  const withVat = lines.reduce((s, l) => s + l.amounts.totalWithVatTiyn, 0);
+  const amountTiyn = lines.reduce((s, l) => s + l.amounts.amountTiyn, 0);
+  const vatTiyn = lines.reduce((s, l) => s + l.amounts.vatAmountTiyn, 0);
   return {
     number: values.number.trim(),
     date: values.date.trim(),
@@ -1084,12 +1092,16 @@ function buildTaxInvoiceInput(
       vat_amount: formatTiynRu(amounts.vatAmountTiyn),
       total_with_vat: formatTiynRu(amounts.totalWithVatTiyn),
     })),
+    // Three integers, no strings: the server formats all three and spells
+    // out `total_words` itself. `with_vat_tiyn` is the SUM of the other two
+    // and never a rounding of its own — the server checks the three for
+    // exact equality and answers a one-tiyn disagreement with a 422
+    // `inconsistent_total` (src/docgen/InputPolicy.hpp).
     totals: {
-      amount: formatTiynRu(amount),
-      vat: formatTiynRu(vat),
-      with_vat: formatTiynRu(withVat),
+      amount_tiyn: amountTiyn,
+      vat_tiyn: vatTiyn,
+      with_vat_tiyn: amountTiyn + vatTiyn,
     },
-    total_words: values.total_words.trim(),
   };
 }
 
@@ -1117,19 +1129,19 @@ function TaxInvoiceForm({
       buyerCounterpartyId: '',
       buyerVatCertificate: '',
       items: [{ ...EMPTY_VAT_LINE_ITEM }],
-      total_words: '',
     },
   });
   const { fields, append, remove } = useFieldArray({ control, name: 'items' });
   const watchedItems = useWatch({ control, name: 'items' });
 
+  // Same three integers buildTaxInvoiceInput sends, computed the same way
+  // (the shown «Всего с НДС» is the sum, not a separate rounding), so the
+  // preview can never differ from the printed document.
   const totals = useMemo(() => {
     const lines = (watchedItems ?? []).map(vatLineAmounts);
-    return {
-      amount: lines.reduce((s, l) => s + l.amountTiyn, 0),
-      vat: lines.reduce((s, l) => s + l.vatAmountTiyn, 0),
-      withVat: lines.reduce((s, l) => s + l.totalWithVatTiyn, 0),
-    };
+    const amount = lines.reduce((s, l) => s + l.amountTiyn, 0);
+    const vat = lines.reduce((s, l) => s + l.vatAmountTiyn, 0);
+    return { amount, vat, withVat: amount + vat };
   }, [watchedItems]);
 
   const submit = (values: TaxInvoiceFormValues) => {
@@ -1299,14 +1311,10 @@ function TaxInvoiceForm({
             <p>
               Всего с НДС: <Money tiyn={totals.withVat} />
             </p>
+            <p className="text-muted-foreground">
+              Сумма прописью печатается в документе автоматически.
+            </p>
           </div>
-
-          <FormField
-            id="ti-total-words"
-            label="Сумма прописью"
-            error={errors.total_words?.message}
-            {...register('total_words')}
-          />
 
           <Button type="submit" disabled={submitting}>
             {submitting ? 'Создание…' : 'Создать документ'}

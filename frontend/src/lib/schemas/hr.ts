@@ -27,7 +27,7 @@ import { toTiyn } from '@/lib/money';
  *
  *  2. The …/generate-document endpoints take ONLY the free-text fields the
  *     LaTeX template schemas need and that this codebase has no column for
- *     (director, salary_words, work_schedule, addresses); everything else —
+ *     (director, work_schedule, addresses); everything else —
  *     the employee's ИИН, name, position, salary, the org's name/БИН — is
  *     derived server-side and deep-merged underneath (RFC 7396). The two
  *     `build*DocumentExtra` builders below emit exactly that allowlist and
@@ -348,16 +348,19 @@ export function buildHrOrderDocumentExtra(values: HrOrderDocumentValues): Record
 }
 
 /**
- * templates/latex/labor_contract/v1/schema.json requires `salary_words`,
- * `work_schedule` and `employer.director`; `probation_months` and the two
- * addresses are optional. `employer`/`employee` are sent as partial objects
- * — the merge patch fills in name/БИН and ФИО/ИИН/должность underneath, and
- * re-sending them from the client would be both redundant and (under the
- * strict allowlist) a 422.
+ * templates/latex/labor_contract/v1/schema.json requires `work_schedule`
+ * and `employer.director`; `probation_months` and the two addresses are
+ * optional. `employer`/`employee` are sent as partial objects — the merge
+ * patch fills in name/БИН and ФИО/ИИН/должность underneath, and re-sending
+ * them from the client would be both redundant and (under the strict
+ * allowlist) a 422.
+ *
+ * The salary in words is NOT here and may not come back: since P3 the
+ * server spells it out from the employee's stored salary, and a
+ * client-supplied `salary_words` is a 422 not_allowed_override.
  */
 export const laborContractDocumentSchema = z.object({
   director: z.string().trim().min(1, 'Укажите ФИО руководителя'),
-  salary_words: z.string().trim().min(1, 'Укажите оклад прописью'),
   work_schedule: z.string().trim().min(1, 'Укажите режим рабочего времени'),
   probation_months: z.string().trim().default(''),
   employer_address: z.string().trim().default(''),
@@ -375,7 +378,6 @@ export function buildLaborContractDocumentExtra(
 
   const extra: Record<string, unknown> = {
     employer,
-    salary_words: values.salary_words.trim(),
     work_schedule: values.work_schedule.trim(),
   };
   const probation = values.probation_months.trim();

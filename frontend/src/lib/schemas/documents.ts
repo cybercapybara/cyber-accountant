@@ -16,6 +16,14 @@ import { toTiyn } from '@/lib/money';
  * lib/schemas/journal.ts: an integer or up-to-two-decimal-place string,
  * parsed via toTiyn (never Number() + multiplication) so a running total
  * never drifts through float rounding.
+ *
+ * No form here asks for an amount in words, and none may grow one back:
+ * since P3 the server derives every printed money string of the document
+ * total (`total`/`total_words`, `totals.amount`/`vat`/`with_vat`) from the
+ * integer tiyn the builders in pages/GenerateDocument.tsx send, and answers
+ * a client-supplied one with a 422 `not_allowed_override`
+ * (src/docgen/InputPolicy.hpp). The total is therefore not a form field at
+ * all — it is computed from the line items on submit.
  */
 const decimalAmountSchema = z
   .string()
@@ -97,7 +105,6 @@ export const invoiceFormSchema = z.object({
   contract: z.string().trim().default(''),
   items: z.array(lineItemSchema).min(1, 'Добавьте хотя бы одну строку'),
   vat_rate: z.string().trim().default(''),
-  total_words: z.string().trim().min(1, 'Обязательное поле'),
 });
 export type InvoiceFormValues = z.infer<typeof invoiceFormSchema>;
 
@@ -113,7 +120,6 @@ export const waybillFormSchema = z.object({
   buyerCounterpartyId: z.string().trim().min(1, 'Выберите контрагента'),
   basis: z.string().trim().min(1, 'Обязательное поле'),
   items: z.array(lineItemSchema).min(1, 'Добавьте хотя бы одну строку'),
-  total_words: z.string().trim().min(1, 'Обязательное поле'),
   released_by: z.string().trim().min(1, 'Обязательное поле'),
   received_by: z.string().trim().min(1, 'Обязательное поле'),
 });
@@ -126,7 +132,6 @@ export const taxInvoiceFormSchema = z.object({
   buyerCounterpartyId: z.string().trim().min(1, 'Выберите контрагента'),
   buyerVatCertificate: z.string().trim().default(''),
   items: z.array(vatLineItemSchema).min(1, 'Добавьте хотя бы одну строку'),
-  total_words: z.string().trim().min(1, 'Обязательное поле'),
 });
 export type TaxInvoiceFormValues = z.infer<typeof taxInvoiceFormSchema>;
 
