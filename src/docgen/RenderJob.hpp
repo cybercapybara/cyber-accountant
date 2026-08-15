@@ -9,9 +9,15 @@
  * rejection, missing template, XeLaTeX exit != 0, storage/DB error) this
  * throws — the job framework's retry/DLQ machinery takes over
  * (src/jobs/Dispatcher.hpp) and the document is left exactly as it was
- * (typically `draft`): `set_file`/`set_status` only run after the PDF has
- * already been compiled and durably stored, so there is no partial-success
- * state to unwind.
+ * (typically `draft`): `set_version_file`/`set_current_version`/`set_status`
+ * only run after the PDF has already been compiled and durably stored, so
+ * there is no partial-success state to unwind.
+ *
+ * P3 (migrations/018_document_versions.sql): the PDF's metadata belongs to a
+ * VERSION, not to the document row. The job fills in the document's LATEST
+ * version and only then moves `current_version_id` onto it — that pointer
+ * move IS the publication of the render, and until it happens readers keep
+ * seeing the previous version's file rather than a half-written one.
  *
  * The XeLaTeX invocation (`docgen.latex_cmd` / `DOCGEN_LATEX_CMD`, default
  * `xelatex`) runs twice under `/usr/bin/timeout 60` — once for content, once
@@ -218,9 +224,20 @@ inline json process_job(const json& payload) {
     Storage::get().put(key, pdf_bytes, "application/pdf");
 
     Ledger::DocumentRepository documents;
-    if (!documents.set_file(
-            org_id, document_id, key, checksum, "application/pdf", static_cast<long long>(pdf_bytes.size())))
-        throw std::runtime_error("docgen: set_file found no document " + document_id + " in org " + org_id);
+    // The version this render belongs to is the newest one — create() made
+    // version 1 in the same transaction as the document, so there is always
+    // at least one. Task 10 hardens this against a second render finishing
+    // out of order; today the only writer of a document's versions is the
+    // single job that renders it.
+    auto version = documents.latest_version(org_id, document_id);
+    if (!version)
+        throw std::runtime_error("docgen: no version found for document " + document_id + " in org " + org_id);
+    if (!documents.set_version_file(
+            org_id, version->id, key, checksum, "application/pdf", static_cast<long long>(pdf_bytes.size())))
+        throw std::runtime_error("docgen: set_version_file found no version " + version->id + " in org " + org_id);
+    // Publish: only now does the document report this file.
+    if (!documents.set_current_version(org_id, document_id, version->id))
+        throw std::runtime_error("docgen: set_current_version found no document " + document_id + " in org " + org_id);
     if (!documents.set_status(org_id, document_id, "final"))
         throw std::runtime_error("docgen: set_status found no document " + document_id + " in org " + org_id);
 

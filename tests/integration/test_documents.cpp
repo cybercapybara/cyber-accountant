@@ -7,6 +7,11 @@
  *        FKs — see migrations/010_documents.sql), the draft->final->sent
  *        happy path of set_status(), and that every CHECK-listed doc_type
  *        round-trips through create()/list_in_org().
+ *
+ *        P3 (migration 018) adds the document_versions half: create() makes
+ *        version 1 without publishing it, add_version() appends without
+ *        touching older rows, a document's file metadata is read from its
+ *        CURRENT version, and none of it is reachable from another tenant.
  */
 
 #include <optional>
@@ -119,18 +124,28 @@ TEST_F(DocumentsRepoTest, CreateGeneratedDraft) {
     EXPECT_FALSE(doc.size_bytes);
     ASSERT_TRUE(doc.template_slug);
     EXPECT_EQ(*doc.template_slug, "invoice");
-    ASSERT_TRUE(doc.template_version);
-    EXPECT_EQ(*doc.template_version, "v1");
-    ASSERT_TRUE(doc.input_snapshot);
-    EXPECT_EQ(*doc.input_snapshot, snapshot);
+    // template_version/input_snapshot moved onto the document's version
+    // (migration 018) and the document reports the CURRENT version's copies —
+    // there is none until a render publishes one, so the document's own
+    // fields are empty and the values are asserted on version 1 below.
+    EXPECT_FALSE(doc.current_version_id);
+    EXPECT_FALSE(doc.template_version);
+    EXPECT_FALSE(doc.input_snapshot);
 
     // Persisted — a fresh primary read confirms the same shape, including
     // the JSONB round-trip.
     auto found = repo.find_in_org(doc.id, org_id, /*from_primary=*/true);
     ASSERT_TRUE(found);
     EXPECT_EQ(found->status, "draft");
-    ASSERT_TRUE(found->input_snapshot);
-    EXPECT_EQ(*found->input_snapshot, snapshot);
+    EXPECT_EQ(found->latest_version_no, 1);
+
+    auto version = repo.latest_version(org_id, doc.id);
+    ASSERT_TRUE(version);
+    EXPECT_EQ(version->version_no, 1);
+    ASSERT_TRUE(version->template_version);
+    EXPECT_EQ(*version->template_version, "v1");
+    ASSERT_TRUE(version->input_snapshot);
+    EXPECT_EQ(*version->input_snapshot, snapshot);
 }
 
 TEST_F(DocumentsRepoTest, LinkEntrySameOrg) {
@@ -228,6 +243,131 @@ TEST_F(DocumentsRepoTest, ListByType) {
         seen_types.insert(doc.doc_type);
     }
     EXPECT_EQ(seen_types, std::set<std::string>(kAllDocTypes.begin(), kAllDocTypes.end()));
+}
+
+// ── document_versions (migration 018) ───────────────────────────────────────
+
+TEST_F(DocumentsRepoTest, CreateMakesVersionOneAndLeavesTheCurrentPointerNull) {
+    Ledger::DocumentRepository repo;
+    auto org_id = make_org("111270000008");
+
+    auto doc = repo.create(org_id,
+                           "invoice",
+                           "generated",
+                           "draft",
+                           /*counterparty_id=*/std::nullopt,
+                           "invoice",
+                           "v1",
+                           std::optional<nlohmann::json>{nlohmann::json{{"number", "1"}}});
+
+    EXPECT_EQ(doc.latest_version_no, 1);
+    // No file exists yet, so nothing is published — the API must keep saying
+    // "no file" rather than pointing at an empty version.
+    EXPECT_FALSE(doc.current_version_id.has_value());
+    EXPECT_FALSE(doc.s3_key.has_value());
+
+    auto versions = repo.list_versions(org_id, doc.id);
+    ASSERT_EQ(versions.size(), 1u);
+    EXPECT_EQ(versions[0].version_no, 1);
+    EXPECT_EQ(versions[0].org_id, org_id);
+    EXPECT_EQ(versions[0].document_id, doc.id);
+    ASSERT_TRUE(versions[0].template_version);
+    EXPECT_EQ(*versions[0].template_version, "v1");
+    ASSERT_TRUE(versions[0].input_snapshot);
+    EXPECT_EQ((*versions[0].input_snapshot)["number"].get<std::string>(), "1");
+}
+
+TEST_F(DocumentsRepoTest, AddVersionIncrementsAndKeepsOlderRows) {
+    Ledger::DocumentRepository repo;
+    auto org_id = make_org("111270000009");
+
+    auto doc = repo.create(org_id, "invoice", "generated", "draft");
+    auto v2 = repo.add_version(org_id,
+                               doc.id,
+                               std::optional<nlohmann::json>{nlohmann::json{{"number", "2"}}},
+                               std::string("v1"),
+                               std::nullopt);
+
+    EXPECT_EQ(v2.version_no, 2);
+    // The point of the whole table: version 1 is still there, untouched.
+    EXPECT_EQ(repo.list_versions(org_id, doc.id).size(), 2u);
+    auto v1 = repo.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(v1);
+    EXPECT_EQ(v1->version_no, 1);
+
+    auto newest = repo.latest_version(org_id, doc.id);
+    ASSERT_TRUE(newest);
+    EXPECT_EQ(newest->id, v2.id);
+
+    // A new version does NOT publish itself.
+    auto after = repo.find_in_org(doc.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(after);
+    EXPECT_EQ(after->latest_version_no, 2);
+    EXPECT_FALSE(after->current_version_id.has_value());
+}
+
+TEST_F(DocumentsRepoTest, DocumentReadsFileMetadataFromTheCurrentVersion) {
+    Ledger::DocumentRepository repo;
+    auto org_id = make_org("111270000010");
+
+    auto doc = repo.create(org_id, "invoice", "generated", "draft");
+    auto v1 = repo.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+    ASSERT_TRUE(
+        repo.set_version_file(org_id, v1->id, "org/x/generated/a.pdf", std::string(64, 'a'), "application/pdf", 1234));
+
+    // Until the pointer is moved, the document has "no file" — a stored but
+    // unpublished render must not become downloadable.
+    auto before = repo.find_in_org(doc.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(before);
+    EXPECT_FALSE(before->s3_key.has_value());
+    EXPECT_FALSE(before->checksum_sha256.has_value());
+
+    ASSERT_TRUE(repo.set_current_version(org_id, doc.id, v1->id));
+    auto after = repo.find_in_org(doc.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(after);
+    ASSERT_TRUE(after->s3_key);
+    EXPECT_EQ(*after->s3_key, "org/x/generated/a.pdf");
+    EXPECT_EQ(after->size_bytes.value_or(0), 1234);
+    EXPECT_EQ(after->mime.value_or(""), "application/pdf");
+    ASSERT_TRUE(after->current_version_id);
+    EXPECT_EQ(*after->current_version_id, v1->id);
+}
+
+TEST_F(DocumentsRepoTest, VersionsAreOrgIsolated) {
+    Ledger::DocumentRepository repo;
+    auto org_id = make_org("111270000011");
+    auto other_org_id = make_org("111270000012");
+
+    auto doc = repo.create(org_id, "invoice", "generated", "draft");
+
+    // Same "wrong org is indistinguishable from missing" contract the reads
+    // on documents itself follow — no leak of existence, no exception.
+    EXPECT_TRUE(repo.list_versions(other_org_id, doc.id).empty());
+    EXPECT_FALSE(repo.find_version(other_org_id, doc.id, 1).has_value());
+    EXPECT_FALSE(repo.latest_version(other_org_id, doc.id).has_value());
+    EXPECT_FALSE(repo.set_current_version(other_org_id, doc.id, "00000000-0000-0000-0000-000000000000"));
+
+    // …and the document's own version survived every one of those calls.
+    EXPECT_EQ(repo.list_versions(org_id, doc.id).size(), 1u);
+}
+
+TEST_F(DocumentsRepoTest, MigrationBackfilledExistingDocuments) {
+    // Каждый документ обязан иметь хотя бы одну версию — иначе бэкфилл
+    // 018 пропустил строки, и старые PDF стали недостижимы. Проверяется
+    // по ВСЕЙ таблице, а не по одной организации: строка без версии
+    // недостижима из любого тенанта.
+    Ledger::DocumentRepository repo;
+    auto org_id = make_org("111270000013");
+    repo.create(org_id, "invoice", "generated", "draft");
+
+    auto orphans = Database::get().execute_read([](auto& txn) {
+        auto r = txn.exec(
+            "SELECT COUNT(*) FROM documents d "
+            " WHERE NOT EXISTS (SELECT 1 FROM document_versions v WHERE v.document_id = d.id)");
+        return r.at(0).at(0).template as<long>();
+    });
+    EXPECT_EQ(orphans, 0);
 }
 
 }  // namespace

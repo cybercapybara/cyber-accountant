@@ -4,6 +4,15 @@
  *        the `documents` table (migrations/010_documents.sql — design spec
  *        §6.4).
  *
+ * P3 (migrations/018_document_versions.sql): `s3_key`, `checksum_sha256`,
+ * `mime`, `size_bytes`, `template_version` и `input_snapshot` больше НЕ
+ * колонки `documents` — они живут в `document_versions` и читаются здесь из
+ * ТЕКУЩЕЙ версии, на которую указывает `current_version_id`
+ * (DocumentRepository::kTable джойнит её). Имена полей структуры и ключи
+ * JSON намеренно не менялись: контракт `GET /documents/{id}` и SPA прежние,
+ * другой стал только источник значений. Все шесть — std::nullopt, пока
+ * указателя нет (документ создан, рендер не закончился).
+ *
  * Domain-only — no SQL here; persistence lives in
  * src/ledger/DocumentRepository.hpp. Follows the same from_row/to_json
  * idioms as src/ledger/JournalEntry.hpp: from_row is a templated static
@@ -56,6 +65,12 @@ struct Document {
     std::optional<std::string> template_slug;
     std::optional<std::string> template_version;
     std::optional<nlohmann::json> input_snapshot;
+    /// Указатель на текущую (опубликованную) версию; NULL, пока рендер
+    /// первой версии не завершился успехом.
+    std::optional<std::string> current_version_id;
+    /// Номер САМОЙ НОВОЙ версии (не обязательно текущей): позволяет UI
+    /// показать «версия 3 из 4, рендер идёт», не делая второй запрос.
+    int latest_version_no = 0;
     std::string created_at;
     std::string updated_at;
 
@@ -88,6 +103,9 @@ struct Document {
                 d.input_snapshot = nlohmann::json::object();
             }
         }
+        if (!row["current_version_id"].is_null())
+            d.current_version_id = row["current_version_id"].template as<std::string>();
+        d.latest_version_no = row["latest_version_no"].template as<int>();
         d.created_at = row["created_at"].template as<std::string>();
         d.updated_at = row["updated_at"].template as<std::string>();
         return d;
@@ -109,6 +127,8 @@ inline void to_json(nlohmann::json& j, const Document& d) {
         {"template_slug", d.template_slug ? nlohmann::json(*d.template_slug) : nlohmann::json(nullptr)},
         {"template_version", d.template_version ? nlohmann::json(*d.template_version) : nlohmann::json(nullptr)},
         {"input_snapshot", d.input_snapshot ? *d.input_snapshot : nlohmann::json(nullptr)},
+        {"current_version_id", d.current_version_id ? nlohmann::json(*d.current_version_id) : nlohmann::json(nullptr)},
+        {"latest_version_no", d.latest_version_no},
         {"created_at", d.created_at},
         {"updated_at", d.updated_at},
     };

@@ -48,16 +48,24 @@
  * initialized at all, answers 503 rather than throwing.
  *
  * s3_key-before-confirm (this task's designated repository extension):
- * DocumentRepository::set_file() requires checksum_sha256/mime/size_bytes
- * together, none of which are known until the client's PUT actually
- * finishes, but the presigned PUT URL and the document row both need to
- * agree on the SAME s3_key from the moment the upload starts (a client that
+ * DocumentRepository::set_version_file() requires checksum_sha256/mime/
+ * size_bytes together, none of which are known until the client's PUT
+ * actually finishes, but the presigned PUT URL and the document row both need
+ * to agree on the SAME s3_key from the moment the upload starts (a client that
  * reloads the page, or retries confirm-upload, reads the key back off the
  * row rather than re-deriving it). The fix:
  * DocumentRepository::set_pending_upload() (new, see that file for the full
  * rationale) persists s3_key + mime right away; confirm-upload's later
- * set_file() call fills in checksum_sha256/size_bytes once
+ * set_version_file() call fills in checksum_sha256/size_bytes once
  * Storage::exists() has verified the object is actually there.
+ *
+ * P3 (migrations/018_document_versions.sql): those file fields live on a
+ * document VERSION now, and a document reports the file of its CURRENT
+ * version. An upload has no asynchronous render job to move that pointer
+ * later, so set_pending_upload() publishes version 1 in the same transaction
+ * it writes the key into — without that, `found->s3_key` in confirmUpload
+ * would always be empty and every confirm-upload would answer 409
+ * no_pending_upload.
  *
  * Security note (uploads' `filename` field): Files::org_key() already
  * neutralizes an unsafe filename inside the S3 KEY itself (uuid-prefixed,
@@ -481,7 +489,17 @@ public:
                 return;
             }
             const std::string mime = found->mime.value_or("");
-            repo.set_file(ctx.org_id, id, *found->s3_key, checksum, mime, size_bytes);
+            // set_file(document_id, ...) is gone: file metadata lives on a
+            // VERSION now (migrations/018_document_versions.sql). An uploaded
+            // document has exactly one version and startUpload's
+            // set_pending_upload() already made it current — which is also
+            // why `found->s3_key` above is non-empty at all, since that field
+            // is read through the current-version pointer.
+            if (!found->current_version_id) {
+                callback(ErrorResponse::conflict("no_pending_upload", "No upload was started for this document"));
+                return;
+            }
+            repo.set_version_file(ctx.org_id, *found->current_version_id, *found->s3_key, checksum, mime, size_bytes);
             repo.set_status(ctx.org_id, id, "final");
             auto fresh = repo.find_in_org(id, ctx.org_id, /*from_primary=*/true);
             callback(Response::ok({{"data", json(fresh ? *fresh : *found)}}));

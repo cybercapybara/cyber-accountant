@@ -237,9 +237,18 @@ TEST_F(DocgenApiTest, GenerateValidInputAcceptedAndEnqueues) {
     EXPECT_EQ(doc->source, "generated");
     EXPECT_EQ(doc->doc_type, "invoice");
     EXPECT_EQ(doc->template_slug.value_or(""), "invoice");
-    EXPECT_EQ(doc->template_version.value_or(""), "v1");
-    ASSERT_TRUE(doc->input_snapshot.has_value());
-    EXPECT_EQ(*doc->input_snapshot, expected_invoice_snapshot());
+    // template_version/input_snapshot live on the document's VERSION now
+    // (migrations/018_document_versions.sql), and the render that would
+    // publish version 1 was only enqueued — so the document's own copies of
+    // those fields (read through the current-version pointer) are still
+    // empty and the snapshot is checked on the version itself.
+    EXPECT_FALSE(doc->current_version_id.has_value());
+    EXPECT_EQ(doc->latest_version_no, 1);
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    EXPECT_EQ(version->template_version.value_or(""), "v1");
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    EXPECT_EQ(*version->input_snapshot, expected_invoice_snapshot());
 
     // A docgen.render job was enqueued — NOT executed.
     ASSERT_EQ(queue_depth(), 1);
@@ -399,9 +408,12 @@ TEST_F(DocgenApiTest, GenerateDerivesTotalAndWordsFromTiyn) {
     Ledger::DocumentRepository documents;
     auto doc = documents.find_in_org(document_id, org.id, /*from_primary=*/true);
     ASSERT_TRUE(doc.has_value());
-    ASSERT_TRUE(doc->input_snapshot.has_value());
-    EXPECT_EQ((*doc->input_snapshot)["total"].get<std::string>(), "12 345,67");
-    EXPECT_EQ((*doc->input_snapshot)["total_words"].get<std::string>(),
+    // The snapshot rides on version 1 — nothing has published it yet.
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    EXPECT_EQ((*version->input_snapshot)["total"].get<std::string>(), "12 345,67");
+    EXPECT_EQ((*version->input_snapshot)["total_words"].get<std::string>(),
               "Двенадцать тысяч триста сорок пять тенге 67 тиын");
 }
 
@@ -461,12 +473,16 @@ TEST_F(DocgenApiTest, GenerateFormatsAllThreeTaxInvoiceTotalsFromIntegers) {
     auto doc = documents.find_in_org(
         json::parse(std::string(resp->body()))["document_id"].get<std::string>(), org.id, /*from_primary=*/true);
     ASSERT_TRUE(doc.has_value());
-    ASSERT_TRUE(doc->input_snapshot.has_value());
-    const json& totals = (*doc->input_snapshot)["totals"];
+    // The snapshot rides on version 1 — nothing has published it yet.
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    const json& totals = (*version->input_snapshot)["totals"];
     EXPECT_EQ(totals["amount"].get<std::string>(), "90 000,00");
     EXPECT_EQ(totals["vat"].get<std::string>(), "14 400,00");
     EXPECT_EQ(totals["with_vat"].get<std::string>(), "104 400,00");
-    EXPECT_EQ((*doc->input_snapshot)["total_words"].get<std::string>(), "Сто четыре тысячи четыреста тенге 00 тиын");
+    EXPECT_EQ((*version->input_snapshot)["total_words"].get<std::string>(),
+              "Сто четыре тысячи четыреста тенге 00 тиын");
 }
 
 // Release defect v0.3.1: these five templates exist on disk and resolved

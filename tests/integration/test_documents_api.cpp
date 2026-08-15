@@ -311,7 +311,9 @@ TEST_F(LedgerDocumentsApiTest, GetDocumentCrossOrgNotFound) {
 TEST_F(LedgerDocumentsApiTest, DownloadUrlWithoutFileConflict) {
     auto org = seed_org("444240000008", "No File Org LLP");
     Ledger::DocumentRepository repo;
-    auto created = repo.create(org.id, "invoice", "generated", "draft");  // never had set_file() called
+    // Version 1 exists (create() always makes one) but has no file in it,
+    // and nothing published it — exactly the "render never finished" state.
+    auto created = repo.create(org.id, "invoice", "generated", "draft");
 
     auto viewer = member("viewer7@example.com", org.id, "viewer");
     HttpResponsePtr resp;
@@ -346,12 +348,17 @@ TEST_F(LedgerDocumentsApiTest, DownloadUrlViewerAllowed) {
     auto org = seed_org("444240000022", "Viewer DL Allowed Org LLP");
     Ledger::DocumentRepository repo;
     auto created = repo.create(org.id, "invoice", "generated", "draft");
-    ASSERT_TRUE(repo.set_file(org.id,
-                              created.id,
-                              Files::org_key(org.id, "generated", "report.pdf"),
-                              std::string(64, 'b'),
-                              "application/pdf",
-                              42));
+    // Stand in for the render worker: fill version 1's file AND publish it —
+    // a document only reports the file of its CURRENT version.
+    auto seeded_version = repo.latest_version(org.id, created.id);
+    ASSERT_TRUE(seeded_version);
+    ASSERT_TRUE(repo.set_version_file(org.id,
+                                      seeded_version->id,
+                                      Files::org_key(org.id, "generated", "report.pdf"),
+                                      std::string(64, 'b'),
+                                      "application/pdf",
+                                      42));
+    ASSERT_TRUE(repo.set_current_version(org.id, created.id, seeded_version->id));
 
     auto viewer = member("viewerdl@example.com", org.id, "viewer");
     HttpResponsePtr resp;
@@ -467,7 +474,11 @@ TEST_F(LedgerDocumentsApiTest, SetPendingUploadGuardedToDraftStatus) {
     Ledger::DocumentRepository repo;
     auto created = repo.create(org.id, "invoice", "generated", "draft");
     const std::string confirmed_key = Files::org_key(org.id, "generated", "confirmed.pdf");
-    ASSERT_TRUE(repo.set_file(org.id, created.id, confirmed_key, std::string(64, 'a'), "application/pdf", 123));
+    auto seeded_version = repo.latest_version(org.id, created.id);
+    ASSERT_TRUE(seeded_version);
+    ASSERT_TRUE(
+        repo.set_version_file(org.id, seeded_version->id, confirmed_key, std::string(64, 'a'), "application/pdf", 123));
+    ASSERT_TRUE(repo.set_current_version(org.id, created.id, seeded_version->id));
     ASSERT_TRUE(repo.set_status(org.id, created.id, "final"));
 
     EXPECT_FALSE(repo.set_pending_upload(
@@ -663,6 +674,14 @@ TEST_F(LedgerDocumentsApiTest, UploadConfirmAndDownloadRoundTrip) {
     EXPECT_EQ(start_body["data"]["status"].get<std::string>(), "draft");
     EXPECT_EQ(start_body["data"]["source"].get<std::string>(), "uploaded");
     ASSERT_FALSE(start_body["data"]["s3_key"].is_null());
+    // The key is visible THROUGH the document, i.e. the current-version
+    // pointer is already set — an upload has no async render job to move it
+    // later, so if startUpload did not publish version 1 the confirm below
+    // would answer 409 no_pending_upload instead of 200
+    // (migrations/018_document_versions.sql, DocumentRepository::
+    // set_pending_upload).
+    ASSERT_FALSE(start_body["data"]["current_version_id"].is_null());
+    EXPECT_EQ(start_body["data"]["latest_version_no"].get<int>(), 1);
 
     // 2. The "client" uploads bytes directly to S3 via the presigned PUT —
     // bare curl, fully independent of this binary's own libcurl usage.
@@ -691,6 +710,10 @@ TEST_F(LedgerDocumentsApiTest, UploadConfirmAndDownloadRoundTrip) {
     EXPECT_EQ(confirm_body["data"]["checksum_sha256"].get<std::string>(), checksum);
     EXPECT_EQ(confirm_body["data"]["size_bytes"].get<long long>(), static_cast<long long>(payload.size()));
     EXPECT_EQ(confirm_body["data"]["mime"].get<std::string>(), "application/pdf");
+    // Confirming an upload fills the EXISTING version in, it does not append
+    // a second one — the bytes never changed.
+    Ledger::DocumentRepository repo;
+    EXPECT_EQ(repo.list_versions(org.id, doc_id).size(), 1u);
 
     // 4. Mint a download URL and fetch it back — round trip complete.
     HttpResponsePtr dl_resp;

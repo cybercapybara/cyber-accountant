@@ -5369,17 +5369,31 @@ export interface components {
             status: "inbox" | "recognized" | "linked" | "archived" | "draft" | "final" | "sent";
             /** Format: uuid */
             counterparty_id: string | null;
+            /** @description Read from the CURRENT version (document_versions), not from the document row; null while no version is published */
             s3_key: string | null;
+            /** @description Read from the CURRENT version (document_versions), not from the document row */
             checksum_sha256: string | null;
+            /** @description Read from the CURRENT version (document_versions), not from the document row */
             mime: string | null;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Read from the CURRENT version (document_versions), not from the document row
+             */
             size_bytes: number | null;
             template_slug: string | null;
+            /** @description Read from the CURRENT version (document_versions), not from the document row */
             template_version: string | null;
-            /** @description Docgen input snapshot for source=generated rows; for source=uploaded rows via POST /documents/uploads it instead holds {"original_filename": "..."} — see Document.hpp */
+            /** @description Docgen input snapshot for source=generated rows; for source=uploaded rows via POST /documents/uploads it instead holds {"original_filename": "..."} — see Document.hpp. Read from the CURRENT version (document_versions), not from the document row */
             input_snapshot: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Format: uuid
+             * @description Current (published) version; null while the first render has not finished
+             */
+            current_version_id: string | null;
+            /** @description Highest existing version number; may exceed the current version while a render is in flight */
+            latest_version_no: number;
             created_at: string;
             updated_at: string;
         };

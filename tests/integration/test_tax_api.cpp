@@ -754,8 +754,13 @@ TEST_F(TaxFilingApiTest, FilingRejectsAuthoritativeOverrideAndKeepsTheTrueFigure
     Ledger::DocumentRepository documents;
     auto document = documents.find_in_org(*filing->document_id, org.id, /*from_primary=*/true);
     ASSERT_TRUE(document);
-    ASSERT_TRUE(document->input_snapshot);
-    const json& stored = *document->input_snapshot;
+    // input_snapshot lives on the document's VERSION now
+    // (migrations/018_document_versions.sql); the render that would publish
+    // version 1 was only enqueued, so it is read off the version itself.
+    auto version = documents.latest_version(org.id, document->id);
+    ASSERT_TRUE(version);
+    ASSERT_TRUE(version->input_snapshot);
+    const json& stored = *version->input_snapshot;
     EXPECT_EQ(stored["balance_tenge"].get<std::string>(), true_balance);
     EXPECT_EQ(stored["org"]["bin"].get<std::string>(), "777180000011");
 
@@ -859,8 +864,11 @@ TEST_F(TaxFilingApiTest, FilingRejectsASuppliedSalesTurnoverAndDerivesItFromTheL
     Ledger::DocumentRepository documents;
     auto document = documents.find_in_org(*filing->document_id, org.id, /*from_primary=*/true);
     ASSERT_TRUE(document);
-    ASSERT_TRUE(document->input_snapshot);
-    EXPECT_EQ((*document->input_snapshot)["sales_tenge"].get<std::string>(), derived_turnover);
+    // Snapshot on version 1 — nothing published it (migration 018).
+    auto version = documents.latest_version(org.id, document->id);
+    ASSERT_TRUE(version);
+    ASSERT_TRUE(version->input_snapshot);
+    EXPECT_EQ((*version->input_snapshot)["sales_tenge"].get<std::string>(), derived_turnover);
 }
 
 // A VAT calculation whose snapshot predates the income_tiyn key cannot
@@ -933,8 +941,11 @@ TEST_F(TaxFilingApiTest, FilingRejectsSuppliedAmountsInWordsAndDerivesThem) {
     Ledger::DocumentRepository documents;
     auto document = documents.find_in_org(*filing->document_id, org.id, /*from_primary=*/true);
     ASSERT_TRUE(document);
-    ASSERT_TRUE(document->input_snapshot);
-    EXPECT_EQ((*document->input_snapshot)["tax_words"].get<std::string>(), Money::to_words_ru(calc.total_tiyn));
+    // Snapshot on version 1 — nothing published it (migration 018).
+    auto version = documents.latest_version(org.id, document->id);
+    ASSERT_TRUE(version);
+    ASSERT_TRUE(version->input_snapshot);
+    EXPECT_EQ((*version->input_snapshot)["tax_words"].get<std::string>(), Money::to_words_ru(calc.total_tiyn));
 }
 
 // The ФНО 300.00 counterpart, including the case that would have crashed a
@@ -982,8 +993,11 @@ TEST_F(TaxFilingApiTest, FilingSpellsOutAVatRefundBalanceAsItsMagnitude) {
     Ledger::DocumentRepository documents;
     auto document = documents.find_in_org(*filing->document_id, org.id, /*from_primary=*/true);
     ASSERT_TRUE(document);
-    ASSERT_TRUE(document->input_snapshot);
-    const json& stored = *document->input_snapshot;
+    // Snapshot on version 1 — nothing published it (migration 018).
+    auto version = documents.latest_version(org.id, document->id);
+    ASSERT_TRUE(version);
+    ASSERT_TRUE(version->input_snapshot);
+    const json& stored = *version->input_snapshot;
     EXPECT_EQ(stored["balance_kind"].get<std::string>(), "to_refund");
     // The magnitude, spelled out — no minus sign, and no uncaught throw.
     EXPECT_EQ(stored["balance_words"].get<std::string>(), Money::to_words_ru(-calc.total_tiyn));
@@ -1184,12 +1198,17 @@ TEST_F(TaxFilingApiTest, DownloadUrlArtifactSwitch) {
     // Stand in for the render worker: give the document a stored file.
     Ledger::DocumentRepository documents;
     const std::string pdf_key = "org/" + org.id + "/generated/rendered-fno-910.pdf";
-    ASSERT_TRUE(documents.set_file(org.id,
-                                   *filing->document_id,
-                                   pdf_key,
-                                   std::string(64, 'a'),
-                                   "application/pdf",
-                                   /*size_bytes=*/1024));
+    auto pdf_version = documents.latest_version(org.id, *filing->document_id);
+    ASSERT_TRUE(pdf_version);
+    ASSERT_TRUE(documents.set_version_file(org.id,
+                                           pdf_version->id,
+                                           pdf_key,
+                                           std::string(64, 'a'),
+                                           "application/pdf",
+                                           /*size_bytes=*/1024));
+    // …including publishing it: the document reports the file of its CURRENT
+    // version (migrations/018_document_versions.sql).
+    ASSERT_TRUE(documents.set_current_version(org.id, *filing->document_id, pdf_version->id));
 
     auto xml_req = authed(accountant, Post);
     xml_req->setParameter("artifact", "xml");

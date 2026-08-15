@@ -423,7 +423,7 @@ components:
     # Mirrors Ledger::to_json(Document) in src/ledger/Document.hpp.
     Document:
       type: object
-      required: [id, org_id, doc_type, source, status, counterparty_id, s3_key, checksum_sha256, mime, size_bytes, template_slug, template_version, input_snapshot, created_at, updated_at]
+      required: [id, org_id, doc_type, source, status, counterparty_id, s3_key, checksum_sha256, mime, size_bytes, template_slug, template_version, input_snapshot, current_version_id, latest_version_no, created_at, updated_at]
       properties:
         id:               { type: string, format: uuid }
         org_id:           { type: string, format: uuid }
@@ -433,13 +433,15 @@ components:
         source:           { type: string, enum: [generated, uploaded, email] }
         status:           { type: string, enum: [inbox, recognized, linked, archived, draft, final, sent] }
         counterparty_id:  { type: ['string', 'null'], format: uuid }
-        s3_key:           { type: ['string', 'null'] }
-        checksum_sha256:  { type: ['string', 'null'], pattern: '^[0-9a-f]{64}$' }
-        mime:             { type: ['string', 'null'] }
-        size_bytes:       { type: ['integer', 'null'], format: int64 }
+        s3_key:           { type: ['string', 'null'], description: 'Read from the CURRENT version (document_versions), not from the document row; null while no version is published' }
+        checksum_sha256:  { type: ['string', 'null'], pattern: '^[0-9a-f]{64}$', description: 'Read from the CURRENT version (document_versions), not from the document row' }
+        mime:             { type: ['string', 'null'], description: 'Read from the CURRENT version (document_versions), not from the document row' }
+        size_bytes:       { type: ['integer', 'null'], format: int64, description: 'Read from the CURRENT version (document_versions), not from the document row' }
         template_slug:    { type: ['string', 'null'] }
-        template_version: { type: ['string', 'null'] }
-        input_snapshot:   { type: ['object', 'null'], additionalProperties: true, description: 'Docgen input snapshot for source=generated rows; for source=uploaded rows via POST /documents/uploads it instead holds {"original_filename": "..."} — see Document.hpp' }
+        template_version: { type: ['string', 'null'], description: 'Read from the CURRENT version (document_versions), not from the document row' }
+        input_snapshot:   { type: ['object', 'null'], additionalProperties: true, description: 'Docgen input snapshot for source=generated rows; for source=uploaded rows via POST /documents/uploads it instead holds {"original_filename": "..."} — see Document.hpp. Read from the CURRENT version (document_versions), not from the document row' }
+        current_version_id: { type: ['string', 'null'], format: uuid, description: 'Current (published) version; null while the first render has not finished' }
+        latest_version_no:  { type: integer, description: 'Highest existing version number; may exceed the current version while a render is in flight' }
         created_at:       { type: string }
         updated_at:       { type: string }
 

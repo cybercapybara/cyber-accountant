@@ -9,8 +9,9 @@
  * that either copies a hardcoded minimal PDF into `main.pdf` (success case)
  * or exits 1 without producing one (failure case). The full pipeline —
  * schema validation, inja rendering + LaTeX escaping, the two-pass "latex"
- * invocation, sha256, Storage::put, DocumentRepository::set_file/
- * set_status — runs for real; only the compiler itself is faked. Real
+ * invocation, sha256, Storage::put, DocumentRepository::set_version_file/
+ * set_current_version/set_status — runs for real; only the compiler itself
+ * is faked. Real
  * XeLaTeX only ever runs via scripts/render-templates.sh (the
  * `template-render` CI job, on the worker image — see docker/Dockerfile).
  */
@@ -197,6 +198,14 @@ TEST_F(RenderJobTest, RenderJobHappyPath) {
     EXPECT_EQ(*stored->checksum_sha256, result["checksum_sha256"].get<std::string>());
     ASSERT_TRUE(stored->mime.has_value());
     EXPECT_EQ(*stored->mime, "application/pdf");
+    // The render wrote version 1 and published it — every file field above
+    // is read through that pointer (migrations/018_document_versions.sql).
+    ASSERT_TRUE(stored->current_version_id.has_value());
+    EXPECT_EQ(stored->latest_version_no, 1);
+    auto versions = documents.list_versions(org_id, doc.id);
+    ASSERT_EQ(versions.size(), 1u);
+    EXPECT_EQ(*stored->current_version_id, versions[0].id);
+    EXPECT_EQ(versions[0].s3_key.value_or(""), key);
 
     ASSERT_TRUE(Storage::get().exists(key));
     auto stored_bytes = Storage::get().get(key);

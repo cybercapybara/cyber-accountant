@@ -619,9 +619,14 @@ TEST_F(PayrollApiTest, GeneratePayslipDerivesNetWordsFromTheStoredNet) {
     Ledger::DocumentRepository documents;
     auto doc = documents.find_in_org(body_of(resp)["document_id"].get<std::string>(), org.id, /*from_primary=*/true);
     ASSERT_TRUE(doc.has_value());
-    ASSERT_TRUE(doc->input_snapshot.has_value());
-    EXPECT_EQ((*doc->input_snapshot)["net_words"].get<std::string>(), expected_words);
-    EXPECT_EQ((*doc->input_snapshot)["net"].get<std::string>(), Ledger::format_tiyn(payslips[0].net));
+    // input_snapshot lives on the document's VERSION now
+    // (migrations/018_document_versions.sql); the render that would publish
+    // version 1 was only enqueued, so it is read off the version itself.
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    EXPECT_EQ((*version->input_snapshot)["net_words"].get<std::string>(), expected_words);
+    EXPECT_EQ((*version->input_snapshot)["net"].get<std::string>(), Ledger::format_tiyn(payslips[0].net));
 }
 
 TEST_F(PayrollApiTest, GeneratePayslipRejectsClientSuppliedNetWords) {
@@ -722,8 +727,11 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsAuthoritativeOverrideAndKeepsTheTru
     Ledger::DocumentRepository documents;
     auto doc = documents.find_in_org(document_id, org.id, /*from_primary=*/true);
     ASSERT_TRUE(doc.has_value());
-    ASSERT_TRUE(doc->input_snapshot.has_value());
-    const json& stored = *doc->input_snapshot;
+    // Snapshot on version 1 — nothing published it (migration 018).
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    const json& stored = *version->input_snapshot;
     EXPECT_EQ(stored["net"].get<std::string>(), true_net);
     EXPECT_EQ(stored["gross_tenge"].get<std::string>(), true_gross);
     EXPECT_EQ(stored["employee"]["iin"].get<std::string>(), "156312191013");

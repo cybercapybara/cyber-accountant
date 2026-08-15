@@ -339,10 +339,15 @@ TEST_F(HrApiTest, GenerateOrderDocumentAcceptedAndEnqueues) {
     EXPECT_EQ(doc->doc_type, "hr");
     EXPECT_EQ(doc->source, "generated");
     EXPECT_EQ(doc->template_slug.value_or(""), "hr_order");
-    ASSERT_TRUE(doc->input_snapshot.has_value());
-    EXPECT_EQ((*doc->input_snapshot)["director"].get<std::string>(), "Ахметов Ерлан Серикович");
-    EXPECT_EQ((*doc->input_snapshot)["issued_on"].get<std::string>(), "10.01.2026");
-    EXPECT_EQ((*doc->input_snapshot)["employee"]["iin"].get<std::string>(), "061071077377");
+    // input_snapshot lives on the document's VERSION now
+    // (migrations/018_document_versions.sql); the render that would publish
+    // version 1 was only enqueued, so it is read off the version itself.
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    EXPECT_EQ((*version->input_snapshot)["director"].get<std::string>(), "Ахметов Ерлан Серикович");
+    EXPECT_EQ((*version->input_snapshot)["issued_on"].get<std::string>(), "10.01.2026");
+    EXPECT_EQ((*version->input_snapshot)["employee"]["iin"].get<std::string>(), "061071077377");
 
     auto refreshed_order = repo.find_in_org(order.id, org.id, /*from_primary=*/true);
     ASSERT_TRUE(refreshed_order.has_value());
@@ -535,17 +540,21 @@ TEST_F(HrApiTest, GenerateContractDocumentAcceptedAndEnqueues) {
     ASSERT_TRUE(doc.has_value());
     EXPECT_EQ(doc->doc_type, "hr");
     EXPECT_EQ(doc->template_slug.value_or(""), "labor_contract");
-    ASSERT_TRUE(doc->input_snapshot.has_value());
-    EXPECT_EQ((*doc->input_snapshot)["salary_tenge"].get<std::string>(), "300000.00");
-    EXPECT_EQ((*doc->input_snapshot)["employer"]["director"].get<std::string>(), "Ахметов Ерлан Серикович");
-    EXPECT_EQ((*doc->input_snapshot)["employer"]["name"].get<std::string>(), org.name);
+    // input_snapshot lives on the document's VERSION now — see the hr_order
+    // test above.
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    EXPECT_EQ((*version->input_snapshot)["salary_tenge"].get<std::string>(), "300000.00");
+    EXPECT_EQ((*version->input_snapshot)["employer"]["director"].get<std::string>(), "Ахметов Ерлан Серикович");
+    EXPECT_EQ((*version->input_snapshot)["employer"]["name"].get<std::string>(), org.name);
     // Both spellings come from the ONE integer salary_tenge was formatted
     // from, so the digits and the two texts cannot disagree; the Kazakh one
     // is a distinct string, not a copy of the Russian.
-    EXPECT_EQ((*doc->input_snapshot)["salary_words"].get<std::string>(), "Триста тысяч тенге 00 тиын");
-    EXPECT_FALSE((*doc->input_snapshot)["salary_words_kk"].get<std::string>().empty());
-    EXPECT_NE((*doc->input_snapshot)["salary_words_kk"].get<std::string>(),
-              (*doc->input_snapshot)["salary_words"].get<std::string>());
+    EXPECT_EQ((*version->input_snapshot)["salary_words"].get<std::string>(), "Триста тысяч тенге 00 тиын");
+    EXPECT_FALSE((*version->input_snapshot)["salary_words_kk"].get<std::string>().empty());
+    EXPECT_NE((*version->input_snapshot)["salary_words_kk"].get<std::string>(),
+              (*version->input_snapshot)["salary_words"].get<std::string>());
 
     ASSERT_EQ(queue_depth(), 1);
 }
@@ -661,8 +670,11 @@ TEST_F(HrApiTest, GenerateContractDocumentOverrideSalaryRejectedAndValueUnchange
     Ledger::DocumentRepository documents;
     auto doc = documents.find_in_org(document_id, org.id, /*from_primary=*/true);
     ASSERT_TRUE(doc.has_value());
-    ASSERT_TRUE(doc->input_snapshot.has_value());
-    EXPECT_EQ((*doc->input_snapshot)["salary_tenge"].get<std::string>(), "300000.00");
+    // Snapshot on version 1 — nothing published it (migration 018).
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    EXPECT_EQ((*version->input_snapshot)["salary_tenge"].get<std::string>(), "300000.00");
 }
 
 // P3: the amount spelled out in words used to be caller-supplied, so a
@@ -745,8 +757,11 @@ TEST_F(HrApiTest, GenerateOrderDocumentOverrideIinRejectedAndValueUnchanged) {
     Ledger::DocumentRepository documents;
     auto doc = documents.find_in_org(document_id, org.id, /*from_primary=*/true);
     ASSERT_TRUE(doc.has_value());
-    ASSERT_TRUE(doc->input_snapshot.has_value());
-    EXPECT_EQ((*doc->input_snapshot)["employee"]["iin"].get<std::string>(), "988916681773");
+    // Snapshot on version 1 — nothing published it (migration 018).
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    EXPECT_EQ((*version->input_snapshot)["employee"]["iin"].get<std::string>(), "988916681773");
 }
 
 // Same pagination guarantee as ListOrdersIsPaginated, for GET /vacations —

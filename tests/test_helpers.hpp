@@ -341,7 +341,10 @@ inline void truncate_users() {
  *          so it must be gone (or CASCADE-truncated) before/alongside
  *          journal_entries; documents has no blocking trigger of its own but
  *          is truncated alongside document_entries for symmetry, one
- *          statement, no dangling rows to reconcile.
+ *          statement, no dangling rows to reconcile. document_versions
+ *          (migration 018) is listed EXPLICITLY even though CASCADE would
+ *          pull it in anyway — the list doubles as the documentation of what
+ *          a wipe clears.
  *        - `DELETE FROM organizations` runs SECOND, and stays a plain
  *          `DELETE` (never `TRUNCATE ... CASCADE`): org_members, accounts,
  *          counterparties have ordinary per-row `ON DELETE CASCADE` FKs and
@@ -357,7 +360,9 @@ inline void truncate_users() {
  */
 inline void wipe_org_data() {
     Database::get().execute_write([](auto& txn) {
-        txn.exec("TRUNCATE TABLE journal_lines, journal_entries, document_entries, documents CASCADE");
+        txn.exec(
+            "TRUNCATE TABLE journal_lines, journal_entries, document_entries, document_versions, documents "
+            "CASCADE");
         txn.exec("DELETE FROM organizations");
         return 0;
     });
