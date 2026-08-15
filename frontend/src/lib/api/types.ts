@@ -37,6 +37,7 @@ export type JournalLineWrite = Schemas['JournalLineWrite'];
 export type JournalEntry = Schemas['JournalEntry'];
 export type JournalEntryCreate = Schemas['JournalEntryCreate'];
 export type Document = Schemas['Document'];
+export type DocumentVersion = Schemas['DocumentVersion'];
 export type DocTemplate = Schemas['DocTemplate'];
 export type DocumentUploadCreate = Schemas['DocumentUploadCreate'];
 export type DocumentConfirmUpload = Schemas['DocumentConfirmUpload'];
@@ -56,7 +57,9 @@ export type GenerateHrDocumentExtra = Schemas['GenerateHrDocumentExtra'];
 export type PayrollRun = Schemas['PayrollRun'];
 export type PayrollRunCreate = Schemas['PayrollRunCreate'];
 export type Payslip = Schemas['Payslip'];
-/** Body of …/payslips/{employee_id}/generate-document — `net_words` and nothing else. */
+/** Body of …/payslips/{employee_id}/generate-document — EMPTY: since P3 every
+ * field, the net amount in words included, is derived from the stored
+ * payslip, and any key at all is a 422 `not_allowed_override`. */
 export type PayslipDocumentExtra = Schemas['PayslipDocumentExtra'];
 export type TaxRate = Schemas['TaxRate'];
 export type TaxConstant = Schemas['TaxConstant'];
@@ -67,8 +70,13 @@ export type TaxDeadline = Schemas['TaxDeadline'];
 export type TaxFiling = Schemas['TaxFiling'];
 export type TaxFilingCreate = Schemas['TaxFilingCreate'];
 
-/** GET /api/auth/me, POST /api/auth/login, POST /api/auth/refresh — { user }. */
+/** GET /api/auth/me — { user, org_role }; POST /api/auth/login, POST
+ * /api/auth/refresh — { user } only (they omit org_role, hence its `?`). */
 export type MeResponse = Schemas['MeResponse'];
+/** The caller's role in the current organization (org_members.role) — the
+ * tenant role from /me, NOT the global User.role. `null` = the token carries
+ * no org claim (or the membership was revoked). */
+export type OrgRole = NonNullable<MeResponse['org_role']>;
 /** GET/PATCH /api/admin/users/{id}, POST /api/admin/users — { data: User }. */
 export type UserDetailResponse = Schemas['UserDetailResponse'];
 /** GET /api/admin/roles — { data: Role[] }. */
@@ -111,8 +119,21 @@ export type DocumentListResponse = Schemas['DocumentListResponse'];
 export type DocumentDetailResponse = Schemas['DocumentDetailResponse'];
 /** POST /api/v1/documents/uploads — { data: Document, upload_url }. */
 export type DocumentUploadResponse = Schemas['DocumentUploadResponse'];
-/** POST /api/v1/documents/{id}/download-url — { url }. */
+/** POST /api/v1/documents/{id}/download-url, POST …/versions/{no}/download-url — { url }. */
 export type DownloadUrlResponse = Schemas['DownloadUrlResponse'];
+/** GET /api/v1/documents/{id}/versions — { data: DocumentVersion[] }, oldest first. */
+export type DocumentVersionListResponse = Schemas['DocumentVersionListResponse'];
+/** POST /api/v1/documents/{id}/versions — an EDIT. NOT a snapshot: `input`
+ * goes through the same allowlist as creation, so money stays integer tiyn
+ * and a client-supplied `total`/`total_words` is a 422 `not_allowed_override`.
+ * An absent body re-renders the stored input unchanged. */
+export type CreateDocumentVersionRequest = Schemas['CreateDocumentVersionRequest'];
+/** POST /api/v1/documents/{id}/versions — 202 { document_id, version_id,
+ * version_no, render_queued }. The document keeps reporting the PREVIOUS
+ * version's file until this one's render finishes. */
+export type CreateDocumentVersionResponse = Schemas['CreateDocumentVersionResponse'];
+/** POST /api/v1/documents/{id}/void — { reason }, mandatory and non-blank. */
+export type VoidDocumentRequest = Schemas['VoidDocumentRequest'];
 /** GET /api/v1/doc-templates — { data: DocTemplate[] }. */
 export type DocTemplateListResponse = Schemas['DocTemplateListResponse'];
 /** POST /api/v1/documents/generate — 202 { document_id, render_queued }. */

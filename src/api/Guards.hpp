@@ -9,8 +9,11 @@
 
 #pragma once
 
+#include <string>
+
 #include "security/Auth.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "utils/ErrorResponse.hpp"
 
 /// Reject the request with 403 unless the principal is a full admin.
@@ -87,6 +90,27 @@
             return;                                   \
         }                                             \
         (ctx) = *_org_ctx;                            \
+    } while (0)
+
+/// Reject with 403 unless @p ctx's TENANT role is granted (RES, ACT) by the
+/// §5.3 matrix (Tenancy::OrgPerm::allows). Deny-by-default: an unknown role,
+/// an unknown resource and an unknown action all produce a 403. Replaces the
+/// pre-P3 denylist `if (ctx.role == "viewer")`, which any newly added role
+/// walked straight through into full CRUD.
+///
+/// Takes no `req`: unlike the auth-side guards, everything this decision
+/// needs already sits in the OrgContext API_REQUIRE_ORG bound — same shape
+/// as API_REQUIRE_JOBS_READY, which also takes only the callback. Use it
+/// AFTER API_REQUIRE_ORG in every org-scoped handler, on reads as well as
+/// on writes: "—" in the matrix means invisible, not read-only.
+#define API_REQUIRE_ORG_PERM(callback, ctx, RES, ACT)                                                              \
+    do {                                                                                                           \
+        if (!Tenancy::OrgPerm::allows((ctx).role, (RES), (ACT))) {                                                 \
+            callback(ErrorResponse::forbidden(                                                                     \
+                "org_role_denied",                                                                                 \
+                "Your role in this organization is not allowed to " + std::string(ACT) + " " + std::string(RES))); \
+            return;                                                                                                \
+        }                                                                                                          \
     } while (0)
 
 /// Reject with 503 when the job queue is disabled. The includer must also

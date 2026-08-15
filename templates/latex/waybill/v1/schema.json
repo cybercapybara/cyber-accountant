@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["number", "date", "seller", "buyer", "basis", "items", "total", "total_words", "released_by", "received_by"],
+  "required": ["number", "date", "seller", "buyer", "basis", "items", "total_tiyn", "total", "total_words", "released_by", "received_by"],
   "properties": {
     "number": {"type": "string", "minLength": 1},
     "date": {"type": "string", "pattern": "^\\d{2}\\.\\d{2}\\.\\d{4}$"},
@@ -15,6 +15,7 @@
         "name": {"type": "string"}, "qty": {"type": "string"}, "unit": {"type": "string"},
         "price": {"type": "string"}, "amount": {"type": "string"}
       }}},
+    "total_tiyn": {"type": "integer", "minimum": 0},
     "total": {"type": "string"},
     "total_words": {"type": "string"},
     "released_by": {"type": "string"},

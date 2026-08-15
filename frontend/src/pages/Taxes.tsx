@@ -807,7 +807,11 @@ function FilingsSection({
 /**
  * The free-text fields the ФНО print templates require and no column holds
  * — see lib/schemas/tax.ts. Which set is asked for follows from the
- * calculation's kind, exactly as the form code does.
+ * calculation's kind, exactly as the form code does. Since P3 both sets are
+ * the same two signatories (the amounts, spelled-out ones included, are all
+ * derived from the calculation), but the two forms stay separate: the
+ * server allowlists 910.00 and 300.00 independently, and a field added to
+ * one of them must not silently appear in the other.
  */
 function FilingForm({
   calculation,
@@ -827,11 +831,11 @@ function FilingForm({
 
   const form910 = useForm<Fno910DocumentValues>({
     resolver: zodResolver(fno910DocumentSchema),
-    defaultValues: { director: '', accountant: '', tax_words: '' },
+    defaultValues: { director: '', accountant: '' },
   });
   const form300 = useForm<Fno300DocumentValues>({
     resolver: zodResolver(fno300DocumentSchema),
-    defaultValues: { director: '', accountant: '', balance_words: '' },
+    defaultValues: { director: '', accountant: '' },
   });
 
   const intro = (
@@ -840,8 +844,8 @@ function FilingForm({
         <span className="font-medium">{FILING_KIND_LABELS[filingKind]}</span> за {period}.
       </p>
       <p className="text-sm text-muted-foreground">
-        БИН и наименование организации, период и все суммы подставляются из расчёта — заполните
-        только то, чего нет в системе.
+        БИН и наименование организации, период и все суммы — включая сумму прописью — подставляются
+        из расчёта. Укажите только подписантов.
       </p>
     </>
   );
@@ -879,13 +883,6 @@ function FilingForm({
             {...form910.register('accountant')}
           />
         </div>
-        <FormField
-          id="fno910-tax-words"
-          label="Сумма налога прописью"
-          placeholder="сто двадцать тысяч тенге 00 тиын"
-          error={form910.formState.errors.tax_words?.message}
-          {...form910.register('tax_words')}
-        />
         {errorBlock}
         {buttons}
       </form>
@@ -912,13 +909,6 @@ function FilingForm({
           {...form300.register('accountant')}
         />
       </div>
-      <FormField
-        id="fno300-balance-words"
-        label="Сумма к уплате (возврату) прописью"
-        placeholder="сто двадцать тысяч тенге 00 тиын"
-        error={form300.formState.errors.balance_words?.message}
-        {...form300.register('balance_words')}
-      />
       {errorBlock}
       {buttons}
     </form>

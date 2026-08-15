@@ -8,7 +8,7 @@
  * API_REQUIRE_ORG(req, callback, ctx)):
  *   GET  /api/v1/hr-orders                         list, paginated (optional
  *                                                     ?employee_id)
- *   POST /api/v1/hr-orders                          create (accountant/owner)
+ *   POST /api/v1/hr-orders                          create (owner/accountant/hr)
  *   POST /api/v1/hr-orders/{id}/generate-document    -> hr_order docgen, 202
  *   GET  /api/v1/labor-contracts                    list (?employee_id REQUIRED
  *                                                     — Hr::HrRepository::
@@ -19,15 +19,21 @@
  *                                                     by one employee's own
  *                                                     contract history, so it
  *                                                     stays unpaginated.
- *   POST /api/v1/labor-contracts                    create (accountant/owner)
+ *   POST /api/v1/labor-contracts                    create (owner/accountant/hr)
  *   POST /api/v1/labor-contracts/{id}/generate-document -> labor_contract docgen, 202
  *   GET  /api/v1/vacations                          list, paginated (optional
  *                                                     ?employee_id)
- *   POST /api/v1/vacations                          create (accountant/owner)
+ *   POST /api/v1/vacations                          create (owner/accountant/hr)
  *
- * RBAC: every mutating route (create and generate-document) additionally
- * rejects `ctx.role == "viewer"` with 403. `org_id` comes EXCLUSIVELY from
- * `ctx.org_id`.
+ * RBAC: EVERY route goes through API_REQUIRE_ORG_PERM against the §5.3
+ * permission matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown
+ * role, resource or action is a 403, so a role added later cannot fail open
+ * the way the old `ctx.role == "viewer"` denylist let it. The mutating routes
+ * (create and generate-document) need `hr_docs`/write, the three list routes
+ * `hr_docs`/read. `hr_docs` is one of the two resources the `hr` role holds
+ * in full, so unlike the ledger controllers these routes read
+ * "owner/accountant/hr", not "accountant/owner only". `org_id` comes
+ * EXCLUSIVELY from `ctx.org_id`.
  *
  * Cross-org employee_id: HrRepository's create_order/create_contract/
  * create_vacation rely on migrations/012_hr.sql's composite FK
@@ -46,11 +52,13 @@
  * templates' schemas (templates/latex/hr_order/v1/schema.json,
  * .../labor_contract/v1/schema.json) require several free-text fields this
  * codebase has no column for at all — `director`, `reason`, `details`,
- * `employer.address`, `employee.address`, `salary_words`, `work_schedule`,
+ * `employer.address`, `employee.address`, `work_schedule`,
  * `probation_months`. There is no organization "director" field
- * (Tenancy::Organization) and no money-to-words converter anywhere in this
- * codebase, so those cannot be auto-derived. Each generate-document handler
- * therefore: (1) builds a BASE input object from what IS on file (the
+ * (Tenancy::Organization), so those cannot be auto-derived. The two amounts
+ * in words (`salary_words`, `salary_words_kk`) USED to be in that list; P3
+ * derives both from employees.salary_tiyn instead, so the contract's digits
+ * and its two spelled-out amounts cannot disagree. Each generate-document
+ * handler therefore: (1) builds a BASE input object from what IS on file (the
  * order/contract row, the referenced employee, the organization's
  * name/bin), (2) validates an OPTIONAL request body against an explicit
  * ALLOWLIST of exactly those free-text field names
@@ -98,6 +106,7 @@
 #include <algorithm>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -120,7 +129,9 @@
 #include "jobs/Jobs.hpp"
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalService.hpp"
+#include "money/AmountInWords.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "tenancy/Organization.hpp"
 #include "tenancy/OrganizationRepository.hpp"
 #include "utils/ErrorResponse.hpp"
@@ -161,6 +172,7 @@ public:
     // -------------------------------------------------------------------
     void listOrders(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kRead);
         std::optional<std::string> employee_id_filter;
         if (!filter_employee_id(req, employee_id_filter, callback))
             return;
@@ -178,15 +190,12 @@ public:
     }
 
     // -------------------------------------------------------------------
-    // POST /api/v1/hr-orders — accountant/owner only. Body: {employee_id,
+    // POST /api/v1/hr-orders — owner/accountant/hr. Body: {employee_id,
     // kind, number, issued_on, effective_from, effective_to?, payload?}.
     // -------------------------------------------------------------------
     void createOrder(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot create HR orders"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -273,10 +282,7 @@ public:
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot generate documents"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed HR order id"));
             return;
@@ -335,6 +341,7 @@ public:
     // -------------------------------------------------------------------
     void listContracts(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kRead);
         const std::string employee_id = req->getParameter("employee_id");
         if (employee_id.empty()) {
             callback(ErrorResponse::bad_request("missing_employee_id", "employee_id query parameter is required"));
@@ -356,15 +363,12 @@ public:
     }
 
     // -------------------------------------------------------------------
-    // POST /api/v1/labor-contracts — accountant/owner only. Body:
+    // POST /api/v1/labor-contracts — owner/accountant/hr. Body:
     // {employee_id, number, signed_on, starts_on, ends_on?, terms_json?}.
     // -------------------------------------------------------------------
     void createContract(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot create labor contracts"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -440,10 +444,7 @@ public:
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot generate documents"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed labor contract id"));
             return;
@@ -482,6 +483,34 @@ public:
         if (found_contract->ends_on)
             input["ends_on"] = iso_to_ddmmyyyy(*found_contract->ends_on);
 
+        // Обе прописи выводятся из ОДНОГО целого employees.salary_tiyn —
+        // того же, из которого выше собран salary_tenge, — так что цифра и
+        // два текста в договоре не могут разойтись. `salary_words_kk` —
+        // обязательное поле схемы labor_contract (P3), без него
+        // TemplateRegistry::validate отдал бы 422 на каждом договоре.
+        //
+        // try/catch не украшение: Ledger::parse_tiyn принимает до 16 цифр
+        // целой части, то есть оклад МОЖЕТ быть сохранён выше
+        // Money::kMaxTiyn, и тогда to_words_ru бросает std::out_of_range.
+        // Без перехвата это был бы 500 на корректном по форме запросе.
+        //
+        // Ошибка БЕЗ поля (ErrorResponse::unprocessable, не
+        // Validation::response_422): проблема в СОХРАНЁННОМ окладе
+        // сотрудника, а в этом запросе нет ни одного поля, которое каллер
+        // прислал бы и мог бы исправить, — назвать здесь `salary_tiyn`
+        // значило бы указать на поле, которого в теле запроса нет. Форма
+        // ответа та же самая, общая.
+        try {
+            input["salary_words"] = Money::to_words_ru(resolved->employee.salary_tiyn);
+            input["salary_words_kk"] = Money::to_words_kk(resolved->employee.salary_tiyn);
+        } catch (const std::out_of_range&) {
+            callback(ErrorResponse::unprocessable(
+                "amount_out_of_range",
+                "the employee's stored salary cannot be spelled out in words: it exceeds the maximum supported " +
+                    std::to_string(Money::kMaxTiyn) + " tiyn"));
+            return;
+        }
+
         if (!Validation::merge_allowed_extra(input, extra, labor_contract_allowed_extra_fields(), callback))
             return;
 
@@ -501,6 +530,7 @@ public:
     // -------------------------------------------------------------------
     void listVacations(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kRead);
         std::optional<std::string> employee_id_filter;
         if (!filter_employee_id(req, employee_id_filter, callback))
             return;
@@ -518,15 +548,12 @@ public:
     }
 
     // -------------------------------------------------------------------
-    // POST /api/v1/vacations — accountant/owner only. Body: {employee_id,
+    // POST /api/v1/vacations — owner/accountant/hr. Body: {employee_id,
     // starts_on, ends_on, days, kind}.
     // -------------------------------------------------------------------
     void createVacation(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot create vacations"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -662,13 +689,14 @@ private:
     /// dot-separated for fields nested under employer/employee — e.g.
     /// "employer.director" allows overriding ONLY that leaf, never the
     /// authoritative employer.name/employer.bin siblings.
+    ///
+    /// `salary_words` left this list in P3: it and `salary_words_kk` are
+    /// both derived from employees.salary_tiyn (see
+    /// generateContractDocument), so a caller supplying either now gets a
+    /// 422 not_allowed_override.
     static const std::vector<std::string>& labor_contract_allowed_extra_fields() {
-        static const std::vector<std::string> kAllowed = {"salary_words",
-                                                          "work_schedule",
-                                                          "probation_months",
-                                                          "employer.director",
-                                                          "employer.address",
-                                                          "employee.address"};
+        static const std::vector<std::string> kAllowed = {
+            "work_schedule", "probation_months", "employer.director", "employer.address", "employee.address"};
         return kAllowed;
     }
 
@@ -720,8 +748,15 @@ private:
             if (after_create)
                 after_create(created.id);
 
-            json payload = {
-                {"org_id", org_id}, {"document_id", created.id}, {"slug", std::string(slug)}, {"input", input}};
+            // version_id — see DocgenController::generate: the render lands on
+            // the version the payload NAMES, never on "the newest one at the
+            // time the worker got round to it".
+            auto first_version = documents.latest_version(org_id, created.id, /*from_primary=*/true);
+            json payload = {{"org_id", org_id},
+                            {"document_id", created.id},
+                            {"version_id", first_version ? first_version->id : std::string{}},
+                            {"slug", std::string(slug)},
+                            {"input", input}};
             bool render_queued = false;
             try {
                 auto job = Jobs::get().submit(kRenderJobType, payload);

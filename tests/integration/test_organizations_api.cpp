@@ -522,4 +522,82 @@ TEST_F(OrganizationsApiTest, AddMemberByEmailAndUserIdRejected) {
     EXPECT_FALSE(members.find_membership(org.id, target.user.id).has_value());
 }
 
+// ── The `hr` role (migrations/017_hr_role.sql) ──────────────────────────────
+
+TEST_F(OrganizationsApiTest, HrIsAnAcceptedMemberRole) {
+    // The role has to survive BOTH gates it passes on the way in:
+    // Tenancy::is_valid_role in the controller, and org_members' CHECK
+    // constraint in the database (widened by migrations/017_hr_role.sql).
+    // A test that only exercised is_valid_role would still pass against an
+    // un-migrated database and blow up as a 500 in production.
+    auto org = seed_org("111240000017", "Hr Role Org LLP");
+    auto owner = seed_user("hrrole-owner@example.com", "User");
+    auto target = seed_user("hrrole-target@example.com", "User");
+    Tenancy::OrgMemberRepository members;
+    members.add(org.id, owner.user.id, "owner");
+    auto owner_principal = with_org(owner.principal, org.id);
+
+    auto req = authed_json(owner_principal, {{"user_id", target.user.id}, {"role", "hr"}}, Post);
+    HttpResponsePtr resp;
+    orgs_ctrl.addMember(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k201Created);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["data"]["role"].get<std::string>(), "hr");
+    auto stored = members.find_membership(org.id, target.user.id);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_EQ(stored->role, "hr");
+}
+
+TEST_F(OrganizationsApiTest, UnknownMemberRoleStillRejected) {
+    // Widening the CHECK to four values must not turn the role field into a
+    // free-text column: anything outside the roster is still a 400, and the
+    // message names all four.
+    auto org = seed_org("111240000018", "Bad Role Org LLP");
+    auto owner = seed_user("badrole-owner@example.com", "User");
+    auto target = seed_user("badrole-target@example.com", "User");
+    Tenancy::OrgMemberRepository members;
+    members.add(org.id, owner.user.id, "owner");
+    auto owner_principal = with_org(owner.principal, org.id);
+
+    auto req = authed_json(owner_principal, {{"user_id", target.user.id}, {"role", "manager"}}, Post);
+    HttpResponsePtr resp;
+    orgs_ctrl.addMember(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k400BadRequest);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "not_allowed");
+    EXPECT_NE(body["errors"][0]["message"].get<std::string>().find("hr"), std::string::npos);
+    EXPECT_FALSE(members.find_membership(org.id, target.user.id).has_value());
+}
+
+TEST_F(OrganizationsApiTest, LastOwnerNotDemotableToHr) {
+    // Last-owner protection counts `role == "owner"` rows, so a fourth role
+    // must not become a loophole: demoting the sole owner to кадровик is
+    // the same 409 as demoting them to viewer.
+    auto org = seed_org("111240000019", "Sole Owner To Hr Org LLP");
+    auto owner = seed_user("soleowner-hr@example.com", "User");
+    Tenancy::OrgMemberRepository members;
+    members.add(org.id, owner.user.id, "owner");
+    // A second member who is `hr` — proof the count is of OWNERS, not of
+    // members: with this row present the org has two members and one owner.
+    auto helper = seed_user("hr-helper@example.com", "User");
+    members.add(org.id, helper.user.id, "hr");
+    auto owner_principal = with_org(owner.principal, org.id);
+
+    auto req = authed_json(owner_principal, {{"role", "hr"}}, Patch);
+    HttpResponsePtr resp;
+    orgs_ctrl.updateMemberRole(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id, owner.user.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k409Conflict);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["error"].get<std::string>(), "last_owner");
+    auto still = members.find_membership(org.id, owner.user.id);
+    ASSERT_TRUE(still.has_value());
+    EXPECT_EQ(still->role, "owner");
+}
+
 }  // namespace

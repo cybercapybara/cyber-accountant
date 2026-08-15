@@ -11,8 +11,13 @@
  *   GET   /api/v1/counterparties/{id}   fetch one
  *   PATCH /api/v1/counterparties/{id}   full replace (accountant/owner only)
  *
- * RBAC: mutations (POST/PATCH) additionally reject `ctx.role == "viewer"`
- * with 403 — the rule this task's brief states for every ledger route.
+ * RBAC: EVERY route goes through API_REQUIRE_ORG_PERM against the §5.3
+ * permission matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown
+ * role, resource or action is a 403, so a role added later cannot fail open
+ * the way the old `ctx.role == "viewer"` denylist let it. Mutations
+ * (POST/PATCH) need `counterparties`/write, the two GETs `counterparties`/
+ * read: "—" in that matrix means INVISIBLE, not read-only, so the `hr` role
+ * gets a 403 on the list and on a single counterparty alike.
  * `org_id` is taken EXCLUSIVELY from `ctx.org_id` (the access token's
  * membership-backed org claim) — never from the path, body, or a query
  * param; that was the T7 review lesson behind `Files::org_key` trusting its
@@ -43,6 +48,7 @@
 #include "ledger/CounterpartyRepository.hpp"
 #include "ledger/KzIdentifiers.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "utils/ErrorResponse.hpp"
 
 namespace Api {
@@ -64,6 +70,8 @@ public:
     // -------------------------------------------------------------------
     void list(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(
+            callback, ctx, Tenancy::OrgPerm::Resource::kCounterparties, Tenancy::OrgPerm::Action::kRead);
         const auto page = parse_page_params(req, /*default_limit=*/50, /*max_limit=*/200);
 
         with_repo_errors(callback, "counterparties list", [&] {
@@ -82,10 +90,8 @@ public:
     // -------------------------------------------------------------------
     void create(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot create counterparties"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(
+            callback, ctx, Tenancy::OrgPerm::Resource::kCounterparties, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -106,6 +112,8 @@ public:
     // -------------------------------------------------------------------
     void get(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(
+            callback, ctx, Tenancy::OrgPerm::Resource::kCounterparties, Tenancy::OrgPerm::Action::kRead);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed counterparty id"));
             return;
@@ -131,10 +139,8 @@ public:
                std::function<void(const HttpResponsePtr&)>&& callback,
                const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot modify counterparties"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(
+            callback, ctx, Tenancy::OrgPerm::Resource::kCounterparties, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed counterparty id"));
             return;

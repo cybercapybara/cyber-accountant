@@ -68,6 +68,13 @@ import {
  *
  * On success (202) this navigates to /documents?focus=<id>&queued=<0|1>,
  * where DocumentsPage polls that one document until it leaves 'draft'.
+ *
+ * The four money-bearing `build*Input` functions are exported so
+ * GenerateDocument.test.ts can assert the integer-tiyn contract without
+ * rendering a form — same reason JoinFromInvite.tsx exports
+ * submitJoinFromInvite, and the same react-refresh warning is accepted for
+ * it. What they must never grow back is a formatted total or an amount in
+ * words: both are server-derived since P3.
  */
 const TEMPLATE_LABELS: Record<string, string> = {
   invoice: 'Счёт на оплату',
@@ -80,7 +87,10 @@ const TEMPLATE_LABELS: Record<string, string> = {
 // The only slugs POST /api/v1/documents/generate accepts
 // (GenerateDocumentCreate.template_slug enum, docs/openapi.yaml) — and the
 // only five typed forms below. A template registered under any other slug
-// is simply not offered on this page.
+// is simply not offered on this page: since P3 the endpoint answers a real
+// but foreign template (payslip, fno_910, fno_300, hr_order,
+// labor_contract — each owned by the endpoint that holds its data) with a
+// 422 `unsupported_template`, and anything else with `unknown_template`.
 const KNOWN_SLUGS = ['invoice', 'avr', 'waybill', 'tax_invoice', 'reconciliation'] as const;
 type KnownSlug = (typeof KNOWN_SLUGS)[number];
 
@@ -197,6 +207,29 @@ export function GenerateDocumentPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Every form below is used TWICE: to create a document on this page, and to
+ * edit one from pages/Documents.tsx, which appends a version
+ * (POST /api/v1/documents/{id}/versions) with exactly the same `input`
+ * object — the edit endpoint runs it through the same Docgen::InputPolicy
+ * allowlist as creation, so there is nothing template-specific left for a
+ * second copy of these forms to own.
+ *
+ * `defaultValues` prefills from the stored render input (see the
+ * snapshotTo*Values mappers in lib/schemas/documents.ts, which invert the
+ * money/percent formatting the builders apply on the way out). The labels
+ * are props because appending a version is not creating a document, and the
+ * button must not claim otherwise.
+ */
+interface DocumentFormProps<Values> {
+  counterparties: Counterparty[];
+  submitting: boolean;
+  onSubmit: (body: GenerateDocumentCreate) => void;
+  defaultValues?: Values;
+  submitLabel?: string;
+  busyLabel?: string;
 }
 
 // ── Shared building blocks ──────────────────────────────────────────────────
@@ -356,7 +389,25 @@ function normalizeRatePercent(rate: string): string {
 
 // ── Invoice ──────────────────────────────────────────────────────────────
 
-function buildInvoiceInput(values: InvoiceFormValues, buyer: PartyValues): Record<string, unknown> {
+/**
+ * The document total leaves as ONE integer, `total_tiyn`: the server formats
+ * `total` and spells out `total_words` from it (src/docgen/InputPolicy.hpp)
+ * and rejects either of those strings coming from the client with a 422
+ * `not_allowed_override`. That is the P2 forgery fix — a printed amount can
+ * no longer disagree with the figure it was printed from — so nothing here
+ * may format a total again, and no form may ask a user to type one.
+ *
+ * The VAT line goes the same way: `vat_tiyn`, not a formatted `vat_amount`.
+ * The invoice and АВР templates print the VAT line directly ABOVE the
+ * derived total, so a client-formatted string there could contradict the
+ * total on the very next line of the same PDF; the server formats it and
+ * additionally refuses a VAT larger than the total (422 `exceeds_total`).
+ * `vat_rate` stays a client value — it is a rate, not an amount.
+ */
+export function buildInvoiceInput(
+  values: InvoiceFormValues,
+  buyer: PartyValues,
+): Record<string, unknown> {
   const subtotalTiyn = sumLineAmounts(values.items);
   const rate = parseVatRatePercent(values.vat_rate);
   const hasVat = values.vat_rate.trim() !== '' && rate > 0;
@@ -367,26 +418,24 @@ function buildInvoiceInput(values: InvoiceFormValues, buyer: PartyValues): Recor
     seller: buildPartyInput(values.seller),
     buyer: buildPartyInput(buyer),
     items: buildLineItemsJson(values.items),
-    total: formatTiynRu(subtotalTiyn + vatTiyn),
-    total_words: values.total_words.trim(),
+    total_tiyn: subtotalTiyn + vatTiyn,
   };
   if (values.contract.trim()) input.contract = values.contract.trim();
   if (hasVat) {
     input.vat_rate = normalizeRatePercent(values.vat_rate);
-    input.vat_amount = formatTiynRu(vatTiyn);
+    input.vat_tiyn = vatTiyn;
   }
   return input;
 }
 
-function InvoiceForm({
+export function InvoiceForm({
   counterparties,
   submitting,
   onSubmit,
-}: {
-  counterparties: Counterparty[];
-  submitting: boolean;
-  onSubmit: (body: GenerateDocumentCreate) => void;
-}) {
+  defaultValues,
+  submitLabel = 'Создать документ',
+  busyLabel = 'Создание…',
+}: DocumentFormProps<InvoiceFormValues>) {
   const toast = useToast();
   const {
     control,
@@ -395,7 +444,7 @@ function InvoiceForm({
     formState: { errors },
   } = useForm<InvoiceFormValues>({
     resolver: zodResolver(invoiceFormSchema),
-    defaultValues: {
+    defaultValues: defaultValues ?? {
       number: '',
       date: '',
       seller: getSellerDefaults(),
@@ -403,7 +452,6 @@ function InvoiceForm({
       contract: '',
       items: [{ ...EMPTY_LINE_ITEM }],
       vat_rate: '',
-      total_words: '',
     },
   });
   const { fields, append, remove } = useFieldArray({ control, name: 'items' });
@@ -575,18 +623,14 @@ function InvoiceForm({
               <p>
                 Итого: <Money tiyn={subtotalTiyn + vatTiyn} />
               </p>
+              <p className="text-muted-foreground">
+                Сумма прописью печатается в документе автоматически.
+              </p>
             </div>
           </div>
 
-          <FormField
-            id="inv-total-words"
-            label="Сумма прописью"
-            error={errors.total_words?.message}
-            {...register('total_words')}
-          />
-
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Создание…' : 'Создать документ'}
+            {submitting ? busyLabel : submitLabel}
           </Button>
         </form>
       </CardContent>
@@ -596,19 +640,18 @@ function InvoiceForm({
 
 // ── AVR (акт выполненных работ) ─────────────────────────────────────────────
 
-function buildAvrInput(values: AvrFormValues, buyer: PartyValues): Record<string, unknown> {
+export function buildAvrInput(values: AvrFormValues, buyer: PartyValues): Record<string, unknown> {
   return { ...buildInvoiceInput(values, buyer), act_period: values.act_period.trim() };
 }
 
-function AvrForm({
+export function AvrForm({
   counterparties,
   submitting,
   onSubmit,
-}: {
-  counterparties: Counterparty[];
-  submitting: boolean;
-  onSubmit: (body: GenerateDocumentCreate) => void;
-}) {
+  defaultValues,
+  submitLabel = 'Создать документ',
+  busyLabel = 'Создание…',
+}: DocumentFormProps<AvrFormValues>) {
   const toast = useToast();
   const {
     control,
@@ -617,7 +660,7 @@ function AvrForm({
     formState: { errors },
   } = useForm<AvrFormValues>({
     resolver: zodResolver(avrFormSchema),
-    defaultValues: {
+    defaultValues: defaultValues ?? {
       number: '',
       date: '',
       seller: getSellerDefaults(),
@@ -625,7 +668,6 @@ function AvrForm({
       contract: '',
       items: [{ ...EMPTY_LINE_ITEM }],
       vat_rate: '',
-      total_words: '',
       act_period: '',
     },
   });
@@ -805,18 +847,14 @@ function AvrForm({
               <p>
                 Итого: <Money tiyn={subtotalTiyn + vatTiyn} />
               </p>
+              <p className="text-muted-foreground">
+                Сумма прописью печатается в документе автоматически.
+              </p>
             </div>
           </div>
 
-          <FormField
-            id="avr-total-words"
-            label="Сумма прописью"
-            error={errors.total_words?.message}
-            {...register('total_words')}
-          />
-
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Создание…' : 'Создать документ'}
+            {submitting ? busyLabel : submitLabel}
           </Button>
         </form>
       </CardContent>
@@ -826,7 +864,10 @@ function AvrForm({
 
 // ── Waybill (накладная) ─────────────────────────────────────────────────────
 
-function buildWaybillInput(values: WaybillFormValues, buyer: PartyValues): Record<string, unknown> {
+export function buildWaybillInput(
+  values: WaybillFormValues,
+  buyer: PartyValues,
+): Record<string, unknown> {
   const totalTiyn = sumLineAmounts(values.items);
   return {
     number: values.number.trim(),
@@ -835,22 +876,20 @@ function buildWaybillInput(values: WaybillFormValues, buyer: PartyValues): Recor
     buyer: buildPartyInput(buyer),
     basis: values.basis.trim(),
     items: buildLineItemsJson(values.items),
-    total: formatTiynRu(totalTiyn),
-    total_words: values.total_words.trim(),
+    total_tiyn: totalTiyn,
     released_by: values.released_by.trim(),
     received_by: values.received_by.trim(),
   };
 }
 
-function WaybillForm({
+export function WaybillForm({
   counterparties,
   submitting,
   onSubmit,
-}: {
-  counterparties: Counterparty[];
-  submitting: boolean;
-  onSubmit: (body: GenerateDocumentCreate) => void;
-}) {
+  defaultValues,
+  submitLabel = 'Создать документ',
+  busyLabel = 'Создание…',
+}: DocumentFormProps<WaybillFormValues>) {
   const toast = useToast();
   const {
     control,
@@ -859,14 +898,13 @@ function WaybillForm({
     formState: { errors },
   } = useForm<WaybillFormValues>({
     resolver: zodResolver(waybillFormSchema),
-    defaultValues: {
+    defaultValues: defaultValues ?? {
       number: '',
       date: '',
       seller: getSellerDefaults(),
       buyerCounterpartyId: '',
       basis: '',
       items: [{ ...EMPTY_LINE_ITEM }],
-      total_words: '',
       released_by: '',
       received_by: '',
     },
@@ -1017,16 +1055,14 @@ function WaybillForm({
             )}
           </div>
 
-          <p className="text-sm">
-            Итого: <Money tiyn={totalTiyn} />
-          </p>
-
-          <FormField
-            id="wb-total-words"
-            label="Сумма прописью"
-            error={errors.total_words?.message}
-            {...register('total_words')}
-          />
+          <div className="space-y-1 text-sm">
+            <p>
+              Итого: <Money tiyn={totalTiyn} />
+            </p>
+            <p className="text-muted-foreground">
+              Сумма прописью печатается в документе автоматически.
+            </p>
+          </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <FormField
@@ -1044,7 +1080,7 @@ function WaybillForm({
           </div>
 
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Создание…' : 'Создать документ'}
+            {submitting ? busyLabel : submitLabel}
           </Button>
         </form>
       </CardContent>
@@ -1061,14 +1097,13 @@ function vatLineAmounts(item: VatLineItemValues) {
   return { amountTiyn, vatAmountTiyn, totalWithVatTiyn: amountTiyn + vatAmountTiyn };
 }
 
-function buildTaxInvoiceInput(
+export function buildTaxInvoiceInput(
   values: TaxInvoiceFormValues,
   buyer: PartyValues,
 ): Record<string, unknown> {
   const lines = values.items.map((it) => ({ item: it, amounts: vatLineAmounts(it) }));
-  const amount = lines.reduce((s, l) => s + l.amounts.amountTiyn, 0);
-  const vat = lines.reduce((s, l) => s + l.amounts.vatAmountTiyn, 0);
-  const withVat = lines.reduce((s, l) => s + l.amounts.totalWithVatTiyn, 0);
+  const amountTiyn = lines.reduce((s, l) => s + l.amounts.amountTiyn, 0);
+  const vatTiyn = lines.reduce((s, l) => s + l.amounts.vatAmountTiyn, 0);
   return {
     number: values.number.trim(),
     date: values.date.trim(),
@@ -1084,24 +1119,27 @@ function buildTaxInvoiceInput(
       vat_amount: formatTiynRu(amounts.vatAmountTiyn),
       total_with_vat: formatTiynRu(amounts.totalWithVatTiyn),
     })),
+    // Three integers, no strings: the server formats all three and spells
+    // out `total_words` itself. `with_vat_tiyn` is the SUM of the other two
+    // and never a rounding of its own — the server checks the three for
+    // exact equality and answers a one-tiyn disagreement with a 422
+    // `inconsistent_total` (src/docgen/InputPolicy.hpp).
     totals: {
-      amount: formatTiynRu(amount),
-      vat: formatTiynRu(vat),
-      with_vat: formatTiynRu(withVat),
+      amount_tiyn: amountTiyn,
+      vat_tiyn: vatTiyn,
+      with_vat_tiyn: amountTiyn + vatTiyn,
     },
-    total_words: values.total_words.trim(),
   };
 }
 
-function TaxInvoiceForm({
+export function TaxInvoiceForm({
   counterparties,
   submitting,
   onSubmit,
-}: {
-  counterparties: Counterparty[];
-  submitting: boolean;
-  onSubmit: (body: GenerateDocumentCreate) => void;
-}) {
+  defaultValues,
+  submitLabel = 'Создать документ',
+  busyLabel = 'Создание…',
+}: DocumentFormProps<TaxInvoiceFormValues>) {
   const toast = useToast();
   const {
     control,
@@ -1110,26 +1148,26 @@ function TaxInvoiceForm({
     formState: { errors },
   } = useForm<TaxInvoiceFormValues>({
     resolver: zodResolver(taxInvoiceFormSchema),
-    defaultValues: {
+    defaultValues: defaultValues ?? {
       number: '',
       date: '',
       seller: getSellerDefaults(),
       buyerCounterpartyId: '',
       buyerVatCertificate: '',
       items: [{ ...EMPTY_VAT_LINE_ITEM }],
-      total_words: '',
     },
   });
   const { fields, append, remove } = useFieldArray({ control, name: 'items' });
   const watchedItems = useWatch({ control, name: 'items' });
 
+  // Same three integers buildTaxInvoiceInput sends, computed the same way
+  // (the shown «Всего с НДС» is the sum, not a separate rounding), so the
+  // preview can never differ from the printed document.
   const totals = useMemo(() => {
     const lines = (watchedItems ?? []).map(vatLineAmounts);
-    return {
-      amount: lines.reduce((s, l) => s + l.amountTiyn, 0),
-      vat: lines.reduce((s, l) => s + l.vatAmountTiyn, 0),
-      withVat: lines.reduce((s, l) => s + l.totalWithVatTiyn, 0),
-    };
+    const amount = lines.reduce((s, l) => s + l.amountTiyn, 0);
+    const vat = lines.reduce((s, l) => s + l.vatAmountTiyn, 0);
+    return { amount, vat, withVat: amount + vat };
   }, [watchedItems]);
 
   const submit = (values: TaxInvoiceFormValues) => {
@@ -1299,17 +1337,13 @@ function TaxInvoiceForm({
             <p>
               Всего с НДС: <Money tiyn={totals.withVat} />
             </p>
+            <p className="text-muted-foreground">
+              Сумма прописью печатается в документе автоматически.
+            </p>
           </div>
 
-          <FormField
-            id="ti-total-words"
-            label="Сумма прописью"
-            error={errors.total_words?.message}
-            {...register('total_words')}
-          />
-
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Создание…' : 'Создать документ'}
+            {submitting ? busyLabel : submitLabel}
           </Button>
         </form>
       </CardContent>
@@ -1351,15 +1385,14 @@ function buildReconciliationInput(
   return input;
 }
 
-function ReconciliationForm({
+export function ReconciliationForm({
   counterparties,
   submitting,
   onSubmit,
-}: {
-  counterparties: Counterparty[];
-  submitting: boolean;
-  onSubmit: (body: GenerateDocumentCreate) => void;
-}) {
+  defaultValues,
+  submitLabel = 'Создать документ',
+  busyLabel = 'Создание…',
+}: DocumentFormProps<ReconciliationFormValues>) {
   const toast = useToast();
   const {
     control,
@@ -1368,7 +1401,7 @@ function ReconciliationForm({
     formState: { errors },
   } = useForm<ReconciliationFormValues>({
     resolver: zodResolver(reconciliationFormSchema),
-    defaultValues: {
+    defaultValues: defaultValues ?? {
       period_from: '',
       period_to: '',
       partyA: getSellerDefaults(),
@@ -1562,7 +1595,7 @@ function ReconciliationForm({
           </div>
 
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Создание…' : 'Создать документ'}
+            {submitting ? busyLabel : submitLabel}
           </Button>
         </form>
       </CardContent>

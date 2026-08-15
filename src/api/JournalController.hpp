@@ -21,8 +21,13 @@
  *   POST /api/v1/journal-entries/{id}/reverse   posted -> reversed + a new,
  *                                                 already-posted storno entry
  *
- * RBAC: every mutating route (create/post/reverse) additionally rejects
- * `ctx.role == "viewer"` with 403 — the brief's rule for every ledger route.
+ * RBAC: EVERY route goes through API_REQUIRE_ORG_PERM against the §5.3
+ * permission matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown
+ * role, resource or action is a 403, so a role added later cannot fail open
+ * the way the old `ctx.role == "viewer"` denylist let it. The mutating routes
+ * (create/post/reverse) need `journal`/write, the two GETs `journal`/read:
+ * "—" in that matrix means INVISIBLE, not read-only, so the `hr` role gets a
+ * 403 on the ledger listing and on a single entry alike.
  * `org_id`/`user_id` come EXCLUSIVELY from `ctx` (the access token's
  * membership-backed claims), never from the body or a query param.
  *
@@ -69,6 +74,7 @@
 #include "ledger/JournalRepository.hpp"
 #include "ledger/JournalService.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "utils/ErrorResponse.hpp"
 
 namespace Api {
@@ -92,6 +98,7 @@ public:
     // -------------------------------------------------------------------
     void list(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kJournal, Tenancy::OrgPerm::Action::kRead);
 
         Validation::Errors errs;
         std::optional<std::string> from_filter;
@@ -139,10 +146,7 @@ public:
     // -------------------------------------------------------------------
     void create(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot create journal entries"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kJournal, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -204,6 +208,7 @@ public:
     // -------------------------------------------------------------------
     void get(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback, const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kJournal, Tenancy::OrgPerm::Action::kRead);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed journal entry id"));
             return;
@@ -229,10 +234,7 @@ public:
               std::function<void(const HttpResponsePtr&)>&& callback,
               const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot post journal entries"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kJournal, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed journal entry id"));
             return;
@@ -263,10 +265,7 @@ public:
                  std::function<void(const HttpResponsePtr&)>&& callback,
                  const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot reverse journal entries"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kJournal, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed journal entry id"));
             return;

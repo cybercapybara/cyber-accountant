@@ -12,11 +12,20 @@
  * API_REQUIRE_ORG(req, callback, ctx)):
  *   GET  /api/v1/doc-templates      registry scan: {slug, version, schema}
  *                                    for every template on disk — read-only,
- *                                    no viewer gate.
+ *                                    gated as `documents`/read.
  *   POST /api/v1/documents/generate  body {template_slug, input,
  *                                    counterparty_id?, link_entry_id?} ->
- *                                    202 {document_id}. Accountant/owner
- *                                    only.
+ *                                    202 {document_id}.
+ *
+ * RBAC: BOTH routes go through API_REQUIRE_ORG_PERM against the §5.3
+ * permission matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown
+ * role, resource or action is a 403, so a role added later cannot fail open
+ * the way the old `ctx.role == "viewer"` denylist let it.
+ * `documents/generate` needs `documents`/write; `doc-templates` needs
+ * `documents`/read even though it touches no per-org row — the template
+ * registry IS the shape of the primary documents a role cannot see, and "—"
+ * in §5.3 means INVISIBLE, so the `hr` role gets a 403 rather than a catalog
+ * of the invoice/АВР/накладная forms it may never generate or read.
  *
  * `docgen.render`'s job type string is duplicated here as `kRenderJobType`
  * rather than pulling in `docgen/RenderJob.hpp` for its `kJobType` constant:
@@ -24,8 +33,11 @@
  * temp-dir scratch space) — src/worker_main.cpp is its only other includer.
  * Bringing that machinery into the API server binary just for one string
  * constant would be a needless coupling; the payload SHAPE contract
- * (`{org_id, document_id, slug, input}`) is what actually has to match, and
- * it's documented on both sides. Same posture Webhooks.hpp/AccountEmails.hpp
+ * (`{org_id, document_id, version_id, slug, input}`) is what actually has to
+ * match, and it's documented on both sides. `version_id` is not optional in
+ * that contract: it is what makes the worker land the PDF on the version this
+ * request created instead of on whichever version is newest by the time the
+ * job runs (see Docgen::RenderJob.hpp). Same posture Webhooks.hpp/AccountEmails.hpp
  * take: the module that ENQUEUES a job type owns that type's string where it
  * doesn't already share a file with the module that PROCESSES it.
  *
@@ -37,6 +49,39 @@
  * (its own allowlist + on-disk existence check), never used as a doc_type
  * on a bare say-so, so an unregistered or path-traversal-shaped slug can
  * never reach DocumentRepository::create() at all.
+ *
+ * P3: that identity is only SAFE for the five primary-document slugs, and
+ * the templates on disk are not only those five. `payslip`, `fno_910`,
+ * `fno_300`, `hr_order` and `labor_contract` all resolve through the
+ * registry and used to pass straight through as a `doc_type` that
+ * `documents_doc_type_check` rejects — an INSERT-time constraint violation
+ * the caller saw as a 500 (the transaction rolls back, so no orphan row was
+ * ever left behind). `generate()` now gates the slug against
+ * Docgen::InputPolicy::generate_slugs() and answers 422
+ * `unsupported_template`, naming the endpoint that owns that template.
+ *
+ * That gate runs AFTER the registry lookup, deliberately: `unknown_template`
+ * ("no such slug anywhere") and `unsupported_template` ("real template, wrong
+ * endpoint") are different answers to the caller — a typo versus a wrong
+ * address — and collapsing them into one code would make diagnosis worse.
+ * The ordering is not a security property: the 500 came from the doc_type
+ * CHECK at INSERT time, not from the registry, and nothing between the two
+ * checks touches the database.
+ *
+ * P3, money: every printed money string on these documents is derived by
+ * the SERVER from an integer tiyn field (`total_tiyn` for invoice/avr/
+ * waybill, plus an optional `vat_tiyn` for invoice/avr;
+ * `totals.{amount,vat,with_vat}_tiyn` for tax_invoice) via
+ * Docgen::InputPolicy::apply_derived_amount(), and a client-supplied
+ * `total`/`total_words`/`vat_amount`/`totals.*` string is a 422
+ * `not_allowed_override`. Honest scope: this makes the document's TOTAL
+ * lines self-consistent — a счёт-фактура must satisfy
+ * amount + vat == with_vat, and an invoice/АВР must satisfy vat <= total
+ * (their templates print a VAT line and a grand total, but no net line, so
+ * that bound is the strongest rule their actual output supports). The
+ * per-line `items[]` figures stay free-form and are NOT reconciled against
+ * those totals — that is separate work, outside P3. `vat_rate` is a rate,
+ * not an amount, and stays caller-authored.
  *
  * Cross-org reference decision (counterparty_id / link_entry_id, both
  * optional body fields): TREATED IDENTICALLY, both a 422 keyed to their own
@@ -94,12 +139,14 @@
 #include "api/HandlerSupport.hpp"
 #include "api/RequestUtils.hpp"
 #include "api/Validation.hpp"
+#include "docgen/InputPolicy.hpp"
 #include "docgen/TemplateRegistry.hpp"
 #include "jobs/Jobs.hpp"
 #include "ledger/CounterpartyRepository.hpp"
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalRepository.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "utils/ErrorResponse.hpp"
 
 namespace Api {
@@ -120,11 +167,13 @@ public:
     static constexpr const char* kRenderJobType = "docgen.render";
 
     // -------------------------------------------------------------------
-    // GET /api/v1/doc-templates — registry scan. Read-only, no viewer gate.
+    // GET /api/v1/doc-templates — registry scan. Reads no per-org row, but
+    // still requires `documents`/read: see the RBAC note in this file's
+    // header for why the catalog itself is part of what "—" hides.
     // -------------------------------------------------------------------
     void listTemplates(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        (void)ctx;  // no per-org data here — the guard only establishes that the caller has org access at all
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kDocuments, Tenancy::OrgPerm::Action::kRead);
 
         Docgen::TemplateRegistry registry;
         json data = json::array();
@@ -139,10 +188,7 @@ public:
     // -------------------------------------------------------------------
     void generate(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot generate documents"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kDocuments, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -167,7 +213,7 @@ public:
         }
 
         const std::string template_slug = body["template_slug"].get<std::string>();
-        const json input = body.value("input", json::object());
+        const json client_input = body.value("input", json::object());
         const std::optional<std::string> counterparty_id =
             (body.contains("counterparty_id") && !body["counterparty_id"].is_null())
                 ? std::optional<std::string>(body["counterparty_id"].get<std::string>())
@@ -180,6 +226,13 @@ public:
         // Resolve + schema-validate the template BEFORE creating anything —
         // an unregistered/traversal-shaped slug and a schema mismatch both
         // surface as one 422 here, never reaching DocumentRepository.
+        //
+        // Порядок двух проверок значащий и НЕ переставляется: сначала
+        // «существует ли такой шаблон вообще», потом «порождается ли он
+        // этим эндпоинтом». Это два разных ответа каллеру — опечатка в
+        // слаге и обращение не по адресу, — и слив их в один код сделал бы
+        // диагностику хуже. Дыры это не открывает: 500 приходил не из
+        // реестра, а из documents_doc_type_check на INSERT (см. ниже).
         Docgen::TemplateRegistry registry;
         auto info = registry.latest(template_slug);
         if (!info) {
@@ -187,6 +240,45 @@ public:
                 "template_slug", "unknown_template", "no template found for slug '" + template_slug + "'"));
             return;
         }
+
+        // Шаблон существует, но первичкой не является: слаг идёт в
+        // documents.doc_type дословно (см. шапку файла), а
+        // migrations/010_documents.sql разрешает там только пять значений.
+        // Без этой проверки payslip/fno_910/fno_300/hr_order/labor_contract
+        // проходили дальше и валились на documents_doc_type_check уже внутри
+        // INSERT — клиент получал 500 вместо внятного 422 (дефект, найденный
+        // при релизе v0.3.1). У каждого из них есть свой эндпоинт-владелец,
+        // и сообщение называет именно его, а не «какой-то другой».
+        if (!Docgen::InputPolicy::input_is_caller_authored(template_slug)) {
+            // Пустая строка возможна только у шаблона, который положили на
+            // диск, но ни к какому эндпоинту не приписали, — тогда честнее
+            // сказать «владельца нет», чем назвать пустой маршрут.
+            const std::string owner = Docgen::InputPolicy::owning_endpoint(template_slug);
+            const std::string where = owner.empty()
+                                          ? std::string("no endpoint generates it")
+                                          : std::string("use ") + owner + ", which holds the authoritative data for it";
+            callback(Validation::response_422(
+                "template_slug",
+                "unsupported_template",
+                "template '" + template_slug + "' is not generated through this endpoint — " + where));
+            return;
+        }
+
+        // Прописи и строковая сумма выводятся сервером из целого числа
+        // тиын и подставляются в `input` ДО schema-валидации: у этих
+        // шаблонов allowlist'а нет, весь объект приходит от клиента, и без
+        // деривации цифра и текст в одном документе могли разойтись.
+        // Гарантия ровно про ИТОГОВЫЕ строки — цифры позиций items[]
+        // остаются свободным текстом и с итогом не сверяются.
+        json input = client_input;
+        {
+            std::string bad_field, bad_code, bad_message;
+            if (!Docgen::InputPolicy::apply_derived_amount(template_slug, input, bad_field, bad_code, bad_message)) {
+                callback(Validation::response_422(bad_field, bad_code, bad_message));
+                return;
+            }
+        }
+
         if (auto err = Docgen::TemplateRegistry::validate(*info, input)) {
             callback(Validation::response_422("input", "schema_validation_failed", *err));
             return;
@@ -218,7 +310,10 @@ public:
 
         with_repo_errors(callback, "documents generate", [&] {
             Ledger::DocumentRepository documents;
-            // TODO(P2): map doc_type explicitly when a template slug diverges from documents.doc_type CHECK
+            // doc_type == slug is safe here because the slug gate above
+            // already restricted it to the five values documents_doc_type_check
+            // accepts (P3 — that check used to be the only thing catching a
+            // non-primary slug, and it did so as a 500).
             // input_snapshot is std::optional<nlohmann::json> — wrapped
             // explicitly (not passed as a bare `input`) because nlohmann::json's
             // own greedy converting-constructor template makes the implicit
@@ -249,8 +344,17 @@ public:
             // The document already exists; a submit() failure must not turn
             // it into a 500 the client would just retry into another
             // orphaned draft.
-            json payload = {
-                {"org_id", ctx.org_id}, {"document_id", created.id}, {"slug", template_slug}, {"input", input}};
+            // version_id names the row the render must land on — without it
+            // the worker would address "whatever is newest when it gets round
+            // to this", which an edit arriving first turns into the wrong
+            // version (RenderJob.hpp). create() made version 1 in the same
+            // transaction as the document, so this lookup finds it.
+            auto first_version = documents.latest_version(ctx.org_id, created.id, /*from_primary=*/true);
+            json payload = {{"org_id", ctx.org_id},
+                            {"document_id", created.id},
+                            {"version_id", first_version ? first_version->id : std::string{}},
+                            {"slug", template_slug},
+                            {"input", input}};
             bool render_queued = false;
             try {
                 auto job = Jobs::get().submit(kRenderJobType, payload);

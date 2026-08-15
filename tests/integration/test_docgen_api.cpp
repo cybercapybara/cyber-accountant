@@ -129,8 +129,11 @@ protected:
         return TestHelpers::authed_json(p, body, method);
     }
 
-    /// A valid input for templates/latex/invoice/v1's schema.json — same
-    /// fixture as test_render_job.cpp's valid_invoice_input().
+    /// A valid REQUEST input for templates/latex/invoice/v1's schema.json.
+    /// P3: the caller supplies the integer `total_tiyn` ONLY — `total` and
+    /// `total_words` are derived by the server, and sending either is a 422
+    /// (GenerateRejectsClientSuppliedTotalWords). What the document ends up
+    /// storing is expected_invoice_snapshot() below.
     static json valid_invoice_input() {
         return json{
             {"number", "1"},
@@ -141,10 +144,40 @@ protected:
              json::array({json{{"name", "Консультации"},
                                {"qty", "1"},
                                {"unit", "шт"},
-                               {"price", "1000.00"},
-                               {"amount", "1000.00"}}})},
-            {"total", "1000.00"},
-            {"total_words", "Одна тысяча тенге 00 тиын"},
+                               {"price", "1 000,00"},
+                               {"amount", "1 000,00"}}})},
+            {"total_tiyn", 100000},
+        };
+    }
+
+    /// valid_invoice_input() plus the two strings the server derives from
+    /// `total_tiyn` — exactly what documents.input_snapshot and the render
+    /// job's payload must carry.
+    static json expected_invoice_snapshot() {
+        json input = valid_invoice_input();
+        input["total"] = "1 000,00";
+        input["total_words"] = "Одна тысяча тенге 00 тиын";
+        return input;
+    }
+
+    /// A valid REQUEST input for templates/latex/tax_invoice/v1 minus its
+    /// `totals` object, which each test supplies itself — the three integer
+    /// totals are the subject of those tests.
+    static json tax_invoice_input_without_totals() {
+        return json{
+            {"number", "7"},
+            {"date", "14.08.2026"},
+            {"seller", {{"name", "Cyber Capybara ТОО"}, {"identifier", "104332181962"}}},
+            {"buyer", {{"name", "Покупатель ТОО"}, {"identifier", "001338908381"}}},
+            {"items",
+             json::array({json{{"name", "Консультации"},
+                               {"unit", "шт"},
+                               {"qty", "1"},
+                               {"price", "90 000,00"},
+                               {"amount", "90 000,00"},
+                               {"vat_rate", "16"},
+                               {"vat_amount", "14 400,00"},
+                               {"total_with_vat", "104 400,00"}}})},
         };
     }
 
@@ -204,9 +237,18 @@ TEST_F(DocgenApiTest, GenerateValidInputAcceptedAndEnqueues) {
     EXPECT_EQ(doc->source, "generated");
     EXPECT_EQ(doc->doc_type, "invoice");
     EXPECT_EQ(doc->template_slug.value_or(""), "invoice");
-    EXPECT_EQ(doc->template_version.value_or(""), "v1");
-    ASSERT_TRUE(doc->input_snapshot.has_value());
-    EXPECT_EQ(*doc->input_snapshot, valid_invoice_input());
+    // template_version/input_snapshot live on the document's VERSION now
+    // (migrations/018_document_versions.sql), and the render that would
+    // publish version 1 was only enqueued — so the document's own copies of
+    // those fields (read through the current-version pointer) are still
+    // empty and the snapshot is checked on the version itself.
+    EXPECT_FALSE(doc->current_version_id.has_value());
+    EXPECT_EQ(doc->latest_version_no, 1);
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    EXPECT_EQ(version->template_version.value_or(""), "v1");
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    EXPECT_EQ(*version->input_snapshot, expected_invoice_snapshot());
 
     // A docgen.render job was enqueued — NOT executed.
     ASSERT_EQ(queue_depth(), 1);
@@ -219,16 +261,43 @@ TEST_F(DocgenApiTest, GenerateValidInputAcceptedAndEnqueues) {
     EXPECT_EQ(job->status, "pending");
     EXPECT_EQ(job->payload["org_id"], org.id);
     EXPECT_EQ(job->payload["document_id"], document_id);
+    // …and it NAMES the version it must render into (P3 task 10). Without
+    // this key the worker would address whichever version is newest by the
+    // time it runs, which an edit arriving first makes the wrong one.
+    EXPECT_EQ(job->payload["version_id"], version->id);
     EXPECT_EQ(job->payload["slug"], "invoice");
-    EXPECT_EQ(job->payload["input"], valid_invoice_input());
+    EXPECT_EQ(job->payload["input"], expected_invoice_snapshot());
 }
 
 TEST_F(DocgenApiTest, GenerateInvalidInputRejected) {
     auto org = seed_org("444260000003", "Generate Invalid Org LLP");
     auto accountant = member("accountant2@example.com", org.id, "accountant");
 
-    // Missing every required field.
+    // Missing every required field. P3 changed WHICH error comes out, and the
+    // order cannot be reversed: the invoice schema requires `total` and
+    // `total_words`, which the SERVER writes, so validating before deriving
+    // would reject every legitimate request. Derivation therefore runs first
+    // and reports the one thing the caller actually owes — the integer.
     auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", json::object()}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input.total_tiyn");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "missing");
+
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+// The schema check still bites for everything the derivation does not cover:
+// a request carrying the required integer but nothing else fails on the
+// template's own JSON Schema, with the original field/code.
+TEST_F(DocgenApiTest, GenerateStillReportsSchemaFailuresAfterDerivation) {
+    auto org = seed_org("444260000015", "Generate Schema Org LLP");
+    auto accountant = member("schema@example.com", org.id, "accountant");
+
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", {{"total_tiyn", 100000}}}});
     HttpResponsePtr resp;
     ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
     ASSERT_NE(resp, nullptr);
@@ -315,6 +384,267 @@ TEST_F(DocgenApiTest, GenerateForeignCounterpartyRejected) {
     auto body = json::parse(std::string(resp->body()));
     EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "counterparty_id");
     EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "foreign_counterparty");
+}
+
+// ── P3: the server derives every printed money string ───────────────────────
+//
+// The threat these four tests close: a document used to print an amount as
+// digits AND spelled out in words, both taken from the request, so a crafted
+// body could make the two disagree (the ФНО 300.00 hole, generalised). The
+// caller now sends ONE integer per total; the server writes every string.
+
+TEST_F(DocgenApiTest, GenerateDerivesTotalAndWordsFromTiyn) {
+    auto org = seed_org("444260000010", "Derive Org LLP");
+    auto accountant = member("derive@example.com", org.id, "accountant");
+
+    // Only the total is overridden; the item line deliberately keeps its own
+    // figure. That mismatch is ALLOWED and is the honest limit of this task:
+    // the guarantee is about the document's total, not its line items.
+    json input = valid_invoice_input();
+    input["total_tiyn"] = 1234567;
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k202Accepted) << resp->body();
+    const std::string document_id = json::parse(std::string(resp->body()))["document_id"].get<std::string>();
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.find_in_org(document_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(doc.has_value());
+    // The snapshot rides on version 1 — nothing has published it yet.
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    EXPECT_EQ((*version->input_snapshot)["total"].get<std::string>(), "12 345,67");
+    EXPECT_EQ((*version->input_snapshot)["total_words"].get<std::string>(),
+              "Двенадцать тысяч триста сорок пять тенге 67 тиын");
+}
+
+TEST_F(DocgenApiTest, GenerateRejectsClientSuppliedTotalWords) {
+    auto org = seed_org("444260000011", "Words Org LLP");
+    auto accountant = member("words@example.com", org.id, "accountant");
+
+    json input = valid_invoice_input();
+    input["total_words"] = "Один тенге 00 тиын";
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input.total_words");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+TEST_F(DocgenApiTest, GenerateRejectsATaxInvoiceWhoseTotalsDoNotSum) {
+    auto org = seed_org("444260000012", "Sum Org LLP");
+    auto accountant = member("sum@example.com", org.id, "accountant");
+
+    // 90 000,00 оборот + 14 400,00 НДС, а итог заявлен 104 000,00 —
+    // счёт-фактура, печатающая три несходящихся числа, не должна
+    // существовать вовсе.
+    json input = tax_invoice_input_without_totals();
+    input["totals"] = {{"amount_tiyn", 9000000}, {"vat_tiyn", 1440000}, {"with_vat_tiyn", 10400000}};
+    auto req = authed_json(accountant, {{"template_slug", "tax_invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "inconsistent_total");
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input.totals.with_vat_tiyn");
+    // Ни документа, ни джобы: проверка идёт до любого побочного эффекта.
+    Ledger::DocumentRepository documents;
+    EXPECT_EQ(documents.count_filtered(org.id, std::optional<std::string>("tax_invoice"), std::nullopt), 0);
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+TEST_F(DocgenApiTest, GenerateFormatsAllThreeTaxInvoiceTotalsFromIntegers) {
+    auto org = seed_org("444260000013", "Sum2 Org LLP");
+    auto accountant = member("sum2@example.com", org.id, "accountant");
+
+    json input = tax_invoice_input_without_totals();
+    input["totals"] = {{"amount_tiyn", 9000000}, {"vat_tiyn", 1440000}, {"with_vat_tiyn", 10440000}};
+    auto req = authed_json(accountant, {{"template_slug", "tax_invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k202Accepted) << resp->body();
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.find_in_org(
+        json::parse(std::string(resp->body()))["document_id"].get<std::string>(), org.id, /*from_primary=*/true);
+    ASSERT_TRUE(doc.has_value());
+    // The snapshot rides on version 1 — nothing has published it yet.
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    const json& totals = (*version->input_snapshot)["totals"];
+    EXPECT_EQ(totals["amount"].get<std::string>(), "90 000,00");
+    EXPECT_EQ(totals["vat"].get<std::string>(), "14 400,00");
+    EXPECT_EQ(totals["with_vat"].get<std::string>(), "104 400,00");
+    EXPECT_EQ((*version->input_snapshot)["total_words"].get<std::string>(),
+              "Сто четыре тысячи четыреста тенге 00 тиын");
+}
+
+// The invoice VAT hole, end to end. templates/latex/invoice/v1/template.tex
+// prints «НДС ({{ vat_rate }}): {{ vat_amount }} ₸» on line 30 and
+// «Итого к оплате: {{ total }} ₸» on line 31 — adjacent lines of the SAME
+// issued PDF. While vat_amount was client-authored, those two lines could be
+// made to contradict each other outright.
+TEST_F(DocgenApiTest, GenerateRejectsAClientSuppliedInvoiceVatAmount) {
+    auto org = seed_org("444260000016", "Invoice Vat Org LLP");
+    auto accountant = member("invoice-vat@example.com", org.id, "accountant");
+
+    json input = valid_invoice_input();
+    input["total_tiyn"] = 112000;
+    input["vat_rate"] = "12%";
+    input["vat_amount"] = "999 999,00";
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input.vat_amount");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+TEST_F(DocgenApiTest, GenerateRejectsAnInvoiceWhoseVatExceedsItsTotal) {
+    auto org = seed_org("444260000017", "Invoice Vat Bound Org LLP");
+    auto accountant = member("invoice-vat-bound@example.com", org.id, "accountant");
+
+    json input = valid_invoice_input();
+    input["total_tiyn"] = 112000;
+    input["vat_rate"] = "12%";
+    input["vat_tiyn"] = 99999900;  // the same forgery, stated as an integer
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input.vat_tiyn");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "exceeds_total");
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+// The legitimate counterpart: one integer per figure in, three mutually
+// consistent printed strings out.
+TEST_F(DocgenApiTest, GenerateFormatsInvoiceVatAndTotalFromIntegers) {
+    auto org = seed_org("444260000018", "Invoice Vat Ok Org LLP");
+    auto accountant = member("invoice-vat-ok@example.com", org.id, "accountant");
+
+    json input = valid_invoice_input();
+    input["total_tiyn"] = 112000;
+    input["vat_rate"] = "12%";
+    input["vat_tiyn"] = 12000;
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k202Accepted) << resp->body();
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.find_in_org(
+        json::parse(std::string(resp->body()))["document_id"].get<std::string>(), org.id, /*from_primary=*/true);
+    ASSERT_TRUE(doc.has_value());
+    // Read through the VERSION, like every other assertion in this suite: a
+    // freshly generated document has no current version until its render job
+    // succeeds, so the document row's own input_snapshot is deliberately null
+    // here (migrations/018_document_versions.sql).
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    const json& stored = *version->input_snapshot;
+    EXPECT_EQ(stored["vat_amount"].get<std::string>(), "120,00");
+    EXPECT_EQ(stored["total"].get<std::string>(), "1 120,00");
+    EXPECT_EQ(stored["total_words"].get<std::string>(), "Одна тысяча сто двадцать тенге 00 тиын");
+    // vat_rate is a RATE, not an amount — it stays the caller's own text.
+    EXPECT_EQ(stored["vat_rate"].get<std::string>(), "12%");
+}
+
+// Third instance of the same forgery class this phase, and the subtlest: the
+// LABEL, not the amount. `vat_rate` is caller text printed inside the VAT
+// line's parentheses — «НДС ({{ vat_rate }}): {{ vat_amount }} ₸» — and
+// escape_latex deliberately passes '(', ')', ':', digits, spaces and '₸'
+// through untouched (only LaTeX-special bytes are rewritten). So a rate of
+// "16%): 9 999 999,00 ₸ (" closed the parenthesis, printed a fabricated
+// amount, and reopened it — a forged figure standing directly above the
+// server-derived total. The schema pattern is what stops it: the rate may now
+// contain only digits, one optional decimal separator and a percent sign, so
+// it cannot express a parenthesis, a colon, a space or a currency sign at all.
+TEST_F(DocgenApiTest, GenerateRejectsAVatRateThatEscapesItsLabel) {
+    auto org = seed_org("444260000019", "Invoice Rate Org LLP");
+    auto accountant = member("invoice-rate@example.com", org.id, "accountant");
+
+    for (const auto* slug : {"invoice", "avr"}) {
+        json input = valid_invoice_input();
+        input["total_tiyn"] = 112000;
+        input["vat_tiyn"] = 12000;
+        input["vat_rate"] = "16%): 9 999 999,00 ₸ (";
+        if (std::string(slug) == "avr")
+            input["act_period"] = "август 2026";
+        auto req = authed_json(accountant, {{"template_slug", slug}, {"input", input}});
+        HttpResponsePtr resp;
+        ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+        ASSERT_NE(resp, nullptr) << slug;
+        EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity) << slug;
+        auto body = json::parse(std::string(resp->body()));
+        EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input") << slug;
+        EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "schema_validation_failed") << slug;
+    }
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+// The schemas' `dependencies` block couples vat_rate and vat_amount both
+// ways. Without it, a caller could send `vat_tiyn` and no rate: the server
+// would write vat_amount, and the invoice template — whose guard is only
+// `{% if vat_amount != "" %}` — would print «НДС (): 120,00 ₸» with an empty
+// label. This proves the dependency actually fires rather than being inert
+// JSON nobody exercises.
+TEST_F(DocgenApiTest, GenerateRejectsAVatAmountWithNoRateToLabelIt) {
+    auto org = seed_org("444260000020", "Invoice Rate Dep Org LLP");
+    auto accountant = member("invoice-rate-dep@example.com", org.id, "accountant");
+
+    json input = valid_invoice_input();
+    input["total_tiyn"] = 112000;
+    input["vat_tiyn"] = 12000;  // no vat_rate alongside it
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "schema_validation_failed");
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+// Release defect v0.3.1: these five templates exist on disk and resolved
+// through the registry, then went into documents.doc_type verbatim and blew
+// up on documents_doc_type_check inside the INSERT — a 500 for a request the
+// server could have refused up front. The transaction rolled back, so there
+// was never an orphan row; the bug was purely the status code and the
+// message the caller got.
+TEST_F(DocgenApiTest, GenerateRejectsNonPrimarySlugWith422NotFiveHundred) {
+    auto org = seed_org("444260000014", "Slug Org LLP");
+    auto accountant = member("slug@example.com", org.id, "accountant");
+
+    for (const auto* slug : {"payslip", "fno_910", "fno_300", "hr_order", "labor_contract"}) {
+        auto req = authed_json(accountant, {{"template_slug", slug}, {"input", json::object()}});
+        HttpResponsePtr resp;
+        ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+        ASSERT_NE(resp, nullptr) << slug;
+        EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity) << slug;
+        auto body = json::parse(std::string(resp->body()));
+        EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "template_slug") << slug;
+        EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "unsupported_template") << slug;
+    }
+    EXPECT_EQ(queue_depth(), 0);
 }
 
 TEST_F(DocgenApiTest, GenerateViewerForbidden) {

@@ -12,6 +12,8 @@
  *   - login bad password → 401 generic
  *   - login good password → 200 + Set-Cookie
  *   - me with valid principal → 200 + user
+ *   - me → org_role: the org-scoped token's role, null without an `org`
+ *     claim, null once the membership is revoked (fail-closed)
  *   - refresh path-only smoke (cookie wiring covered by middleware tests
  *     in stage 5; here we exercise the controller's own logic via the
  *     refresh cookie helper)
@@ -29,6 +31,8 @@
 #include "api/AuthController.hpp"
 #include "database/Database.hpp"
 #include "repositories/UserRepository.hpp"
+#include "tenancy/OrgMemberRepository.hpp"
+#include "tenancy/OrganizationRepository.hpp"
 #include "test_helpers.hpp"
 
 using json = nlohmann::json;
@@ -60,10 +64,51 @@ protected:
         if (::testing::Test::IsSkipped())
             return;
         // Wipe users between tests so create() / register() don't conflict.
+        // The org wipe comes first: org_members references users, and the
+        // /me org-role tests below seed a tenant per test.
+        TestHelpers::wipe_org_data();
         TestHelpers::truncate_users();
     }
 
     static HttpRequestPtr make_post(const json& body) { return TestHelpers::post_json(body); }
+
+    /// Register a user and return the persisted row — the org-role tests all
+    /// start from "a real user exists".
+    Domain::User register_user(const std::string& email) {
+        auto reg = make_post({{"email", email}, {"password", "rightpassword"}});
+        HttpResponsePtr regr;
+        controller.registerUser(reg, [&](const HttpResponsePtr& r) { regr = r; });
+        EXPECT_NE(regr, nullptr);
+        if (!regr)
+            return Domain::User{};
+        EXPECT_EQ(regr->statusCode(), k201Created);
+        Repositories::UserRepository users;
+        auto user = users.find_by_email(email);
+        EXPECT_TRUE(user.has_value());
+        return user ? *user : Domain::User{};
+    }
+
+    /// A GET request carrying a principal for @p user_id, optionally scoped to
+    /// an organization — exactly what the auth middleware stamps on after
+    /// verifying the access cookie.
+    static HttpRequestPtr me_request(const std::string& user_id, const std::string& org_id = "") {
+        auto req = HttpRequest::newHttpRequest();
+        req->setMethod(Get);
+        Security::Auth::AuthPrincipal principal;
+        principal.subject = user_id;
+        principal.org = org_id;
+        req->attributes()->insert(Security::Auth::kPrincipalAttr, principal);
+        return req;
+    }
+
+    /// Body of a successful GET /me for the given principal.
+    json me_body(const HttpRequestPtr& req) {
+        HttpResponsePtr resp;
+        controller.me(req, [&](const HttpResponsePtr& r) { resp = r; });
+        EXPECT_NE(resp, nullptr);
+        EXPECT_EQ(resp->statusCode(), k200OK);
+        return json::parse(std::string(resp->body()));
+    }
 };
 
 TEST_F(AuthFlowTest, registerCreatesUnconfirmedUser) {
@@ -199,6 +244,51 @@ TEST_F(AuthFlowTest, meReturnsUserForValidPrincipal) {
     EXPECT_EQ(resp->statusCode(), k200OK);
     auto body = json::parse(std::string(resp->body()));
     EXPECT_EQ(body["user"]["email"].get<std::string>(), "eve@example.com");
+}
+
+// /me carries the caller's role in the ORGANIZATION (org_members.role), not
+// the global user role: the SPA hides whole nav sections by it, so a wrong or
+// missing value here is a menu item that always answers 403 (or a section the
+// user could have used but never sees).
+TEST_F(AuthFlowTest, meReturnsOrgRoleForOrgScopedToken) {
+    auto user = register_user("frank@example.com");
+    Tenancy::OrganizationRepository orgs;
+    Tenancy::OrgMemberRepository members;
+    auto org = orgs.create("770124000001", "ТОО Тест", "snr_simplified", false);
+    members.add(org.id, user.id, "hr");
+
+    auto body = me_body(me_request(user.id, org.id));
+    EXPECT_EQ(body["user"]["email"].get<std::string>(), "frank@example.com");
+    ASSERT_TRUE(body.contains("org_role"));
+    EXPECT_EQ(body["org_role"].get<std::string>(), "hr");
+}
+
+TEST_F(AuthFlowTest, meReturnsNullOrgRoleWithoutOrgClaim) {
+    auto user = register_user("grace@example.com");
+    Tenancy::OrganizationRepository orgs;
+    Tenancy::OrgMemberRepository members;
+    auto org = orgs.create("770124000002", "ТОО Без клейма", "snr_simplified", false);
+    // Membership exists, but the token is unscoped — no org claim, no role.
+    members.add(org.id, user.id, "owner");
+
+    auto body = me_body(me_request(user.id));
+    ASSERT_TRUE(body.contains("org_role"));
+    EXPECT_TRUE(body["org_role"].is_null());
+}
+
+TEST_F(AuthFlowTest, meReturnsNullOrgRoleAfterMembershipRevoked) {
+    auto user = register_user("heidi@example.com");
+    Tenancy::OrganizationRepository orgs;
+    Tenancy::OrgMemberRepository members;
+    auto org = orgs.create("770124000003", "ТОО Отозванное членство", "snr_simplified", false);
+    members.add(org.id, user.id, "accountant");
+    ASSERT_TRUE(members.remove(org.id, user.id));
+
+    // Stale `org` claim + no membership row = fail-closed, same as
+    // Tenancy::org_context_of: no role at all, never the last known one.
+    auto body = me_body(me_request(user.id, org.id));
+    ASSERT_TRUE(body.contains("org_role"));
+    EXPECT_TRUE(body["org_role"].is_null());
 }
 
 TEST_F(AuthFlowTest, meRefuses401WhenNoPrincipal) {

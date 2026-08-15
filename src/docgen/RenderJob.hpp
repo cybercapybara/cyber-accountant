@@ -5,13 +5,31 @@
  *        (auto-escaped), compiles it to PDF with XeLaTeX, stores the PDF,
  *        and marks the document `final`.
  *
- * Payload: `{org_id, document_id, slug, input}`. On ANY failure (schema
- * rejection, missing template, XeLaTeX exit != 0, storage/DB error) this
- * throws — the job framework's retry/DLQ machinery takes over
+ * Payload: `{org_id, document_id, version_id, slug, input}`. On ANY failure
+ * (schema rejection, missing template, XeLaTeX exit != 0, storage/DB error)
+ * this throws — the job framework's retry/DLQ machinery takes over
  * (src/jobs/Dispatcher.hpp) and the document is left exactly as it was
- * (typically `draft`): `set_file`/`set_status` only run after the PDF has
- * already been compiled and durably stored, so there is no partial-success
- * state to unwind.
+ * (typically `draft`): `set_version_file`/`set_current_version`/
+ * `set_status_if` only run after the PDF has already been compiled and
+ * durably stored, so there is no partial-success state to unwind.
+ *
+ * P3 (migrations/018_document_versions.sql): the PDF's metadata belongs to a
+ * VERSION, not to the document row. The job fills in the version the payload
+ * NAMES and only then moves `current_version_id` onto it — that pointer move
+ * IS the publication of the render, and until it happens readers keep seeing
+ * the previous version's file rather than a half-written one.
+ *
+ * P3 task 10 — two properties this file is responsible for:
+ *   * the stored object is keyed on `version_id` (Files::version_key), so a
+ *     render of version N+1 cannot overwrite version N's PDF. A version is
+ *     evidence; the bytes behind a link already handed out may not change;
+ *   * a version that must not be rendered (already has a file, has been
+ *     superseded by a newer version, belongs to a voided document, or does
+ *     not exist in this org) is a NO-OP that returns `{..., skipped}` —
+ *     nothing is uploaded, nothing is written. The guard is state-based, not
+ *     a checksum comparison: nothing here sets SOURCE_DATE_EPOCH, so two
+ *     renders of identical input produce DIFFERENT bytes and "did someone
+ *     re-render this?" is not answerable from a digest.
  *
  * The XeLaTeX invocation (`docgen.latex_cmd` / `DOCGEN_LATEX_CMD`, default
  * `xelatex`) runs twice under `/usr/bin/timeout 60` — once for content, once
@@ -37,6 +55,7 @@
 #include <string>
 #include <vector>
 
+#include <spdlog/spdlog.h>
 #include <sys/wait.h>
 
 #include <nlohmann/json.hpp>
@@ -191,16 +210,33 @@ inline void render_and_compile(const std::string& slug, const json& input, const
 /**
  * @brief Worker-side handler for `docgen.render`.
  * @details On success: stores the compiled PDF under
- *          `Files::org_key(org_id, "generated", slug + ".pdf")` and marks
- *          the document `final`. Throws on any failure — the document stays
- *          in whatever status it already had (never touched until the PDF
- *          is durably stored).
+ *          `Files::version_key(org_id, "generated", version_id, slug + ".pdf")`
+ *          — a key that belongs to the VERSION, not to the document — fills
+ *          that version's file metadata, publishes it, and moves a still-draft
+ *          document to `final`. Throws on any failure — the document stays in
+ *          whatever status it already had (never touched until the PDF is
+ *          durably stored).
+ *
+ *          Returns `{document_id, version_id, skipped}` instead, WITHOUT
+ *          storing anything, when the version must not receive a render (see
+ *          Ledger::VersionRenderState). That is a normal completion, not a
+ *          failure: retrying could not change the answer, and the job
+ *          framework's DLQ is for things a human should look at.
  */
 inline json process_job(const json& payload) {
     const std::string org_id = payload.at("org_id").get<std::string>();
     const std::string document_id = payload.at("document_id").get<std::string>();
     const std::string slug = payload.at("slug").get<std::string>();
     const json input = payload.value("input", json::object());
+    // The version these bytes belong to. Every producer of `docgen.render`
+    // puts it in the payload (DocgenController, TaxController,
+    // PayrollController, HrController, LedgerDocumentsController::
+    // createVersion). Absent = a job enqueued by an older build and still in
+    // Redis across the deploy: those are resolved below, but only to an
+    // UNTOUCHED version 1 — see that block for why the fallback may not
+    // simply take whatever is newest. `.value`, not `.at`, only for that
+    // window.
+    std::string version_id = payload.value("version_id", std::string{});
 
     ScopedTempDir tmp("docgen-");
     render_and_compile(slug, input, tmp.path());
@@ -213,18 +249,114 @@ inline json process_job(const json& payload) {
     pdf_ss << pdf_file.rdbuf();
     const std::string pdf_bytes = pdf_ss.str();
 
+    Ledger::DocumentRepository documents;
+    if (version_id.empty()) {
+        // Legacy payload (see the version_id comment above): create() made
+        // version 1 in the same transaction as the document, so there is
+        // always at least one version to look at.
+        auto latest = documents.latest_version(org_id, document_id, /*from_primary=*/true);
+        if (!latest)
+            throw std::runtime_error("docgen: no version found for document " + document_id + " in org " + org_id);
+        // …but the fallback is BOUNDED to "version 1, no file yet", and that
+        // bound is the whole point. Such a job was enqueued by a build that
+        // did not name its version, i.e. before the deploy; its `input` is
+        // version 1's snapshot. Resolving "the newest version" at RENDER time
+        // would let an edit that landed in between receive version 1's input:
+        // the job would render stale input into version 2, publish it, and
+        // version 2's own job would then skip as already_rendered — leaving a
+        // document whose PDF contradicts its own input_snapshot. That is the
+        // exact class of defect versioning exists to remove, so anything
+        // other than the untouched version 1 is skipped rather than guessed
+        // at. A skipped legacy job is re-enqueueable by hand with the right
+        // version_id; a wrong PDF under a right-looking version number is
+        // not detectable at all.
+        if (latest->version_no != 1 || latest->s3_key.has_value()) {
+            const char* reason = latest->version_no != 1 ? "superseded" : "already_rendered";
+            spdlog::warn(
+                "docgen: payload for document {} carries no version_id and its newest version is {} (no {}); "
+                "skipping as {} rather than rendering stale input into it",
+                document_id,
+                latest->id,
+                latest->version_no != 1 ? "longer version 1" : "empty file slot",
+                reason);
+            return json{{"document_id", document_id}, {"version_id", latest->id}, {"skipped", reason}};
+        }
+        version_id = latest->id;
+        spdlog::warn(
+            "docgen: payload for document {} carries no version_id; falling back to its untouched version 1 {}",
+            document_id,
+            version_id);
+    }
+
+    // State is checked BEFORE the upload: a voided, superseded or
+    // already-rendered version must get neither an object in storage nor a
+    // row in the database. Returning (not throwing) is the point — the job
+    // ran fine, its result is simply no longer wanted, and a retry cannot
+    // change that.
+    const auto state = documents.version_render_state(org_id, document_id, version_id);
+    if (state != Ledger::VersionRenderState::kRenderable) {
+        const char* reason = state == Ledger::VersionRenderState::kMissing           ? "missing"
+                             : state == Ledger::VersionRenderState::kVoided          ? "voided"
+                             : state == Ledger::VersionRenderState::kAlreadyRendered ? "already_rendered"
+                                                                                     : "superseded";
+        spdlog::info("docgen: skipping render of version {} of document {}: {}", version_id, document_id, reason);
+        return json{{"document_id", document_id}, {"version_id", version_id}, {"skipped", reason}};
+    }
+
     const std::string checksum = Utils::Crypto::sha256_hex(pdf_bytes);
-    const std::string key = Files::org_key(org_id, "generated", slug + ".pdf");
+    // Keyed on the VERSION, not on the document: with one key per document,
+    // rendering version 2 would overwrite the object version 1's row still
+    // points at — silently replacing the bytes of a PDF someone may already
+    // have cited, which is precisely what document_versions exists to
+    // prevent. See Files::version_key for the layout and its tenant safety.
+    const std::string key = Files::version_key(org_id, "generated", version_id, slug + ".pdf");
     Storage::get().put(key, pdf_bytes, "application/pdf");
 
-    Ledger::DocumentRepository documents;
-    if (!documents.set_file(
-            org_id, document_id, key, checksum, "application/pdf", static_cast<long long>(pdf_bytes.size())))
-        throw std::runtime_error("docgen: set_file found no document " + document_id + " in org " + org_id);
-    if (!documents.set_status(org_id, document_id, "final"))
-        throw std::runtime_error("docgen: set_status found no document " + document_id + " in org " + org_id);
+    if (!documents.set_version_file(
+            org_id, version_id, key, checksum, "application/pdf", static_cast<long long>(pdf_bytes.size())))
+        throw std::runtime_error("docgen: set_version_file found no version " + version_id + " in org " + org_id);
+
+    // Publish: only now does the document report this file — and only while
+    // this version is still the newest one. "Version N+1 created, its render
+    // unfinished" keeps the pointer on N; a lost race (N+2 appeared while we
+    // rendered) is not an error, the next job publishes its own version.
+    //
+    // Accepted consequence, documented rather than fixed: if the FIRST render
+    // of a document loses this race and the newer version's render never
+    // succeeds (a template that stopped compiling, a job lost before its
+    // retry), `current_version_id` stays NULL — the document reports no file
+    // even though version 1's PDF is sitting in storage under its own key,
+    // and `download-url` honestly answers 409 no_file while
+    // `versions/1/download-url` still serves it. That is the deliberate
+    // trade: publishing version 1 here would make the document report an
+    // OLD file under a NEWER version number, which for evidence is worse
+    // than reporting none. The state is pinned by
+    // RenderJobTest::IsANoOpForASupersededVersion.
+    if (!documents.set_current_version(org_id, document_id, version_id)) {
+        // set_current_version() returns false for the whole family of "this
+        // (document, version) pair is not publishable right now": the version
+        // is no longer the document's newest (the expected race, and why this
+        // is an info, not an error), or the document/version pair does not
+        // exist in this org at all (the org predicate task 9 added). The
+        // former is the only one reachable from here — version_render_state()
+        // just confirmed the pair — so the skip code stays "superseded", but
+        // the message no longer claims to know which.
+        spdlog::info(
+            "docgen: not publishing version {} of document {}: it is no longer the document's newest "
+            "version, or the (document, version) pair no longer exists in org {}",
+            version_id,
+            document_id,
+            org_id);
+        return json{{"document_id", document_id}, {"version_id", version_id}, {"skipped", "superseded"}};
+    }
+    // Status moves only for a still-draft document: 'sent' and the inbound
+    // lifecycle (inbox/recognized/linked/archived) are not this job's to roll
+    // back, and neither is an aborted transition someone made while we
+    // rendered.
+    documents.set_status_if(org_id, document_id, "draft", "final");
 
     return json{{"document_id", document_id},
+                {"version_id", version_id},
                 {"slug", slug},
                 {"key", key},
                 {"checksum_sha256", checksum},

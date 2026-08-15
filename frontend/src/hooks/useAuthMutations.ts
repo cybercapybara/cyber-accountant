@@ -3,15 +3,34 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api/client';
 import { qk } from '@/lib/api/queryKeys';
 import { clearSelectedOrgId } from '@/lib/api/orgSession';
+import type { MeResponse } from '@/lib/api/types';
+
+/**
+ * Что кладётся в кэш `['me']` после логина. Ключ хранит КОНВЕРТ /me
+ * ({user, org_role}) — useMe() и useOrgRole() читают его двумя select'ами,
+ * — а не голого пользователя: голый User превратил бы `useMe().data` в
+ * null (у него нет поля `user`), и ProtectedRoute немедленно отправил бы
+ * только что вошедшего обратно на /login.
+ *
+ * `/auth/login` отдаёт ту же схему MeResponse, но БЕЗ `org_role` (роль в
+ * организации знает только /me), поэтому здесь она нормализуется в null:
+ * до ответа /me меню fail-closed показывает лишь то, что ролью не гейтится.
+ * Вынесено отдельной чистой функцией, потому что setQueryData не типизирует
+ * значение по ключу — это ровно тот шов, в который проскакивает
+ * рассогласование формы кэша.
+ */
+export function meCacheSeed(response: MeResponse): MeResponse {
+  return { user: response.user, org_role: response.org_role ?? null };
+}
 
 export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (vars: { email: string; password: string }) =>
-      (await api.postJson('/api/v1/auth/login', { body: vars })).user,
-    onSuccess: (user) => {
+    mutationFn: (vars: { email: string; password: string }) =>
+      api.postJson('/api/v1/auth/login', { body: vars }),
+    onSuccess: (response) => {
       // Seed the cache so the UI flips instantly, then revalidate.
-      qc.setQueryData(qk.me(), user);
+      qc.setQueryData<MeResponse | null>(qk.me(), meCacheSeed(response));
       qc.invalidateQueries({ queryKey: qk.me() });
     },
   });

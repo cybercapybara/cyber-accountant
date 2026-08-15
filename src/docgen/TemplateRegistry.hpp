@@ -244,8 +244,13 @@ private:
                 return json::array();
             if (type == "string")
                 return "";
-            // number/boolean/other: no shipped schema declares an optional
-            // field of these types today, so there is no default to invent.
+            // number/boolean/other -> JSON null. Since P3 one shipped schema
+            // DOES declare an optional integer (invoice/avr's `vat_tiyn`), so
+            // this branch is reachable; null is still the right answer and is
+            // inert, because no template prints a *_tiyn field — templates
+            // only ever print the string the server formatted from it, and
+            // that string is absent too when the integer is. Do not "fix"
+            // this to 0: an absent optional amount is not an amount of zero.
             return nullptr;
         }
 

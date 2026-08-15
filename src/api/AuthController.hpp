@@ -38,6 +38,7 @@
 #include "security/RateLimit.hpp"
 #include "security/SessionStore.hpp"
 #include "security/Tokens.hpp"
+#include "tenancy/OrgContext.hpp"
 #include "tenancy/OrgMemberRepository.hpp"
 #include "utils/Config.hpp"
 #include "utils/Crypto.hpp"
@@ -257,9 +258,10 @@ public:
     // ---------------------------------------------------------------------
     // GET /api/auth/me
     //
-    // Returns the authenticated user. Requires a valid access token (the
-    // global auth middleware already gates the path). 401 if missing /
-    // expired; 404 if the user row vanished mid-session.
+    // Returns the authenticated user plus the caller's role in the
+    // organization the access token is scoped to. Requires a valid access
+    // token (the global auth middleware already gates the path). 401 if
+    // missing / expired; 404 if the user row vanished mid-session.
     // ---------------------------------------------------------------------
     void me(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         auto principal = Security::Auth::principal_of(req);
@@ -273,7 +275,14 @@ public:
             callback(ErrorResponse::not_found("user"));
             return;
         }
-        callback(Response::ok({{"user", *user}}));
+        // Роль в ОРГАНИЗАЦИИ (org_members.role), не системная роль
+        // пользователя: SPA нужна именно она, чтобы прятать разделы меню
+        // по матрице §5.3, а до P3 её отдавал только GET /orgs/mine.
+        // nullptr, когда у токена нет клейма org или членство отозвано —
+        // ровно тот же fail-closed, что у Tenancy::org_context_of.
+        auto org_ctx = Tenancy::org_context_of(req);
+        const json payload = {{"user", json(*user)}, {"org_role", org_ctx ? json(org_ctx->role) : json(nullptr)}};
+        callback(Response::ok(payload));
     }
 
 private:

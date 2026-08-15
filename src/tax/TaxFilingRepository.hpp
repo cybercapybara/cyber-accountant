@@ -17,7 +17,7 @@
  * carries the printable form BEFORE it writes the row (see
  * Api::TaxController::createFiling's ordering), so there is no
  * "known-only-later" column of the kind that forced
- * Ledger::DocumentRepository's set_pending_upload/set_file split.
+ * Ledger::DocumentRepository's set_pending_upload/set_version_file split.
  */
 
 #pragma once

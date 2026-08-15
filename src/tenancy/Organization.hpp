@@ -58,11 +58,13 @@ inline void to_json(nlohmann::json& j, const Organization& o) {
     };
 }
 
-/// The three tenancy roles org_members.role is CHECK-constrained to
-/// (migrations/006_organizations.sql). Kept here so callers can validate a
-/// role value before it ever reaches the database.
+/// The four tenancy roles org_members.role is CHECK-constrained to
+/// (migrations/006_organizations.sql + migrations/017_hr_role.sql). Kept
+/// here so callers can validate a role value before it ever reaches the
+/// database. What each role may actually DO is Tenancy::OrgPerm::allows
+/// (src/tenancy/OrgPermissions.hpp), not this function.
 inline bool is_valid_role(const std::string& role) {
-    return role == "owner" || role == "accountant" || role == "viewer";
+    return role == "owner" || role == "accountant" || role == "hr" || role == "viewer";
 }
 
 }  // namespace Tenancy

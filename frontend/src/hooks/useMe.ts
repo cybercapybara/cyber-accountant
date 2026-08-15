@@ -18,15 +18,23 @@ import type { MeResponse } from '@/lib/api/types';
  * The query function behind useMe, exported so its 401-vs-error contract
  * can be unit-tested without rendering a React tree (the test stack has no
  * @testing-library/react). 401 → null (logged out); anything else throws.
+ *
+ * Полный конверт /me: пользователь + его роль в текущей организации.
  */
-export async function fetchMe(): Promise<MeResponse['user'] | null> {
+export async function fetchMeEnvelope(): Promise<MeResponse | null> {
   const { data, error } = await api.GET('/api/v1/auth/me');
   if (error) {
     if (error.status === 401) return null; // no session
     throw error; // network / 5xx — surface as a real error
   }
   if (!data) throw new Error('failed to fetch /me');
-  return data.user;
+  return data;
+}
+
+/** The user slice of the envelope — kept as a named export because it is
+ *  the shape the route guard and its tests reason about. */
+export async function fetchMe(): Promise<MeResponse['user'] | null> {
+  return (await fetchMeEnvelope())?.user ?? null;
 }
 
 /**
@@ -39,12 +47,41 @@ export function shouldRetryMe(failureCount: number, error: unknown): boolean {
   return failureCount < 2;
 }
 
+/**
+ * Два среза одного конверта. Экспортированы отдельно, потому что кэш
+ * `['me']` не типизирован в точке записи (setQueryData): тест, прогоняющий
+ * посев кэша через ЭТИ функции, ловит рассогласование формы (голый User
+ * вместо конверта) там, где типы молчат.
+ */
+export const selectMeUser = (envelope: MeResponse | null | undefined) => envelope?.user ?? null;
+export const selectMeOrgRole = (envelope: MeResponse | null | undefined) =>
+  envelope?.org_role ?? null;
+
+/** Форма прежняя (пользователь или null) — ни один существующий
+ *  потребитель useMe() не меняется. */
 export function useMe() {
   return useQuery({
     queryKey: qk.me(),
-    queryFn: fetchMe,
+    queryFn: fetchMeEnvelope,
     // Don't retry a deliberate "logged out" answer; do retry transient
     // failures (default exponential backoff applies to thrown errors).
     retry: shouldRetryMe,
+    select: selectMeUser,
+  });
+}
+
+/**
+ * Роль в организации (org_members.role) из ТОГО ЖЕ ответа: один сетевой
+ * запрос, два среза кэша — отдельный useQuery на /orgs/mine дал бы второй
+ * запрос и вторую точку рассинхронизации. null = у токена нет клейма org
+ * (или членство отозвано); потребители обязаны трактовать это как «прав
+ * нет», а не «прав сколько угодно».
+ */
+export function useOrgRole() {
+  return useQuery({
+    queryKey: qk.me(),
+    queryFn: fetchMeEnvelope,
+    retry: shouldRetryMe,
+    select: selectMeOrgRole,
   });
 }

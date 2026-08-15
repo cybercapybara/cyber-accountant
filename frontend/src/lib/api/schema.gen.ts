@@ -1808,12 +1808,12 @@ export interface paths {
                         /** Format: uuid */
                         user_id: string;
                         /** @enum {string} */
-                        role: "owner" | "accountant" | "viewer";
+                        role: "owner" | "accountant" | "hr" | "viewer";
                     } | {
                         /** Format: email */
                         email: string;
                         /** @enum {string} */
-                        role: "owner" | "accountant" | "viewer";
+                        role: "owner" | "accountant" | "hr" | "viewer";
                     };
                 };
             };
@@ -1938,7 +1938,7 @@ export interface paths {
                 content: {
                     "application/json": {
                         /** @enum {string} */
-                        role: "owner" | "accountant" | "viewer";
+                        role: "owner" | "accountant" | "hr" | "viewer";
                     };
                 };
             };
@@ -2013,7 +2013,7 @@ export interface paths {
                         "application/json": components["schemas"]["CounterpartyListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read counterparties (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2119,7 +2119,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read counterparties (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2230,7 +2230,7 @@ export interface paths {
                         "application/json": components["schemas"]["AccountListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read the chart of accounts (journal/read) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2332,7 +2332,7 @@ export interface paths {
                         "application/json": components["schemas"]["DocumentListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read either documents or hr_docs (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2393,7 +2393,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2411,6 +2411,187 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        /**
+         * Delete a document that is not linked to a posted journal entry
+         * @description Physically deletes the document row together with its versions and its
+         *     `document_entries` links. What decides deletable-versus-voidable is
+         *     NOT the status but the LINK: a document tied to a `posted` (or
+         *     `reversed`) journal entry can never be deleted — the ledger is
+         *     insert-only and is corrected by storno — so it answers 409
+         *     `document_has_posted_entries` and must be voided instead
+         *     (`POST /documents/{id}/void`). Keying this on `status='draft'` would be
+         *     wrong: only `source=generated` documents ever carry that status, so an
+         *     uploaded or emailed scan (`inbox -> recognized -> linked -> archived`)
+         *     could never be deleted at all.
+         *
+         *     A link to a DRAFT entry does not block deletion: `document_entries`
+         *     cascades and the draft is left without its document, which is accepted
+         *     and written to the audit log (`document.delete`).
+         *
+         *     An HR document referenced by an HR order (`hr_orders.document_id`) or
+         *     by a tax filing (`tax_filings.document_id`) is a 409
+         *     `document_referenced`, not a 500: those foreign keys are NO ACTION, and
+         *     the resulting SQLSTATE 23503 is translated into that conflict.
+         *
+         *     An already-VOIDED document cannot be deleted either — 409
+         *     `document_voided`. Voiding is a deliberate audit act with an author and
+         *     a reason; letting a later delete erase it would defeat the purpose of
+         *     the three columns.
+         *
+         *     Object-storage retention policy: the stored objects in S3 are NOT
+         *     removed — only the metadata is deleted. There is no reaper job in P3,
+         *     so a deleted document's object is orphaned permanently. This is a
+         *     known, tracked leak (cybercapybara/cyber-accountant#11), not an
+         *     oversight.
+         *
+         *     Write-gated per document (`hr_docs` for `doc_type=hr`, `documents`
+         *     otherwise), checked after the row is located so another organization's
+         *     document stays a 404.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted (no body) */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a document belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description document_has_posted_entries (linked to a posted/reversed journal entry), document_referenced (an HR order or a tax filing points at it) — void it instead — or document_voided (an already-voided document is an audit record and is never deletable) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/void": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Void a document (keeps the row, the file and the history)
+         * @description The alternative to deletion for a document that may not be destroyed.
+         *     The row, its stored file and its whole version history stay exactly
+         *     where they are; three columns are filled in — `voided_at`,
+         *     `voided_by_user_id`, `void_reason`. `status` is deliberately NOT
+         *     touched: writing a `void` status would erase whether the document was
+         *     `final` or `sent`, which is precisely what an audit needs, and it would
+         *     collide with the already-taken `archived`.
+         *
+         *     `reason` is mandatory and must not be blank after trimming — an absent
+         *     or wrongly-typed field is a 400, a whitespace-only one is a 422.
+         *     Voiding twice is a 409 `already_voided`: the FIRST decision and its
+         *     author are what matter, not the last.
+         *
+         *     A voided document cannot be edited (`POST /documents/{id}/versions`
+         *     answers 409 `document_voided`) and an already-queued render will not
+         *     resurrect it — the render job sees the void and no-ops.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["VoidDocumentRequest"];
+                };
+            };
+            responses: {
+                /** @description The voided document */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentDetailResponse"];
+                    };
+                };
+                /** @description Malformed id, malformed JSON body, or `reason` missing / not a string */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a document belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description already_voided — this document was already voided */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description `reason` is blank after trimming, or longer than 1000 characters */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -2430,9 +2611,13 @@ export interface paths {
         put?: never;
         /**
          * Mint a presigned download URL for this document's stored file
-         * @description Read-only — mints a time-limited S3 GET URL (TTL 300s) and writes
-         *     nothing, so this route does NOT reject viewers the way the mutating
-         *     ledger routes do.
+         * @description POST, but semantically a READ — it mints a time-limited S3 GET URL
+         *     (TTL 300s) and writes nothing, so it carries no write gate. It DOES
+         *     carry the same per-document read gate as `GET /documents/{id}`:
+         *     `doc_type=hr` rows are the `hr_docs` resource, every other document
+         *     is `documents`, and a role without read on that resource gets 403
+         *     `org_role_denied` (checked after the row is located, so another
+         *     organization's document stays a 404).
          */
         post: {
             parameters: {
@@ -2461,7 +2646,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2476,6 +2661,253 @@ export interface paths {
                     content?: never;
                 };
                 /** @description This document has no stored file yet (empty s3_key) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Presigning requires the S3 storage backend */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * List a document's versions (oldest first)
+         * @description The document's history. A READ of the document, gated exactly like
+         *     `GET /documents/{id}` — `doc_type=hr` rows are the `hr_docs`
+         *     resource, every other document is `documents`, checked after the row
+         *     is located so another organization's document stays a 404.
+         *     `input_snapshot` is deliberately absent from every item: it is the
+         *     full render input, signatories and money included.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Every version of this document, ascending by version_no */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentVersionListResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a document belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Edit a document: append a new version and queue its render
+         * @description An accounting document is evidence, so an edit never overwrites a
+         *     file: it appends a version, queues a `docgen.render` job for it, and
+         *     leaves the previous PDF in storage, reachable through
+         *     `POST /documents/{id}/versions/{version_no}/download-url`. Until the
+         *     new render finishes, the document keeps reporting the PREVIOUS
+         *     version's file.
+         *
+         *     The body is `{input}` and is NOT a version snapshot — it passes
+         *     through exactly the same allowlist as creation; see
+         *     `CreateDocumentVersionRequest` for what that admits per template and
+         *     why. A field outside the allowlist is a 422 `not_allowed_override`
+         *     and nothing is written.
+         *
+         *     Only a document with `source='generated'` AND a `template_slug` can
+         *     be edited; `uploaded`/`email` documents have no render input by
+         *     construction and are a 409 `not_editable`. Write-gated per document
+         *     (`hr_docs` for `doc_type=hr`, `documents` otherwise), checked after
+         *     the row is located.
+         *
+         *     The body is optional: sending none (or `{}`) edits nothing and queues
+         *     a faithful re-render of the version's stored input. A body that is
+         *     present but is not a JSON object (`null`, `[]`, `"x"`, `5`) is a 400
+         *     `invalid_json`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["CreateDocumentVersionRequest"];
+                };
+            };
+            responses: {
+                /** @description Version appended, render queued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CreateDocumentVersionResponse"];
+                    };
+                };
+                /** @description Malformed id, a body that is not a JSON object (invalid_json), or `input` present and not an object */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a document belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description not_editable (source is uploaded/email, or the document has no template_slug), or document_voided (a voided document cannot be edited) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description not_allowed_override (a field outside the creation allowlist, including a server-derived money string), or schema_validation_failed */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description jobs_disabled — the job queue is not enabled, so nothing would render the new version */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/versions/{version_no}/download-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                version_no: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a presigned download URL for ONE version of a document
+         * @description The counterpart of `POST /documents/{id}/download-url` for a
+         *     historical version — the point of versioning is that superseding a
+         *     document does not take its earlier evidence away. POST, but
+         *     semantically a READ: it writes nothing and carries the same
+         *     per-document read gate. The TTL caveat on `DownloadUrlResponse.url`
+         *     applies here too.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    version_no: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Presigned URL for this version's stored file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DownloadUrlResponse"];
+                    };
+                };
+                /** @description Malformed id, or invalid_version (version_no is not a positive integer) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found — the document (including one belonging to another organization) or the version number */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description no_file — this version has no stored file yet (its render has not finished) */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -2705,7 +3137,7 @@ export interface paths {
                         "application/json": components["schemas"]["JournalEntryListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read the journal (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2811,7 +3243,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read the journal (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2985,7 +3417,7 @@ export interface paths {
         };
         /**
          * List registered docgen templates (slug, version, schema)
-         * @description Scans templates/latex/ (Docgen::TemplateRegistry::list()) — read-only, no viewer gate.
+         * @description Scans templates/latex/ (Docgen::TemplateRegistry::list()). Read-only, but NOT ungated: the template registry is the shape of the primary documents a role may not see, and "—" in the §5.3 matrix means invisible, not read-only — so this requires `documents`/read and answers 403 org_role_denied without it (the `hr` role, for one).
          */
         get: {
             parameters: {
@@ -3005,7 +3437,7 @@ export interface paths {
                         "application/json": components["schemas"]["DocTemplateListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read documents (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3075,7 +3507,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description template_slug is not a registered template, input fails the template's JSON Schema, or counterparty_id/link_entry_id does not belong to this organization */
+                /** @description unsupported_template (a real template, but not one this endpoint generates) / unknown_template / not_allowed_override / missing / not_integer / out_of_range / exceeds_total (invoice, avr: vat_tiyn may not exceed total_tiyn) / inconsistent_total (tax_invoice: amount_tiyn + vat_tiyn must equal with_vat_tiyn) / schema_validation_failed, or counterparty_id/link_entry_id does not belong to this organization */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -3126,7 +3558,7 @@ export interface paths {
                         "application/json": components["schemas"]["EmployeeListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read employees (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3136,7 +3568,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create an employee (accountant/owner only) */
+        /** Create an employee (owner/accountant/hr) */
         post: {
             parameters: {
                 query?: never;
@@ -3232,7 +3664,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read employees (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3254,7 +3686,7 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * Patch an employee's editable fields (accountant/owner only)
+         * Patch an employee's editable fields (owner/accountant/hr)
          * @description Patches every field Hr::EmployeeRepository::update() allows in one
          *     call — hired_on/status/dismissed_on are NOT among them.
          *     Including any of those three (non-null) in the body is rejected with
@@ -3337,7 +3769,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Dismiss an employee (accountant/owner only)
+         * Dismiss an employee (owner/accountant/hr)
          * @description Sets status='dismissed' and dismissed_on in one call — the only way
          *     to change either field (Hr::EmployeeRepository::dismiss()). A wrong
          *     org, a missing id, and an already-dismissed employee are all
@@ -3440,7 +3872,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read hr_docs (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3450,7 +3882,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create an HR order (accountant/owner only) */
+        /** Create an HR order (owner/accountant/hr) */
         post: {
             parameters: {
                 query?: never;
@@ -3514,7 +3946,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Generate the hr_order document for an HR order (accountant/owner only)
+         * Generate the hr_order document for an HR order (owner/accountant/hr)
          * @description Builds the hr_order template input from the order + its employee +
          *     the organization, deep-merges an optional request body on top for
          *     the free-text fields not on file (director, reason, details, ...),
@@ -3625,7 +4057,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read hr_docs (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3635,7 +4067,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create a labor contract (accountant/owner only) */
+        /** Create a labor contract (owner/accountant/hr) */
         post: {
             parameters: {
                 query?: never;
@@ -3699,7 +4131,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Generate the labor_contract document for a labor contract (accountant/owner only)
+         * Generate the labor_contract document for a labor contract (owner/accountant/hr)
          * @description Same shape as the hr-orders variant, sourced from the contract + its
          *     employee + the organization. labor_contracts has no document_id
          *     column, so there is no attach-back step here.
@@ -3808,7 +4240,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read hr_docs (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3818,7 +4250,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Create a vacation record (accountant/owner only) */
+        /** Create a vacation record (owner/accountant/hr) */
         post: {
             parameters: {
                 query?: never;
@@ -3900,7 +4332,7 @@ export interface paths {
                         "application/json": components["schemas"]["PayrollRunListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read payroll (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4164,7 +4596,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read payroll (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4203,15 +4635,14 @@ export interface paths {
         /**
          * Generate the payslip document for one employee of a run (accountant/owner only)
          * @description Builds the `payslip` template input from the payslip + employee +
-         *     organization, deep-merges an optional request body on top for the
-         *     one field not on file (`net_words`), creates a draft document
-         *     (doc_type='hr', source='generated') and enqueues a docgen.render job
-         *     — same async contract as POST /documents/generate. Every other field
-         *     is authoritative (the payslip's own amounts, the employee's iin/name,
-         *     the organization's bin/name) and CANNOT be overridden: any other body
-         *     key is a 422 `not_allowed_override` naming that field, checked before
-         *     the merge. Amounts are rendered with Ledger::format_tiyn
-         *     ("300000.00").
+         *     organization, creates a draft document (doc_type='hr',
+         *     source='generated') and enqueues a docgen.render job — same async
+         *     contract as POST /documents/generate. Every field is authoritative
+         *     (the payslip's own amounts, the employee's iin/name, the
+         *     organization's bin/name, and `net_words` derived from the payslip's
+         *     net) and CANNOT be overridden: any body key is a 422
+         *     `not_allowed_override` naming that field, checked before the merge.
+         *     Amounts are rendered with Ledger::format_tiyn ("300000.00").
          */
         post: {
             parameters: {
@@ -4259,7 +4690,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description The body tries to override a field derived from stored data (not_allowed_override), or the merged input fails the payslip template's JSON Schema (e.g. net_words was not supplied) */
+                /** @description The body tries to override a field derived from stored data (not_allowed_override — since P3 that is ANY key, `net_words` included), or the input fails the payslip template's JSON Schema */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -4316,7 +4747,7 @@ export interface paths {
                         "application/json": components["schemas"]["TaxRatesResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4372,7 +4803,7 @@ export interface paths {
                         "application/json": components["schemas"]["TaxCalculationListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4481,7 +4912,7 @@ export interface paths {
                         "application/json": components["schemas"]["TaxAlertListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4541,7 +4972,7 @@ export interface paths {
                         "application/json": components["schemas"]["TaxDeadlineListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4595,7 +5026,7 @@ export interface paths {
                         "application/json": components["schemas"]["TaxFilingListResponse"];
                     };
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4721,7 +5152,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4761,8 +5192,9 @@ export interface paths {
          * @description `artifact=xml` points at the filing's own `xml_s3_key`;
          *     `artifact=pdf` points at the linked document's `s3_key`, written by
          *     the docgen.render worker — the two are always different objects.
-         *     Read-only (mints a URL, writes nothing), so this route does NOT
-         *     reject viewers.
+         *     POST, but semantically a READ — it mints a URL and writes nothing,
+         *     so it carries no write gate; it is gated as `tax`/read, exactly like
+         *     `GET /tax/filings/{id}`.
          */
         post: {
             parameters: {
@@ -4793,7 +5225,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or your organization role is not allowed to read tax (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -5193,6 +5625,11 @@ export interface components {
         };
         MeResponse: {
             user: components["schemas"]["User"];
+            /**
+             * @description The caller's role in the organization the access token is scoped to; null when the token carries no org claim
+             * @enum {string|null}
+             */
+            org_role?: "owner" | "accountant" | "hr" | "viewer" | null;
         };
         UserDetailResponse: {
             data: components["schemas"]["User"];
@@ -5226,7 +5663,7 @@ export interface components {
         };
         OrganizationWithRole: components["schemas"]["Organization"] & {
             /** @enum {string} */
-            role: "owner" | "accountant" | "viewer";
+            role: "owner" | "accountant" | "hr" | "viewer";
         };
         OrganizationListResponse: {
             data: components["schemas"]["Organization"][];
@@ -5248,7 +5685,7 @@ export interface components {
             /** Format: uuid */
             user_id: string;
             /** @enum {string} */
-            role: "owner" | "accountant" | "viewer";
+            role: "owner" | "accountant" | "hr" | "viewer";
             created_at: string;
             updated_at: string;
         };
@@ -5261,7 +5698,7 @@ export interface components {
             /** Format: email */
             email: string;
             /** @enum {string} */
-            role: "owner" | "accountant" | "viewer";
+            role: "owner" | "accountant" | "hr" | "viewer";
             created_at: string;
         };
         MembersListResponse: {
@@ -5365,17 +5802,40 @@ export interface components {
             status: "inbox" | "recognized" | "linked" | "archived" | "draft" | "final" | "sent";
             /** Format: uuid */
             counterparty_id: string | null;
+            /** @description Read from the CURRENT version (document_versions), not from the document row; null while no version is published */
             s3_key: string | null;
+            /** @description Read from the CURRENT version (document_versions), not from the document row */
             checksum_sha256: string | null;
+            /** @description Read from the CURRENT version (document_versions), not from the document row */
             mime: string | null;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Read from the CURRENT version (document_versions), not from the document row
+             */
             size_bytes: number | null;
             template_slug: string | null;
+            /** @description Read from the CURRENT version (document_versions), not from the document row */
             template_version: string | null;
-            /** @description Docgen input snapshot for source=generated rows; for source=uploaded rows via POST /documents/uploads it instead holds {"original_filename": "..."} — see Document.hpp */
+            /** @description Docgen input snapshot for source=generated rows; for source=uploaded rows via POST /documents/uploads it instead holds {"original_filename": "..."} — see Document.hpp. Read from the CURRENT version (document_versions), not from the document row */
             input_snapshot: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Format: uuid
+             * @description Current (published) version; null while the first render has not finished
+             */
+            current_version_id: string | null;
+            /** @description Highest existing version number; may exceed the current version while a render is in flight */
+            latest_version_no: number;
+            /** @description Set by POST /documents/{id}/void. Voiding lives in THESE columns, never in `status` — writing a void status would erase whether the document was final or sent, which is exactly what an audit needs. A voided document stays listable and downloadable; it is marked, not hidden */
+            voided_at: string | null;
+            /**
+             * Format: uuid
+             * @description Who voided it. May be null even on a voided document: the FK is ON DELETE SET NULL so deleting a user is never blocked by this row
+             */
+            voided_by_user_id: string | null;
+            /** @description Why it was voided — required (non-blank) when voiding */
+            void_reason: string | null;
             created_at: string;
             updated_at: string;
         };
@@ -5406,8 +5866,54 @@ export interface components {
             checksum_sha256: string;
         };
         DownloadUrlResponse: {
-            /** @description Presigned S3 GET URL, TTL 300s */
+            /** @description Presigned S3 GET URL, TTL 300s. A URL already issued keeps working until its TTL expires even if the document is later voided or the version superseded — revoking it would require proxying downloads, which this service does not do */
             url: string;
+        };
+        DocumentVersion: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            document_id: string;
+            /** @description Starts at 1; an edit appends the next number */
+            version_no: number;
+            /** @description null until this version's render has stored its file */
+            s3_key: string | null;
+            checksum_sha256: string | null;
+            mime: string | null;
+            /** Format: int64 */
+            size_bytes: number | null;
+            /** @description The on-disk template version this render used, e.g. 'v1' */
+            template_version: string | null;
+            /** Format: uuid */
+            created_by_user_id: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        DocumentVersionListResponse: {
+            data: components["schemas"]["DocumentVersion"][];
+        };
+        CreateDocumentVersionRequest: {
+            /** @description NOT a version snapshot. The edit goes through exactly the same allowlist as creation (Docgen::InputPolicy), because input_snapshot is precisely what the render job renders, and accepting it verbatim would reopen the forgery hole P2 closed. For a caller-authored slug (invoice, avr, waybill, tax_invoice, reconciliation) the whole object is taken, exactly as by POST /documents/generate, and runs the same money derivation — money is INTEGER tiyn (total_tiyn, or totals.*_tiyn), and a client-supplied total/total_words/totals.* string is a 422 not_allowed_override. For every server-built form (fno_910, fno_300, payslip, hr_order, labor_contract) ONLY the keys in Docgen::InputPolicy::editable_fields(slug) are accepted, merged over the PREVIOUS version's snapshot, so every server-derived figure is carried forward unchanged; any other key is a 422 not_allowed_override and nothing is written. */
+            input?: {
+                [key: string]: unknown;
+            };
+        };
+        CreateDocumentVersionResponse: {
+            /** Format: uuid */
+            document_id: string;
+            /**
+             * Format: uuid
+             * @description The version this edit appended
+             */
+            version_id: string;
+            /** @description The new version number. The document keeps reporting the PREVIOUS version's file until this one's render finishes */
+            version_no: number;
+            /** @description false if the docgen.render job could not be enqueued (e.g. a transient Redis error) — the version row still exists; an operator must re-enqueue it */
+            render_queued: boolean;
+        };
+        VoidDocumentRequest: {
+            /** @description Why the document is being voided. Mandatory and non-blank after trimming: voiding without a reason is not a state, it is a lost audit record. Stored TRIMMED in documents.void_reason alongside voided_at and voided_by_user_id. */
+            reason: string;
         };
         JournalLine: {
             /** Format: uuid */
@@ -5478,11 +5984,11 @@ export interface components {
         };
         GenerateDocumentCreate: {
             /**
-             * @description Also the resulting document's doc_type — the mapping is the identity function
+             * @description Also the resulting document's doc_type — the mapping is the identity function. A slug outside this enum that nevertheless exists on disk (payslip, fno_910, fno_300, hr_order, labor_contract) is now a 422 unsupported_template, not the 500 it produced before P3 — those templates belong to the tax-filing, payroll and HR endpoints that hold their authoritative data
              * @enum {string}
              */
             template_slug: "invoice" | "avr" | "waybill" | "tax_invoice" | "reconciliation";
-            /** @description Validated against the template's JSON Schema */
+            /** @description Validated against the template's JSON Schema. Money is supplied as INTEGER tiyn — total_tiyn for invoice/avr/waybill, plus an OPTIONAL vat_tiyn for invoice/avr which must not exceed total_tiyn (422 exceeds_total); totals.amount_tiyn + totals.vat_tiyn + totals.with_vat_tiyn for tax_invoice, and those must sum exactly (422 inconsistent_total). The server formats every money STRING and derives the amount in words, so total/total_words/vat_amount/totals.amount/totals.vat/totals.with_vat in the request are a 422 not_allowed_override. vat_rate is a RATE, not an amount, and stays caller-authored free text. Scope: the document TOTAL lines only — per-line items[] figures stay free-form and are not reconciled against them */
             input?: {
                 [key: string]: unknown;
             };
@@ -5626,7 +6132,7 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** @description Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid. ALLOWLISTED — hr_order accepts director/reason/details; labor_contract accepts salary_words/work_schedule/probation_months/employer.director/employer.address/employee.address. Anything else is rejected 422 not_allowed_override naming that field */
+        /** @description Merged on top of the auto-derived base input before template-schema validation; an empty/absent body is valid. ALLOWLISTED — hr_order accepts director/reason/details; labor_contract accepts work_schedule/probation_months/employer.director/employer.address/employee.address. Anything else — including salary_words and salary_words_kk, which the server derives from employees.salary_tiyn — is rejected 422 not_allowed_override naming that field */
         GenerateHrDocumentExtra: {
             [key: string]: unknown;
         };
@@ -5813,7 +6319,7 @@ export interface components {
              */
             entry_id: string;
         };
-        /** @description Merged on top of the auto-derived base input before template-schema validation. ALLOWLISTED — `net_words` is the only accepted key; anything else is rejected 422 not_allowed_override naming that field */
+        /** @description Merged on top of the auto-derived base input before template-schema validation. ALLOWLISTED — the allowlist is EMPTY since P3 (`net_words` is derived from the payslip's net), so an empty/absent body is the only valid body; any key is rejected 422 not_allowed_override naming that field */
         PayslipDocumentExtra: {
             [key: string]: unknown;
         };
@@ -5989,7 +6495,7 @@ export interface components {
              * @description 910.00 needs a snr_simplified calculation, 300.00 a vat one (422 kind_mismatch otherwise); must belong to the caller's organization
              */
             calculation_id: string;
-            /** @description Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. ALLOWLISTED — only the fields the database cannot hold may appear: director, accountant, tax_words (910.00); director, accountant, balance_words (300.00). Any other key — the org identity, the period, and every amount including the ФНО 300.00 revenue turnover `sales_tenge`, which is derived from the calculation's own snapshot — is rejected 422 not_allowed_override naming that field, before the merge happens. Left open here (additionalProperties) because the accepted set depends on `kind`; the server is the authority */
+            /** @description Deep-merged (RFC 7396) over the auto-derived print-form input before template-schema validation. ALLOWLISTED — only the fields the database cannot hold may appear: director and accountant, for both forms. Any other key — including tax_words (910.00) and balance_words (300.00), which the server now derives from the same integers the XML filing is built from — the org identity, the period, and every amount including the ФНО 300.00 revenue turnover `sales_tenge`, which is derived from the calculation's own snapshot — is rejected 422 not_allowed_override naming that field, before the merge happens. Left open here (additionalProperties) because the accepted set depends on `kind`; the server is the authority */
             document_input?: {
                 [key: string]: unknown;
             };

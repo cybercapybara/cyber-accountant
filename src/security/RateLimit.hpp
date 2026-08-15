@@ -289,10 +289,12 @@ inline std::string client_ip(const drogon::HttpRequestPtr& req, bool trust_proxy
             while (start <= xff.size()) {
                 size_t comma = xff.find(',', start);
                 std::string tok = xff.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
-                size_t a = tok.find_first_not_of(" \t");
-                size_t b = tok.find_last_not_of(" \t");
-                if (a != std::string::npos)
-                    hops.push_back(tok.substr(a, b - a + 1));
+                // Utils::Strings::trim, not a fourth hand-rolled copy of the
+                // same three lines. It also strips \r\n, which a header value
+                // should never carry but which costs nothing to tolerate here.
+                std::string hop = Utils::Strings::trim(tok);
+                if (!hop.empty())
+                    hops.push_back(hop);
                 if (comma == std::string::npos)
                     break;
                 start = comma + 1;

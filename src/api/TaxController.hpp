@@ -27,11 +27,21 @@
  *   POST /api/v1/tax/filings/{id}/download-url  ?artifact=xml|pdf ->
  *                                               presigned GET, TTL 300s
  *
- * RBAC: `POST /tax/calculations` and `POST /tax/filings` reject
- * `ctx.role == "viewer"` with 403 — both write. `download-url` does NOT (it
- * mints a URL and writes nothing), exactly like
- * LedgerDocumentsController::downloadUrl. `org_id` comes EXCLUSIVELY from
- * `ctx.org_id`.
+ * RBAC: EVERY route goes through API_REQUIRE_ORG_PERM against the §5.3
+ * permission matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown
+ * role, resource or action is a 403, so a role added later cannot fail open
+ * the way the old `ctx.role == "viewer"` denylist let it. `POST
+ * /tax/calculations` and `POST /tax/filings` need `tax`/write; all six GETs
+ * need `tax`/read; and `POST /tax/filings/{id}/download-url` needs `tax`/READ
+ * despite being a POST — it writes nothing, it hands out the filing's bytes,
+ * so it is a read and is gated as one. Gating it as a write would be BOTH
+ * wrong ways at once: it would let a read-only viewer be refused a document
+ * they may read, and it would classify a data-exfiltration path as a
+ * mutation. `GET /tax/rates` and `GET /tax/deadlines` return system-wide
+ * reference data, but they are still `tax`/read: a role that cannot see this
+ * org's tax position has no business enumerating the rate table it would be
+ * computed from. `org_id` comes EXCLUSIVELY from `ctx.org_id` — never a body
+ * field, a query param or a path segment.
  *
  * `GET /tax/rates` and `GET /tax/deadlines` return SYSTEM data — `tax_rates`/
  * `tax_constants` and `tax_deadlines` have no org_id at all (the documented
@@ -108,13 +118,19 @@
  * The printable form goes through the SAME base-input + ALLOWLISTED-body-
  * merge design HrController documents: templates/latex/fno_910/v1/schema.json
  * and fno_300/v1/schema.json both require free-text fields this codebase has
- * no column for — `director`, `accountant`, and the amount spelled out in
- * words (`tax_words`/`balance_words`; there is no money-to-words converter
- * anywhere here). Those — and ONLY those, per
+ * no column for — `director` and `accountant`. Those — and ONLY those, per
  * fno_910_allowed_extra_fields()/fno_300_allowed_extra_fields() — must
  * arrive in `document_input`, which is deep-merged (RFC 7396 `merge_patch`)
  * over the derived base before the schema check; omitting one yields the
  * same `422 schema_validation_failed` DocgenController already produces.
+ *
+ * P3: the amount spelled out in words (`tax_words` on 910.00,
+ * `balance_words` on 300.00) used to be on those allowlists, on the premise
+ * that no money-to-words converter existed here. One does now
+ * (src/money/AmountInWords.hpp), so both are DERIVED in build_form_input()
+ * from the very integers the XML filing is built from, and a caller that
+ * supplies either gets a 422 `not_allowed_override`. A declaration whose PDF
+ * spells out one sum while its XML states another is no longer expressible.
  *
  * fno_300's `sales_tenge` (the revenue TURNOVER behind the VAT) is NOT one
  * of them, though an earlier round of this fix wrongly treated it as one:
@@ -168,6 +184,7 @@
 #include "ledger/Document.hpp"
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalService.hpp"
+#include "money/AmountInWords.hpp"
 #include "storage/Storage.hpp"
 #include "tax/Fno300.hpp"
 #include "tax/Fno910.hpp"
@@ -181,6 +198,7 @@
 #include "tax/TaxReferenceRepository.hpp"
 #include "tax/TaxService.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "tenancy/Organization.hpp"
 #include "tenancy/OrganizationRepository.hpp"
 #include "utils/ErrorResponse.hpp"
@@ -229,15 +247,18 @@ public:
 
     /// The free-text fields templates/latex/fno_910/v1/schema.json requires
     /// that NOTHING in this database can supply: the two signatory names
-    /// (Tenancy::Organization has no director/accountant column) and the tax
-    /// amount spelled out in Russian (no money-to-words converter exists
-    /// here). This IS the allowlist for `document_input` — the org's bin/
-    /// name, the period, `income_tenge`, `rate_percent` and `tax_tenge` all
-    /// come from the calculation and the organization row, so a caller may
-    /// never overwrite them in a document that sits next to the XML filing
-    /// of the same figures (see file header).
+    /// (Tenancy::Organization has no director/accountant column). This IS
+    /// the allowlist for `document_input` — the org's bin/name, the period,
+    /// `income_tenge`, `rate_percent`, `tax_tenge` and (since P3)
+    /// `tax_words` all come from the calculation and the organization row,
+    /// so a caller may never overwrite them in a document that sits next to
+    /// the XML filing of the same figures (see file header).
     static const std::vector<std::string>& fno_910_allowed_extra_fields() {
-        static const std::vector<std::string> kAllowed = {"tax_words", "director", "accountant"};
+        // `tax_words` убран (P3 §3.5): сумма прописью однозначно выводится
+        // из calc.total_tiyn, поэтому она серверная, а присланная клиентом
+        // теперь получает 422 not_allowed_override — тем же механизмом,
+        // которым здесь уже защищены income_tenge/rate_percent/tax_tenge.
+        static const std::vector<std::string> kAllowed = {"director", "accountant"};
         return kAllowed;
     }
 
@@ -255,7 +276,10 @@ public:
     /// server-derived like every other amount on this form and a caller
     /// declaring their own revenue turnover on a legal tax filing is a 422.
     static const std::vector<std::string>& fno_300_allowed_extra_fields() {
-        static const std::vector<std::string> kAllowed = {"balance_words", "director", "accountant"};
+        // `balance_words` убран (P3 §3.5) по той же причине, что и
+        // `tax_words` у 910.00: пропись выводится из balance_tiyn, а не
+        // объявляется декларантом.
+        static const std::vector<std::string> kAllowed = {"director", "accountant"};
         return kAllowed;
     }
 
@@ -269,7 +293,7 @@ public:
     // -------------------------------------------------------------------
     void listRates(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        (void)ctx;  // system-wide reference data; the guard only proves org access
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
         std::string on;
         if (!parse_on_date(req, on, callback))
             return;
@@ -296,7 +320,7 @@ public:
     // -------------------------------------------------------------------
     void listDeadlines(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        (void)ctx;
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
         std::string on;
         if (!parse_on_date(req, on, callback))
             return;
@@ -322,6 +346,7 @@ public:
     // -------------------------------------------------------------------
     void listAlerts(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
         std::string on;
         if (!parse_on_date(req, on, callback))
             return;
@@ -353,10 +378,7 @@ public:
     // -------------------------------------------------------------------
     void createCalculation(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot run tax calculations"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -422,6 +444,7 @@ public:
     // -------------------------------------------------------------------
     void listCalculations(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
 
         Validation::Errors errs;
         std::optional<std::string> kind_filter;
@@ -468,10 +491,7 @@ public:
     // -------------------------------------------------------------------
     void createFiling(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot generate tax filings"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -535,8 +555,23 @@ public:
         // 0 ₸ line in a tax filing — build_form_input() reports the missing
         // key instead of defaulting it (see that function).
         std::string missing_key;
-        auto base_input = build_form_input(kind, *calc, *org, missing_key);
+        bool amount_out_of_range = false;
+        auto base_input = build_form_input(kind, *calc, *org, missing_key, amount_out_of_range);
         if (!base_input) {
+            // Two distinct reasons, two distinct codes — an amount too large
+            // to spell out is NOT a missing snapshot key, and reporting it as
+            // one used to make the API name a key that does not exist
+            // ("result_snapshot has no 'amount_out_of_range' key") and send
+            // the reader hunting for a data problem that is not there.
+            if (amount_out_of_range) {
+                callback(Validation::response_422(
+                    "calculation_id",
+                    "amount_out_of_range",
+                    "the stored calculation's amount cannot be spelled out in words: it exceeds the maximum "
+                    "supported " +
+                        std::to_string(Money::kMaxTiyn) + " tiyn"));
+                return;
+            }
             callback(Validation::response_422("calculation_id",
                                               "incomplete_calculation",
                                               "the stored calculation's result_snapshot has no '" + missing_key +
@@ -665,7 +700,15 @@ public:
                                          std::optional<std::string>(document.id),
                                          kSchemaValidated);
 
-            json payload = {{"org_id", ctx.org_id}, {"document_id", document.id}, {"slug", slug}, {"input", input}};
+            // version_id — see DocgenController::generate: the render lands on
+            // the version the payload NAMES, never on "the newest one at the
+            // time the worker got round to it".
+            auto first_version = documents.latest_version(ctx.org_id, document.id, /*from_primary=*/true);
+            json payload = {{"org_id", ctx.org_id},
+                            {"document_id", document.id},
+                            {"version_id", first_version ? first_version->id : std::string{}},
+                            {"slug", slug},
+                            {"input", input}};
             bool render_queued = false;
             try {
                 auto job = Jobs::get().submit(kRenderJobType, payload);
@@ -685,6 +728,7 @@ public:
     // -------------------------------------------------------------------
     void listFilings(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
 
         std::optional<std::string> kind_filter;
         const std::string kind_param = req->getParameter("kind");
@@ -715,6 +759,7 @@ public:
                    std::function<void(const HttpResponsePtr&)>&& callback,
                    const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed filing id"));
             return;
@@ -746,6 +791,8 @@ public:
                            std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
+        // POST, but semantically a READ — see this file's RBAC header note.
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kRead);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed filing id"));
             return;
@@ -941,18 +988,29 @@ private:
         return true;
     }
 
-    /// Everything the ФНО print template can be derived from. Fields the
-    /// database genuinely does not hold (director/accountant/*_words, and
-    /// fno_300's sales_tenge) are deliberately ABSENT so the template's own
-    /// JSON Schema demands them from `document_input` — see file header.
+    /// Everything the ФНО print template can be derived from. The only
+    /// fields the database genuinely does not hold — `director` and
+    /// `accountant` — are deliberately ABSENT so the template's own JSON
+    /// Schema demands them from `document_input` (see file header). The
+    /// amount in words is NO LONGER one of them: `tax_words`/`balance_words`
+    /// are derived here from the same integers the XML filing uses, so the
+    /// printed declaration and the filed XML can no longer disagree.
     ///
-    /// @return nullopt, with @p missing_key naming the offending
-    ///         `result_snapshot` key, when the stored calculation cannot
-    ///         supply a figure this form requires (see snapshot_int()).
+    /// @return nullopt when the stored calculation cannot supply a figure
+    ///         this form requires — either @p missing_key names the absent
+    ///         `result_snapshot` key (see snapshot_int()), or
+    ///         @p amount_out_of_range is set. The two are mutually exclusive
+    ///         and the caller renders them as two different 422 codes.
+    /// @param amount_out_of_range set when a STORED amount is outside
+    ///        Money::kMaxTiyn and therefore cannot be spelled out. This
+    ///        function runs BEFORE the try/catch around build_form_xml, so
+    ///        letting to_words_ru's std::out_of_range escape would reach the
+    ///        client as a 500.
     static std::optional<json> build_form_input(const std::string& filing_kind,
                                                 const Tax::Calculation& calc,
                                                 const Tenancy::Organization& org,
-                                                std::string& missing_key) {
+                                                std::string& missing_key,
+                                                bool& amount_out_of_range) {
         const std::string year = calc.period_from.substr(0, 4);
         json input = {
             {"org", {{"bin", org.bin}, {"name", org.name}}},
@@ -968,6 +1026,10 @@ private:
             input["income_tenge"] = Ledger::format_tiyn(income_tiyn);
             input["rate_percent"] = format_bp_percent(rate_bp);
             input["tax_tenge"] = Ledger::format_tiyn(calc.total_tiyn);
+            auto tax_words = spell_out_tiyn(calc.id, calc.total_tiyn, amount_out_of_range);
+            if (!tax_words)
+                return std::nullopt;
+            input["tax_words"] = *tax_words;
             // Direct-initialized, never `return input;`: copy-initializing a
             // std::optional<nlohmann::json> from a json is ambiguous (the
             // optional's converting constructor and json's own conversion
@@ -996,7 +1058,40 @@ private:
         // direction in balance_kind (the template's own enum).
         input["balance_tenge"] = Ledger::format_tiyn(balance_tiyn < 0 ? -balance_tiyn : balance_tiyn);
         input["balance_kind"] = balance_tiyn < 0 ? "to_refund" : "to_pay";
+        // Модуль, как и balance_tenge строкой выше: знак несёт balance_kind,
+        // а to_words_ru принимает только неотрицательное. Без этого первая
+        // же декларация с НДС к возврату уронила бы рендер-джобу
+        // необработанным std::invalid_argument.
+        auto balance_words =
+            spell_out_tiyn(calc.id, balance_tiyn < 0 ? -balance_tiyn : balance_tiyn, amount_out_of_range);
+        if (!balance_words)
+            return std::nullopt;
+        input["balance_words"] = *balance_words;
         return std::optional<json>(std::move(input));
+    }
+
+    /// Money::to_words_ru with its ONE expected failure turned into a flag.
+    /// The try is this narrow on purpose: wrapping the whole of
+    /// build_form_input would report an unrelated failure (a malformed
+    /// period_from, a format_tiyn contract violation) as
+    /// `amount_out_of_range` and log it as such — a wrong diagnosis in a log
+    /// costs more than no diagnosis. @p magnitude must already be
+    /// non-negative; the sign lives in the form's own balance_kind field.
+    /// Only std::out_of_range is caught, not to_words_ru's other throw
+    /// (std::invalid_argument on a negative): every call site formats the
+    /// same figure with Ledger::format_tiyn one line earlier, and THAT
+    /// rejects negatives first, so a negative can never reach here.
+    static std::optional<std::string> spell_out_tiyn(const std::string& calculation_id,
+                                                     long long magnitude,
+                                                     bool& amount_out_of_range) {
+        try {
+            return std::optional<std::string>(Money::to_words_ru(magnitude));
+        } catch (const std::out_of_range& e) {
+            spdlog::error(
+                "tax filings: calculation {} has an amount that cannot be spelled out: {}", calculation_id, e.what());
+            amount_out_of_range = true;
+            return std::nullopt;
+        }
     }
 
     /// Basis points -> a percent string with no trailing noise: 400 -> "4",

@@ -349,6 +349,17 @@ inline bool parse_optional_body(const drogon::HttpRequestPtr& req,
  * becomes a legal document or a tax filing, while the XML/journal for the
  * same row keeps saying something else.
  *
+ * An EMPTY object value is checked at its OWN path rather than recursed into
+ * (P3 fix round 1). It has no leaves, so recursing would walk past the
+ * allowlist entirely — and `{"net_words": {}}` is not a no-op: RFC 7396
+ * merge_patch REPLACES the derived string with `{}`. The template schema
+ * happens to reject the result anyway, but "any key outside the allowlist is
+ * a 422 not_allowed_override" is what this function and docs/openapi.yaml
+ * both promise, so it is enforced literally instead of relying on a second
+ * check to catch it. The cost is that `{"employer": {}}` — previously a
+ * silent no-op — is now also a 422; naming a key you may not write is worth
+ * reporting either way.
+ *
  * @return false (already replied with a 422 naming the offending field) on
  *         the first disallowed key; true if every key in @p extra is on the
  *         allowlist (an empty/absent body trivially passes).
@@ -359,7 +370,7 @@ inline bool validate_extra_allowlist(const json& extra,
                                      const std::string& prefix = "") {
     for (auto it = extra.begin(); it != extra.end(); ++it) {
         const std::string path = prefix.empty() ? it.key() : prefix + "." + it.key();
-        if (it.value().is_object()) {
+        if (it.value().is_object() && !it.value().empty()) {
             if (!validate_extra_allowlist(it.value(), allowed, callback, path))
                 return false;
             continue;

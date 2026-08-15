@@ -73,6 +73,30 @@ inline bool path_is_public(const std::unordered_set<std::string>& public_paths, 
     return false;
 }
 
+/// Characters `trim()` (and the CSV splitter below) treat as surrounding
+/// whitespace. ASCII only, and deliberately so: every byte here is < 0x80, so
+/// none of them can be a continuation byte of a multi-byte UTF-8 sequence —
+/// trimming a Cyrillic string can never cut a character in half.
+inline constexpr const char* kTrimChars = " \t\r\n";
+
+/**
+ * @brief Strip leading/trailing whitespace. Returns "" for an all-whitespace
+ *        (or empty) input.
+ *
+ * One shared implementation because this idiom had reached three copies —
+ * split_csv_vec() below, RateLimit's X-Forwarded-For hop splitter, and
+ * LedgerDocumentsController's void `reason` check — and a fourth was about to
+ * appear. Callers that must reject "blank" input compare the RESULT to empty
+ * rather than re-deriving their own notion of blankness.
+ */
+inline std::string trim(const std::string& s) {
+    const std::string::size_type a = s.find_first_not_of(kTrimChars);
+    if (a == std::string::npos)
+        return {};
+    const std::string::size_type b = s.find_last_not_of(kTrimChars);
+    return s.substr(a, b - a + 1);
+}
+
 /**
  * @brief Split @p csv on commas, dropping empty components.
  */
@@ -84,11 +108,10 @@ inline std::vector<std::string> split_csv_vec(const std::string& csv) {
         // Trim surrounding whitespace so "a, b" yields {"a","b"} not {"a"," b"}
         // — public-path / whitelist / CORS configs are routinely written with
         // spaces after commas.
-        const size_t a = piece.find_first_not_of(" \t\r\n");
-        if (a == std::string::npos)
+        const std::string trimmed = trim(piece);
+        if (trimmed.empty())
             continue;  // all-whitespace / empty
-        const size_t b = piece.find_last_not_of(" \t\r\n");
-        out.push_back(piece.substr(a, b - a + 1));
+        out.push_back(trimmed);
     }
     return out;
 }
