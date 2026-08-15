@@ -615,10 +615,12 @@ git commit -m "feat(money): Kazakh amount-in-words and salary_words_kk in the la
 - Consumes: ничего (только JSON-файлы; C++ не трогается).
 - Produces (на это опирается задача 4, критично — имена и пути должны совпасть буква в букву):
   - `invoice`, `avr`, `waybill`: новое **required** поле верхнего уровня `total_tiyn`, тип `integer`, `minimum: 0`;
-  - `tax_invoice`: новое **required** поле `with_vat_tiyn` ВНУТРИ объекта `totals`, тип `integer`, `minimum: 0`;
-  - `total` / `total_words` (для `tax_invoice` — `totals.with_vat` / `total_words`) **остаются** в схемах и остаются `required`: их теперь заполняет сервер перед валидацией, а не клиент. Из схемы их убирать нельзя — шаблоны на них ссылаются плейсхолдерами.
+  - `tax_invoice`: **три** новых **required** целых поля ВНУТРИ объекта `totals` — `amount_tiyn`, `vat_tiyn`, `with_vat_tiyn`, все `integer`, `minimum: 0`;
+  - `total` / `total_words` (для `tax_invoice` — `totals.amount`, `totals.vat`, `totals.with_vat` и `total_words`) **остаются** в схемах и остаются `required`: их теперь заполняет сервер перед валидацией, а не клиент. Из схемы их убирать нельзя — шаблоны на них ссылаются плейсхолдерами.
 
 **Почему это отдельная задача.** Спека §2 первой редакции обещала «шаблоны не трогаем» — неверно. `total_words` объявлен обязательным в этих четырёх схемах, а сумма там хранится **строкой** (`"total": {"type": "string"}`), то есть целого значения на сервере не существует ни в запросе, ни в БД. Вывести пропись из строки «12 345,67» означало бы распарсить форматированную строку обратно в деньги — ровно то, что запрещает инвариант «деньги — целые тиыны». Поэтому целое поле вводится в схему, и только потом (задача 4) сервер начинает считать из него и `total`, и `total_words`.
+
+**Почему у `tax_invoice` целых полей три, а не одно.** Спека §3.5 выводит из целого только сумму с НДС, оставляя `totals.amount` и `totals.vat` клиентскими строками. Это оставило бы ровно тот дефект, который фаза и закрывает: счёт-фактура, где напечатанные оборот и НДС **не сходятся** с напечатанной же итоговой суммой, — та же поверхность подделки, что убрана из ФНО 300.00. В отличие от декларации, выводимой из журнала, оборот и НДС в счёте-фактуре — собственные данные пользователя, серверного источника у них нет; поэтому решение не «вывести», а **сделать их целыми и внутренне непротиворечивыми**: клиент присылает три целых, сервер форматирует все три строки сам и проверяет `amount_tiyn + vat_tiyn == with_vat_tiyn` (задача 4), отвечая 422 при расхождении. Несогласованный счёт-фактура становится непредставимым, а не «нежелательным».
 
 - [ ] **Step 1: `invoice` — схема**
 
@@ -663,15 +665,17 @@ git commit -m "feat(money): Kazakh amount-in-words and salary_words_kk in the la
     "total_tiyn": {"type": "integer", "minimum": 0},
 ```
 
-- [ ] **Step 4: `tax_invoice` — схема (поле вложено в `totals`)**
+- [ ] **Step 4: `tax_invoice` — схема (три целых поля вложены в `totals`)**
 
 `templates/latex/tax_invoice/v1/schema.json`: блок `totals` заменить целиком на
 
 ```json
     "totals": {
       "type": "object",
-      "required": ["with_vat_tiyn", "amount", "vat", "with_vat"],
+      "required": ["amount_tiyn", "vat_tiyn", "with_vat_tiyn", "amount", "vat", "with_vat"],
       "properties": {
+        "amount_tiyn": {"type": "integer", "minimum": 0},
+        "vat_tiyn": {"type": "integer", "minimum": 0},
         "with_vat_tiyn": {"type": "integer", "minimum": 0},
         "amount": {"type": "string"}, "vat": {"type": "string"}, "with_vat": {"type": "string"}
       }},
@@ -679,7 +683,7 @@ git commit -m "feat(money): Kazakh amount-in-words and salary_words_kk in the la
 
 Массив `required` верхнего уровня не меняется (`totals` в нём уже есть).
 
-Осознанно: `totals.amount` и `totals.vat` остаются клиентскими строками. Спека §3.5 выводит на сервере ровно `with_vat` и `total_words` — «сервер считает и `total`, и `total_words`» из одного целого поля. Расширять деривацию на `amount`/`vat` — отдельное решение, в эту фазу не входит.
+Схема намеренно проверяет только тип и знак каждого целого: равенство `amount_tiyn + vat_tiyn == with_vat_tiyn` в JSON Schema draft-07 невыразимо, поэтому его проверяет сервер и отвечает **422** `inconsistent_total` (задача 4). Три строковых поля из схемы не убираются — на них ссылается `template.tex`; заполняет их теперь сервер.
 
 - [ ] **Step 5: Восемь фикстур**
 
@@ -693,19 +697,23 @@ git commit -m "feat(money): Kazakh amount-in-words and salary_words_kk in the la
 | `templates/latex/avr/v1/fixtures/special-chars.json` | `"total": "1 000,00"` | `"total_tiyn": 100000,` |
 | `templates/latex/waybill/v1/fixtures/basic.json` | `"total": "105 000,00"` | `"total_tiyn": 10500000,` |
 | `templates/latex/waybill/v1/fixtures/special-chars.json` | `"total": "1 000,00"` | `"total_tiyn": 100000,` |
-| `templates/latex/tax_invoice/v1/fixtures/basic.json` | `"with_vat": "104 400,00"` | `"with_vat_tiyn": 10440000,` (внутрь `totals`) |
-| `templates/latex/tax_invoice/v1/fixtures/special-chars.json` | `"with_vat": "1 160,00"` | `"with_vat_tiyn": 116000,` (внутрь `totals`) |
+| `templates/latex/tax_invoice/v1/fixtures/basic.json` | `"amount": "90 000,00"`, `"vat": "14 400,00"`, `"with_vat": "104 400,00"` | `"amount_tiyn": 9000000, "vat_tiyn": 1440000, "with_vat_tiyn": 10440000,` (внутрь `totals`) |
+| `templates/latex/tax_invoice/v1/fixtures/special-chars.json` | `"amount": "1 000,00"`, `"vat": "160,00"`, `"with_vat": "1 160,00"` | `"amount_tiyn": 100000, "vat_tiyn": 16000, "with_vat_tiyn": 116000,` (внутрь `totals`) |
 
-Для `invoice`/`avr`/`waybill` поле кладётся рядом с `"total"` на верхнем уровне. Для `tax_invoice` — первым ключом объекта `totals`, например:
+Для `invoice`/`avr`/`waybill` поле кладётся рядом с `"total"` на верхнем уровне. Для `tax_invoice` — тремя первыми ключами объекта `totals`:
 
 ```json
   "totals": {
+    "amount_tiyn": 9000000,
+    "vat_tiyn": 1440000,
     "with_vat_tiyn": 10440000,
     "amount": "90 000,00",
     "vat": "14 400,00",
     "with_vat": "104 400,00"
   },
 ```
+
+Обе фикстуры `tax_invoice` обязаны сходиться: 9000000 + 1440000 = 10440000 и 100000 + 16000 = 116000. Если не сходятся — фикстура неверна, и это же обнаружит проверка задачи 4.
 
 Проверьте согласованность прописи в фикстурах с новым целым: `invoice/basic` 1234567 тиын → `Money::to_words_ru` даёт «Двенадцать тысяч триста сорок пять тенге 67 тиын» — ровно то, что уже лежит в `total_words`. То же самое сверьте для остальных семи; если строка не совпадает с тем, что даст конвертер задачи 1, поправьте **прописную строку фикстуры**, а не целое.
 
@@ -746,12 +754,12 @@ git commit -m "feat(templates): integer tiyn totals in invoice, avr, waybill and
 - Test: `tests/integration/test_tax_api.cpp`, `tests/integration/test_payroll_api.cpp`, `tests/integration/test_hr_api.cpp`, `tests/integration/test_docgen_api.cpp`
 
 **Interfaces:**
-- Consumes (задачи 1-3): `Money::to_words_ru(long long)`, `Money::to_words_kk(long long)`, `Money::kMaxTiyn`; поля схем `total_tiyn` и `totals.with_vat_tiyn`; поле `salary_words_kk` в схеме `labor_contract`.
+- Consumes (задачи 1-3): `Money::to_words_ru(long long)`, `Money::to_words_kk(long long)`, `Money::kMaxTiyn`; поля схем `total_tiyn` и `totals.{amount_tiyn,vat_tiyn,with_vat_tiyn}`; поле `salary_words_kk` в схеме `labor_contract`.
 - Produces (на это опираются задачи 9 и 13):
   - `std::string Money::format_tiyn_ru(long long tiyn)` — «12 345,67» (пробел-разделитель тысяч U+0020, запятая-разделитель дробной части), бросает `std::invalid_argument` на отрицательном;
   - `const std::vector<std::string>& Docgen::InputPolicy::generate_slugs()`;
   - `bool Docgen::InputPolicy::input_is_caller_authored(const std::string& slug)`;
-  - `struct Docgen::InputPolicy::DerivedAmount { std::string tiyn_path, amount_path, words_path; };`
+  - `struct Docgen::InputPolicy::DerivedAmount { std::string tiyn_path, amount_path, words_path; std::vector<std::pair<std::string, std::string>> components; };` — `components` перечисляет пары `{путь целого слагаемого, путь его строкового представления}`; непустой список означает «сервер обязан проверить, что слагаемые дают ровно `tiyn_path`»;
   - `std::optional<Docgen::InputPolicy::DerivedAmount> Docgen::InputPolicy::derived_amount_for(const std::string& slug)`;
   - `const std::vector<std::string>& Docgen::InputPolicy::editable_fields(const std::string& slug)`;
   - `const nlohmann::json* Docgen::InputPolicy::at_path(const nlohmann::json& obj, const std::string& path)`;
@@ -915,11 +923,18 @@ TEST(InputPolicy, DerivedAmountPaths) {
     EXPECT_EQ(inv->amount_path, "total");
     EXPECT_EQ(inv->words_path, "total_words");
 
+    EXPECT_TRUE(inv->components.empty());
+
     auto ti = Docgen::InputPolicy::derived_amount_for("tax_invoice");
     ASSERT_TRUE(ti);
     EXPECT_EQ(ti->tiyn_path, "totals.with_vat_tiyn");
     EXPECT_EQ(ti->amount_path, "totals.with_vat");
     EXPECT_EQ(ti->words_path, "total_words");
+    ASSERT_EQ(ti->components.size(), 2u);
+    EXPECT_EQ(ti->components[0].first, "totals.amount_tiyn");
+    EXPECT_EQ(ti->components[0].second, "totals.amount");
+    EXPECT_EQ(ti->components[1].first, "totals.vat_tiyn");
+    EXPECT_EQ(ti->components[1].second, "totals.vat");
 
     EXPECT_FALSE(Docgen::InputPolicy::derived_amount_for("reconciliation").has_value());
     EXPECT_FALSE(Docgen::InputPolicy::derived_amount_for("payslip").has_value());
@@ -948,12 +963,46 @@ TEST(InputPolicy, ApplyDerivedAmountFillsBothStrings) {
     EXPECT_EQ(input["total_words"].get<std::string>(), "Двенадцать тысяч триста сорок пять тенге 67 тиын");
 }
 
-TEST(InputPolicy, ApplyDerivedAmountFillsNestedPathForTaxInvoice) {
-    json input = {{"totals", {{"with_vat_tiyn", 10440000}, {"amount", "90 000,00"}, {"vat", "14 400,00"}}}};
+TEST(InputPolicy, ApplyDerivedAmountFormatsAllThreeTaxInvoiceTotals) {
+    json input = {{"totals", {{"amount_tiyn", 9000000}, {"vat_tiyn", 1440000}, {"with_vat_tiyn", 10440000}}}};
     std::string field, code, message;
     ASSERT_TRUE(Docgen::InputPolicy::apply_derived_amount("tax_invoice", input, field, code, message)) << message;
+    EXPECT_EQ(input["totals"]["amount"].get<std::string>(), "90 000,00");
+    EXPECT_EQ(input["totals"]["vat"].get<std::string>(), "14 400,00");
     EXPECT_EQ(input["totals"]["with_vat"].get<std::string>(), "104 400,00");
     EXPECT_EQ(input["total_words"].get<std::string>(), "Сто четыре тысячи четыреста тенге 00 тиын");
+}
+
+TEST(InputPolicy, TaxInvoiceTotalsMustSumExactly) {
+    std::string field, code, message;
+    // 90 000,00 + 14 400,00 = 104 400,00, а заявлен итог 104 000,00.
+    json inconsistent = {{"totals", {{"amount_tiyn", 9000000}, {"vat_tiyn", 1440000}, {"with_vat_tiyn", 10400000}}}};
+    EXPECT_FALSE(Docgen::InputPolicy::apply_derived_amount("tax_invoice", inconsistent, field, code, message));
+    EXPECT_EQ(field, "input.totals.with_vat_tiyn");
+    EXPECT_EQ(code, "inconsistent_total");
+    EXPECT_NE(message.find("10400000"), std::string::npos);
+
+    // Нулевой НДС — законная разбивка, а не краевой случай.
+    json no_vat = {{"totals", {{"amount_tiyn", 9000000}, {"vat_tiyn", 0}, {"with_vat_tiyn", 9000000}}}};
+    EXPECT_TRUE(Docgen::InputPolicy::apply_derived_amount("tax_invoice", no_vat, field, code, message)) << message;
+    EXPECT_EQ(no_vat["totals"]["vat"].get<std::string>(), "0,00");
+}
+
+TEST(InputPolicy, TaxInvoiceRejectsClientSuppliedComponentStrings) {
+    std::string field, code, message;
+    json with_amount = {
+        {"totals", {{"amount_tiyn", 9000000}, {"vat_tiyn", 1440000}, {"with_vat_tiyn", 10440000}, {"vat", "0,00"}}}};
+    EXPECT_FALSE(Docgen::InputPolicy::apply_derived_amount("tax_invoice", with_amount, field, code, message));
+    EXPECT_EQ(field, "input.totals.vat");
+    EXPECT_EQ(code, "not_allowed_override");
+}
+
+TEST(InputPolicy, TaxInvoiceRequiresEveryComponentInteger) {
+    std::string field, code, message;
+    json missing_vat = {{"totals", {{"amount_tiyn", 9000000}, {"with_vat_tiyn", 10440000}}}};
+    EXPECT_FALSE(Docgen::InputPolicy::apply_derived_amount("tax_invoice", missing_vat, field, code, message));
+    EXPECT_EQ(field, "input.totals.vat_tiyn");
+    EXPECT_EQ(code, "missing");
 }
 
 TEST(InputPolicy, ApplyDerivedAmountRejectsClientSuppliedAmountAndWords) {
@@ -1022,6 +1071,7 @@ TEST(InputPolicy, ApplyDerivedAmountRejectsMissingBadAndOutOfRangeTiyn) {
 #include <algorithm>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -1050,19 +1100,29 @@ inline bool input_is_caller_authored(const std::string& slug) {
     return std::find(s.begin(), s.end(), slug) != s.end();
 }
 
-/// Денежное поле, которое сервер выводит из целого числа тиын. Пути
+/// Денежные поля, которые сервер форматирует сам из целых чисел тиын. Пути
 /// точечные и не глубже одного уровня вложенности.
 struct DerivedAmount {
-    std::string tiyn_path;    ///< целое, которое ОБЯЗАН прислать клиент
-    std::string amount_path;  ///< сюда сервер пишет Money::format_tiyn_ru
-    std::string words_path;   ///< сюда сервер пишет Money::to_words_ru
+    std::string tiyn_path;    ///< итоговое целое, которое ОБЯЗАН прислать клиент
+    std::string amount_path;  ///< сюда сервер пишет Money::format_tiyn_ru(итог)
+    std::string words_path;   ///< сюда сервер пишет Money::to_words_ru(итог)
+    /// Слагаемые итога: {путь целого, путь его строки}. Пустой список —
+    /// разбивки нет. Непустой означает ДВЕ вещи: сервер форматирует каждое
+    /// слагаемое сам И проверяет, что сумма слагаемых равна ровно итогу.
+    /// Счёт-фактура, где напечатанные оборот и НДС не сходятся с
+    /// напечатанной итоговой суммой, — та же поверхность подделки, что
+    /// убрана из ФНО 300.00; здесь она делается непредставимой.
+    std::vector<std::pair<std::string, std::string>> components;
 };
 
 inline std::optional<DerivedAmount> derived_amount_for(const std::string& slug) {
     if (slug == "invoice" || slug == "avr" || slug == "waybill")
-        return DerivedAmount{"total_tiyn", "total", "total_words"};
+        return DerivedAmount{"total_tiyn", "total", "total_words", {}};
     if (slug == "tax_invoice")
-        return DerivedAmount{"totals.with_vat_tiyn", "totals.with_vat", "total_words"};
+        return DerivedAmount{"totals.with_vat_tiyn",
+                             "totals.with_vat",
+                             "total_words",
+                             {{"totals.amount_tiyn", "totals.amount"}, {"totals.vat_tiyn", "totals.vat"}}};
     return std::nullopt;  // reconciliation и все серверные формы
 }
 
@@ -1116,13 +1176,57 @@ inline void set_path(json& obj, const std::string& path, json value) {
     set_path(obj[head], path.substr(dot + 1), std::move(value));
 }
 
+namespace detail {
+
+/// Прочитать одно целое поле тиын по точечному пути. false + заполненная
+/// тройка ошибки, если поле отсутствует, не целое или вне диапазона.
+inline bool read_tiyn(const json& input,
+                      const std::string& path,
+                      long long& out,
+                      std::string& error_field,
+                      std::string& error_code,
+                      std::string& error_message) {
+    const json* node = at_path(input, path);
+    if (node == nullptr) {
+        error_field = "input." + path;
+        error_code = "missing";
+        error_message = "'" + path + "' is required — money is carried as an integer number of tiyn";
+        return false;
+    }
+    if (!node->is_number_integer()) {
+        error_field = "input." + path;
+        error_code = "not_integer";
+        error_message = "'" + path + "' must be an integer number of tiyn";
+        return false;
+    }
+    const long long value = node->get<long long>();
+    if (value < 0 || value > Money::kMaxTiyn) {
+        error_field = "input." + path;
+        error_code = "out_of_range";
+        error_message =
+            "'" + path + "' must be between 0 and " + std::to_string(Money::kMaxTiyn) + " tiyn inclusive";
+        return false;
+    }
+    out = value;
+    return true;
+}
+
+}  // namespace detail
+
 /**
- * @brief Проверить целое поле суммы и записать в @p input строковую сумму
- *        и пропись. Для слага без деривации — no-op с результатом true.
+ * @brief Проверить целые денежные поля и записать в @p input их строковые
+ *        представления и пропись итога. Для слага без деривации — no-op с
+ *        результатом true.
+ * @details Три обязанности: (1) отвергнуть любое серверно-выводимое поле,
+ *          присланное каллером; (2) прочитать итог и все его слагаемые как
+ *          целые в допустимом диапазоне; (3) если разбивка объявлена —
+ *          проверить, что слагаемые дают РОВНО итог. Последнее и делает
+ *          несогласованный счёт-фактуру непредставимым: печатать оборот и
+ *          НДС, не сходящиеся с итогом, больше нельзя.
  * @return false + заполненные @p error_field / @p error_code /
- *         @p error_message, если каллер прислал серверно-выводимое поле
- *         либо целое отсутствует/не целое/вне диапазона. Каллер обязан
- *         превратить это в 422.
+ *         @p error_message. Каллер обязан превратить это в 422 — все три
+ *         случая (чужое поле, кривое целое, несходящаяся разбивка) суть
+ *         семантически неверные значения, а не кривая форма запроса.
  */
 inline bool apply_derived_amount(const std::string& slug,
                                  json& input,
@@ -1133,40 +1237,60 @@ inline bool apply_derived_amount(const std::string& slug,
     if (!derived)
         return true;
 
-    for (const auto* path : {derived->amount_path.c_str(), derived->words_path.c_str()}) {
+    // (1) Ни одна строка, которую пишет сервер, не принимается от каллера —
+    // включая строки слагаемых.
+    std::vector<std::string> server_written = {derived->amount_path, derived->words_path};
+    for (const auto& c : derived->components)
+        server_written.push_back(c.second);
+    for (const auto& path : server_written) {
         if (at_path(input, path) != nullptr) {
-            error_field = std::string("input.") + path;
+            error_field = "input." + path;
             error_code = "not_allowed_override";
-            error_message = std::string("'") + path + "' is derived by the server from '" + derived->tiyn_path +
-                            "' and may not be supplied by the client";
+            error_message = "'" + path + "' is formatted by the server from the integer tiyn fields and may not be " +
+                            "supplied by the client";
             return false;
         }
     }
 
-    const json* tiyn_node = at_path(input, derived->tiyn_path);
-    if (tiyn_node == nullptr) {
-        error_field = "input." + derived->tiyn_path;
-        error_code = "missing";
-        error_message = "'" + derived->tiyn_path + "' is required — the total is carried as an integer number of tiyn";
+    // (2) Итог и слагаемые — целые в допустимом диапазоне.
+    long long total_tiyn = 0;
+    if (!detail::read_tiyn(input, derived->tiyn_path, total_tiyn, error_field, error_code, error_message))
         return false;
-    }
-    if (!tiyn_node->is_number_integer()) {
-        error_field = "input." + derived->tiyn_path;
-        error_code = "not_integer";
-        error_message = "'" + derived->tiyn_path + "' must be an integer number of tiyn";
-        return false;
-    }
-    const long long tiyn = tiyn_node->get<long long>();
-    if (tiyn < 0 || tiyn > Money::kMaxTiyn) {
-        error_field = "input." + derived->tiyn_path;
-        error_code = "out_of_range";
-        error_message = "'" + derived->tiyn_path + "' must be between 0 and " + std::to_string(Money::kMaxTiyn) +
-                        " tiyn inclusive";
-        return false;
+    std::vector<long long> component_values;
+    component_values.reserve(derived->components.size());
+    for (const auto& c : derived->components) {
+        long long value = 0;
+        if (!detail::read_tiyn(input, c.first, value, error_field, error_code, error_message))
+            return false;
+        component_values.push_back(value);
     }
 
-    set_path(input, derived->amount_path, json(Money::format_tiyn_ru(tiyn)));
-    set_path(input, derived->words_path, json(Money::to_words_ru(tiyn)));
+    // (3) Разбивка обязана сходиться точно. Сложение безопасно: каждое
+    // слагаемое уже ограничено kMaxTiyn, а их не больше горстки, так что
+    // до переполнения long long далеко.
+    if (!derived->components.empty()) {
+        long long sum = 0;
+        for (const long long v : component_values)
+            sum += v;
+        if (sum != total_tiyn) {
+            std::string parts;
+            for (std::size_t i = 0; i < derived->components.size(); ++i) {
+                if (i > 0)
+                    parts += " + ";
+                parts += derived->components[i].first + " (" + std::to_string(component_values[i]) + ")";
+            }
+            error_field = "input." + derived->tiyn_path;
+            error_code = "inconsistent_total";
+            error_message = parts + " = " + std::to_string(sum) + " tiyn, which does not equal " +
+                            derived->tiyn_path + " (" + std::to_string(total_tiyn) + ")";
+            return false;
+        }
+    }
+
+    set_path(input, derived->amount_path, json(Money::format_tiyn_ru(total_tiyn)));
+    set_path(input, derived->words_path, json(Money::to_words_ru(total_tiyn)));
+    for (std::size_t i = 0; i < derived->components.size(); ++i)
+        set_path(input, derived->components[i].second, json(Money::format_tiyn_ru(component_values[i])));
     return true;
 }
 
@@ -1325,10 +1449,10 @@ inline bool apply_derived_amount(const std::string& slug,
 В `docs/openapi.yaml`, схема `GenerateDocumentCreate` (~строка 586): enum уже перечисляет пять слагов первички — оставить как есть, но в `description` дописать, что несоответствие теперь 422 `unsupported_template`, а не 500. В `input` дописать:
 
 ```yaml
-        input:            { type: object, additionalProperties: true, description: 'Validated against the template''s JSON Schema. The total is supplied as an INTEGER number of tiyn (total_tiyn; totals.with_vat_tiyn for tax_invoice) — the server derives the formatted amount and the amount in words from it, so total/total_words/totals.with_vat in the request are a 422 not_allowed_override' }
+        input:            { type: object, additionalProperties: true, description: 'Validated against the template''s JSON Schema. Money is supplied as INTEGER tiyn — total_tiyn for invoice/avr/waybill; totals.amount_tiyn + totals.vat_tiyn + totals.with_vat_tiyn for tax_invoice, and they must sum exactly. The server formats every money STRING and derives the amount in words, so total/total_words/totals.amount/totals.vat/totals.with_vat in the request are a 422 not_allowed_override' }
 ```
 
-В блоке `/api/v1/documents/generate` в `responses` убедиться, что `'422'` описан и добавить в его `description`: `unsupported_template / not_allowed_override / missing / not_integer / out_of_range on the derived total`.
+В блоке `/api/v1/documents/generate` в `responses` убедиться, что `'422'` описан и добавить в его `description`: `unsupported_template / not_allowed_override / missing / not_integer / out_of_range / inconsistent_total (tax_invoice: amount_tiyn + vat_tiyn must equal with_vat_tiyn)`.
 
 - [ ] **Step 10: Падающие интеграционные тесты**
 
@@ -1365,6 +1489,40 @@ TEST_F(DocgenApiTest, GenerateRejectsClientSuppliedTotalWords) {
     auto resp = call(ctrl_generate, authed_json(Post, body, p));
     EXPECT_EQ(resp->getStatusCode(), k422UnprocessableEntity);
     EXPECT_EQ(body_of(resp)["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+}
+
+TEST_F(DocgenApiTest, GenerateRejectsATaxInvoiceWhoseTotalsDoNotSum) {
+    auto p = member("sum@example.com", org_.id, "accountant");
+    // 90 000,00 оборот + 14 400,00 НДС, а итог заявлен 104 000,00 —
+    // счёт-фактура, печатающая три несходящихся числа, не должна
+    // существовать вовсе.
+    json input = make_tax_invoice_input();
+    input["totals"] = {{"amount_tiyn", 9000000}, {"vat_tiyn", 1440000}, {"with_vat_tiyn", 10400000}};
+    const json body = {{"template_slug", "tax_invoice"}, {"input", input}};
+    auto resp = call(ctrl_generate, authed_json(Post, body, p));
+    EXPECT_EQ(resp->getStatusCode(), k422UnprocessableEntity);
+    EXPECT_EQ(body_of(resp)["errors"][0]["code"].get<std::string>(), "inconsistent_total");
+    EXPECT_EQ(body_of(resp)["errors"][0]["field"].get<std::string>(), "input.totals.with_vat_tiyn");
+    // Ни документа, ни джобы: проверка идёт до любого побочного эффекта.
+    Ledger::DocumentRepository docs;
+    EXPECT_EQ(docs.count_filtered(org_.id, std::optional<std::string>("tax_invoice"), std::nullopt), 0);
+}
+
+TEST_F(DocgenApiTest, GenerateFormatsAllThreeTaxInvoiceTotalsFromIntegers) {
+    auto p = member("sum2@example.com", org_.id, "accountant");
+    json input = make_tax_invoice_input();
+    input["totals"] = {{"amount_tiyn", 9000000}, {"vat_tiyn", 1440000}, {"with_vat_tiyn", 10440000}};
+    const json body = {{"template_slug", "tax_invoice"}, {"input", input}};
+    auto resp = call(ctrl_generate, authed_json(Post, body, p));
+    ASSERT_EQ(resp->getStatusCode(), k202Accepted);
+    Ledger::DocumentRepository docs;
+    auto doc = docs.find_in_org(body_of(resp)["document_id"].get<std::string>(), org_.id);
+    ASSERT_TRUE(doc);
+    ASSERT_TRUE(doc->input_snapshot);
+    const auto& totals = (*doc->input_snapshot)["totals"];
+    EXPECT_EQ(totals["amount"].get<std::string>(), "90 000,00");
+    EXPECT_EQ(totals["vat"].get<std::string>(), "14 400,00");
+    EXPECT_EQ(totals["with_vat"].get<std::string>(), "104 400,00");
 }
 
 TEST_F(DocgenApiTest, GenerateRejectsNonPrimarySlugWith422NotFiveHundred) {
@@ -1445,7 +1603,17 @@ git commit -m "feat(docgen): derive amounts in words server-side and gate templa
 - `buildInvoiceInput` (строка ~358): заменить `total_words: values.total_words.trim(),` на `total_tiyn: subtotalTiyn + vatTiyn,` — целое уже посчитано двумя строками выше и уже используется для `total`. Саму строку `total: formatTiynRu(subtotalTiyn + vatTiyn),` **удалить**: её теперь считает сервер, а присланная даст 422.
 - `buildAvrInput` (строка ~839): то же самое.
 - `buildWaybillInput` (строка ~1092): то же самое.
-- `buildTaxInvoiceInput` (строка ~1092+): в объекте `totals` заменить `with_vat: ...` на `with_vat_tiyn: <целое с НДС>`; `amount` и `vat` оставить строками (сервер их не выводит); `total_words` удалить.
+- `buildTaxInvoiceInput` (строка ~1092+): объект `totals` целиком заменить на три ЦЕЛЫХ поля и ни одной строки:
+
+```ts
+    totals: {
+      amount_tiyn: amountTiyn,
+      vat_tiyn: vatTiyn,
+      with_vat_tiyn: amountTiyn + vatTiyn,
+    },
+```
+
+где `amountTiyn` и `vatTiyn` — те же целые, из которых форма уже считает свои итоговые строки. `total_words` удалить. Итог обязан считаться как `amountTiyn + vatTiyn`, а не отдельным округлением по строкам позиций: сервер проверяет равенство точно и вернёт 422 `inconsistent_total` на любом расхождении хоть в один тиын. Если сейчас форма получает итог как `Math.round` от чего-то ещё — переписать на сложение.
 
 В `defaultValues` четырёх форм (строки 406, 628, 869, 1120) удалить `total_words: '',`.
 
@@ -2002,13 +2170,17 @@ inline bool is_valid_role(const std::string& role) {
                                               "Your role in this organization is not allowed to read documents"));
             return;
         }
-        // Кадровик видит реестр, но только свою часть: фильтр ?type
-        // ПЕРЕЗАПИСЫВАЕТСЯ, а не проверяется — иначе ?type=invoice дал бы
-        // ему первичку в обход матрицы.
+        // Кадровик видит реестр, но только свою часть. Фильтр ?type
+        // ПЕРЕЗАПИСЫВАЕТСЯ безусловно, а не проверяется: сужение обязано
+        // быть свойством роли, а не следствием того, что клиент прислал
+        // ?type=hr — иначе пустой запрос отдал бы всю первичку. Присвоение
+        // стоит ПОСЛЕ разбора параметра именно поэтому.
         std::optional<std::string> doc_type_filter = /* существующий разбор ?type */;
         if (!may_read_all)
             doc_type_filter = std::string("hr");
 ```
+
+Тот же `doc_type_filter` обязан уйти и в `list_filtered`, и в `count_filtered` — они уже парные, но перезапись легко поставить только перед одним из двух, и тогда кадровик узнает количество первички, не видя её.
 
 - [ ] **Step 5: OpenAPI и регенерация клиента**
 
@@ -2089,13 +2261,42 @@ TEST_F(OrgReadGatesTest, HrCannotWriteToTheLedgerTaxesOrPayroll) {
 }
 
 TEST_F(OrgReadGatesTest, DocumentsListIsNarrowedToHrDocumentsForTheHrRole) {
-    // Кадровик видит реестр, но только кадровые документы — и ?type=invoice
-    // не расширяет выборку.
+    // В организации есть и первичка, и кадровые документы.
+    seed_document("invoice", "generated");
+    seed_document("tax_invoice", "generated");
+    seed_document("hr", "generated");
     auto hr = member("hr4@example.com", org_.id, "hr");
-    auto resp = call_documents_list(documents_, hr, /*type=*/"invoice");
-    ASSERT_EQ(resp->getStatusCode(), k200OK);
-    for (const auto& d : body_of(resp)["data"])
+
+    // БЕЗ фильтра — главный случай: сужение обязано быть свойством роли, а
+    // не следствием того, что клиент любезно прислал ?type=hr. Если бы оно
+    // зависело от параметра запроса, дыра открывалась бы пустым запросом.
+    auto unfiltered = call_documents_list(documents_, hr, /*type=*/"");
+    ASSERT_EQ(unfiltered->getStatusCode(), k200OK);
+    ASSERT_FALSE(body_of(unfiltered)["data"].empty());
+    for (const auto& d : body_of(unfiltered)["data"])
         EXPECT_EQ(d["doc_type"].get<std::string>(), "hr");
+    // И пагинационный total считает ту же суженную выборку, иначе кадровик
+    // узнаёт количество первички, не видя её.
+    EXPECT_EQ(body_of(unfiltered)["total"].get<long>(), 1);
+
+    // С фильтром на чужой тип — перезапись, а не обход: пустой ответ, а не
+    // счета.
+    auto filtered = call_documents_list(documents_, hr, /*type=*/"invoice");
+    ASSERT_EQ(filtered->getStatusCode(), k200OK);
+    for (const auto& d : body_of(filtered)["data"])
+        EXPECT_EQ(d["doc_type"].get<std::string>(), "hr");
+
+    // Точечное чтение чужого документа — 403, а не 404: документ есть, роль
+    // не та.
+    const std::string invoice_id = seed_document("invoice", "generated");
+    auto one = call_documents_get(documents_, hr, invoice_id);
+    EXPECT_EQ(one->getStatusCode(), k403Forbidden);
+    EXPECT_EQ(body_of(one)["error"].get<std::string>(), "org_role_denied");
+
+    // Бухгалтер по тому же запросу видит всё.
+    auto acc = member("acc4@example.com", org_.id, "accountant");
+    auto all = call_documents_list(documents_, acc, /*type=*/"");
+    EXPECT_GT(body_of(all)["data"].size(), body_of(unfiltered)["data"].size());
 }
 
 TEST_F(OrgReadGatesTest, HrDoesNotCountAsAnOwnerForLastOwnerProtection) {
@@ -4093,6 +4294,7 @@ SELECT COUNT(*) FROM documents WHERE NOT EXISTS (SELECT 1 FROM document_versions
 1. **Прописи в первичке.** Создать счёт на 12 345,67 ₸ через интерфейс → в PDF строка «(Двенадцать тысяч триста сорок пять тенге 67 тиын)». В форме поля ввода прописи нет.
 2. **Клиентская пропись отвергается.** `POST /api/v1/documents/generate` с `{"input": {..., "total_words": "Один тенге 00 тиын"}}` → 422 `not_allowed_override`.
 3. **Чужой слаг.** `POST /api/v1/documents/generate` с `template_slug: "payslip"` → **422** `unsupported_template` (до релиза здесь было 500).
+3a. **Несходящийся счёт-фактура.** `POST /api/v1/documents/generate` с `tax_invoice` и `totals: {amount_tiyn: 9000000, vat_tiyn: 1440000, with_vat_tiyn: 10400000}` → **422** `inconsistent_total`, документа в реестре не появилось. Тот же счёт-фактура с `with_vat_tiyn: 10440000` рендерится, и в PDF стоят «90 000,00», «14 400,00», «104 400,00» — ни одну из трёх строк клиент не присылал.
 4. **ФНО и расчётный листок.** Сформировать ФНО 910 и расчётный листок — в обоих PDF пропись есть, руками её никто не вводил. Отдельно: расчёт НДС с сальдо к возврату → ФНО 300 рендерится, `balance_kind = to_refund`, пропись без минуса.
 5. **Двуязычный трудовой договор.** Сгенерировать — в казахской половине стоит казахская пропись, в русской русская, и они различаются.
 6. **Версии.** Открыть счёт из п.1 → «Изменить» → сумма 2 000,00 ₸ → 202, появилась версия 2; после рендера текущая версия 2, а PDF версии 1 по-прежнему скачивается по своей ссылке.
@@ -4118,7 +4320,8 @@ git commit -m "deploy: release v0.4.0 (amounts in words, document versions, hr r
 1. CI зелёный: новые сьюты — `test_amount_in_words` (русский и казахский, все golden-векторы §3.3 плюс краевые, отрицательное и потолок триллиона), `test_money_format`, `test_input_policy`, `test_org_permissions`, `test_org_read_gates`, `test_journal_cascade`, плюс расширенные `test_documents`, `test_documents_api`, `test_render_job`, `test_docgen_api`, `test_tax_api`, `test_payroll_api`, `test_hr_api`, `test_auth_flow`; фронтовые `navGroups.test.ts`, `documents.test.ts` и обновлённые `payroll/tax/hr.test.ts`.
 2. `template-render` рендерит все шаблоны, включая четыре с новыми целочисленными полями и `labor_contract` с `salary_words_kk`.
 3. Ни одна пропись не приходит от клиента: `grep -rn '_words\|прописью' frontend/src/ | grep -v schema.gen.ts` находит только `break-words` в `components/ui/toaster.tsx`; попытка прислать `*_words` на любом из пяти маршрутов генерации даёт 422 `not_allowed_override`.
-4. `grep -rn 'role == "viewer"' src/api/` не находит ничего; каждый из 23 write-гейтов и 21 read-гейта проходит через `API_REQUIRE_ORG_PERM`; матрица §5.3 покрыта unit-тестом, включая deny-by-default.
+4. `grep -rn 'role == "viewer"' src/api/` не находит ничего; каждый из **23** write-гейтов, каждый из **21** read-гейта и **оба** маршрута выдачи presigned-ссылки (`documents/{id}/download-url`, `tax/filings/{id}/download-url`) проходят через `API_REQUIRE_ORG_PERM` или его развёрнутый эквивалент; матрица §5.3 покрыта unit-тестом, включая deny-by-default.
+4a. Деньги целые от формы до PDF: у `tax_invoice` клиент присылает `totals.amount_tiyn`, `totals.vat_tiyn` и `totals.with_vat_tiyn`, сервер форматирует все три строки сам, а несходящаяся тройка даёт 422 `inconsistent_total` — и не создаёт ни документа, ни джобы.
 5. Роль `hr` существует в БД, в `is_valid_role`, в `OrganizationsController`, в OpenAPI и в сгенерированном клиенте; на каждый закрытый для неё ресурс есть тест на 403 **включая GET**; `hr` не считается за владельца в защите последнего owner-а.
 6. Файловые метаданные и `input_snapshot` живут в `document_versions`; у каждого существующего документа есть версия 1 (бэкфилл проверен запросом); правка порождает версию, старый PDF доступен, повторный рендер не перезаписывает файл и не снимает аннулирование.
 7. Удаление и аннулирование разграничены по связи с проведённой проводкой, а не по статусу; SQLSTATE 23503 отображается в 409, а не в 500; политика хранения объектов S3 записана явно в миграции и в OpenAPI.
