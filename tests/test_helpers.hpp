@@ -357,6 +357,17 @@ inline void truncate_users() {
  *          seed included, wiping the chart of accounts for the rest of the
  *          binary's test run — see test_accounts.cpp's fixture note for the
  *          original incident this avoids.
+ *
+ *        The `DELETE FROM organizations` above goes through thanks to the
+ *        cascade carve-out in `journal_entries_immutability()`
+ *        (`migrations/020_journal_cascade_carveout.sql`): when the parent
+ *        `organizations` row is already gone in this transaction, the
+ *        trigger lets the cascaded DELETE of a posted/reversed entry
+ *        through. Manually disabling triggers here is NOT required and is
+ *        forbidden. Note that this helper's own TRUNCATE means it is not a
+ *        proof that the carve-out works — TRUNCATE fires no row triggers at
+ *        all; tests/integration/test_journal_cascade.cpp proves the cascade
+ *        with a real `DELETE FROM organizations` instead.
  */
 inline void wipe_org_data() {
     Database::get().execute_write([](auto& txn) {
