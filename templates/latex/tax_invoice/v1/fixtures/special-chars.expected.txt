@@ -1,12 +1,12 @@
-# balance_kind == "to_refund" — the other closing block.
-Сумма НДС, подлежащая возврату из бюджета:
-
 # Printed amounts, declared as INTEGER TIYN — scripts/check-render.py
 # derives the printed string from each one with the same algorithm the
 # server's Money::format_tiyn_ru uses. Never write the printed form here:
 # a hand-written expected form is what let v0.4.2 print "450000.00" on a
 # ФНО 300.00 with the gate green.
-amount sales_tenge 100000000
-amount vat_charged_tenge 16000000
-amount vat_credited_tenge 20000000
-amount balance_tenge 4000000
+amount items[].price 100000
+amount items[].amount 100000
+amount items[].vat_amount 16000
+amount items[].total_with_vat 116000
+amount totals.amount 100000
+amount totals.vat 16000
+amount totals.with_vat 116000

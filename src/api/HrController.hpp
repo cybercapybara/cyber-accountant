@@ -130,6 +130,7 @@
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalService.hpp"
 #include "money/AmountInWords.hpp"
+#include "money/MoneyFormat.hpp"
 #include "tenancy/OrgContext.hpp"
 #include "tenancy/OrgPermissions.hpp"
 #include "tenancy/Organization.hpp"
@@ -477,7 +478,14 @@ public:
              {{"full_name", full_name(resolved->employee)},
               {"iin", resolved->employee.iin},
               {"position", resolved->employee.position}}},
-            {"salary_tenge", Ledger::format_tiyn(resolved->employee.salary_tiyn)},
+            // Printed money: the HUMAN form («300 000,00»), not
+            // Ledger::format_tiyn's machine «300000.00». The labour contract
+            // is signed by an employee and read by a labour inspector; the
+            // machine form belongs to employees.salary_tiyn's API
+            // representation, which is not this. Both прописи below are
+            // derived from the SAME integer, so the figure and the two texts
+            // still cannot disagree.
+            {"salary_tenge", Money::format_tiyn_ru(resolved->employee.salary_tiyn)},
             {"starts_on", iso_to_ddmmyyyy(found_contract->starts_on)},
         };
         if (found_contract->ends_on)

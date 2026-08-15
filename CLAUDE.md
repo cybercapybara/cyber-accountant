@@ -46,6 +46,15 @@ gates by construction. Hand-rolled versions usually don't.
    labels it prints and its `margin <N>mm`, plus optional per-fixture
    `fixtures/<name>.expected.txt`. `scripts/check-render.py` fails if it is
    missing — a template with no declared expectations cannot be gated.
+10. **Printed money is `Money::format_tiyn_ru`; stored/served/filed money is
+   `Ledger::format_tiyn`.** The rule is by DESTINATION, not by module. Every
+   `input` handed to a docgen template — the ФНО forms (TaxController), the
+   payslip (PayrollController), the labour contract (HrController), the
+   первичка (`Docgen::InputPolicy`) — carries `12 345,67`. `journal_lines
+   .amount`, API responses and the ФНО XML (which uses neither formatter:
+   `FnoXml::tenge_amount`, whole tenge) keep `1234.56`. In a fixture a printed
+   amount is never written out at all — it is declared `amount <path> <tiyn>`
+   and derived (invariant 9, and `templates/latex/README.md`).
 
 ## Gate sequence — run cheapest-first before pushing
 
@@ -71,16 +80,23 @@ it produced**, in three steps:
    (1.0pt), kept as a LaTeX-only tripwire for overflow in material that
    produces no text (a `\hrulefill` rule, an `\hline`).
 2. `scripts/check-render.py` — the gate proper, engine-agnostic, run per
-   fixture. **Content:** every scalar in the fixture and every label in
-   `expected.txt` must appear in the PDF's extracted text; a `*_tiyn` integer
-   is checked as the money string it must have been formatted into
-   (`1234567` → `12 345,67`), never as a raw integer, and an amount that
-   survives only broken across a line break counts as lost. **Geometry:**
-   every word box from `pdftotext -bbox` must lie inside the declared margin
-   box (0.5pt of slack sideways, 6.0pt vertically for font ascent).
-3. `scripts/check-render-selftest.sh` — breaks payslip, fno_910 and
-   tax_invoice on purpose and fails unless the gate catches all three and
-   names what was lost.
+   fixture. **Oracle:** every printed amount is DERIVED from an integer
+   declared `amount <path> <tiyn>` in the per-fixture expectation file, by the
+   same algorithm as `Money::format_tiyn_ru`; a money-shaped fixture string
+   with no directive, or one in the machine form (`450000.00`), fails. A
+   fixture may not hand-write the printed form of an amount — that is how
+   v0.4.2 printed `450000.00` on a filed ФНО 300.00 with the gate green.
+   **Content:** every scalar in the fixture and every label in `expected.txt`
+   must appear in the PDF's extracted text; a `*_tiyn` integer is checked as
+   the money string it must have been formatted into (`1234567` →
+   `12 345,67`), never as a raw integer, and an amount that survives only
+   broken across a line break counts as lost. **Geometry:** every word box
+   from `pdftotext -bbox` must lie inside the declared margin box (0.5pt of
+   slack sideways, 6.0pt vertically for font ascent).
+3. `scripts/check-render-selftest.sh` — breaks payslip, fno_910, tax_invoice
+   and fno_300 on purpose and fails unless the gate catches all four and names
+   what was lost. The fno_300 case breaks the FIXTURE, not the template, and
+   is the regression test for the gate's own fixture-as-oracle blind spot.
 
 It triggers on changes under `templates/**`, `src/docgen/**`,
 `docker/Dockerfile` or the three gate scripts.

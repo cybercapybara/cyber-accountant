@@ -5,3 +5,15 @@
 КБе
 Основание:
 НДС (
+
+# Printed amounts, declared as INTEGER TIYN — scripts/check-render.py
+# derives the printed string from each one with the same algorithm the
+# server's Money::format_tiyn_ru uses. Never write the printed form here:
+# a hand-written expected form is what let v0.4.2 print "450000.00" on a
+# ФНО 300.00 with the gate green.
+amount items[].price 45000
+amount items[].amount 450000
+amount items[].price 614282
+amount items[].amount 614282
+amount vat_amount 170285
+amount total 1234567

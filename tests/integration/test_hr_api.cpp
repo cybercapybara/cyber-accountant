@@ -29,6 +29,8 @@
 #include "hr/HrRepository.hpp"
 #include "jobs/Jobs.hpp"
 #include "ledger/DocumentRepository.hpp"
+#include "ledger/JournalService.hpp"
+#include "money/MoneyFormat.hpp"
 #include "repositories/RoleRepository.hpp"
 #include "repositories/UserRepository.hpp"
 #include "security/Auth.hpp"
@@ -545,7 +547,13 @@ TEST_F(HrApiTest, GenerateContractDocumentAcceptedAndEnqueues) {
     auto version = documents.latest_version(org.id, doc->id);
     ASSERT_TRUE(version.has_value());
     ASSERT_TRUE(version->input_snapshot.has_value());
-    EXPECT_EQ((*version->input_snapshot)["salary_tenge"].get<std::string>(), "300000.00");
+    // The PRINTED form, literally — this snapshot is what the labour contract
+    // is typeset from. v0.4.2 put Ledger::format_tiyn's "300000.00" here and
+    // every signed contract carried a machine string; the EXPECT_NE below is
+    // the half of this assertion that would fail if it came back.
+    EXPECT_EQ((*version->input_snapshot)["salary_tenge"].get<std::string>(), "300 000,00");
+    EXPECT_EQ((*version->input_snapshot)["salary_tenge"].get<std::string>(), Money::format_tiyn_ru(30000000));
+    EXPECT_NE((*version->input_snapshot)["salary_tenge"].get<std::string>(), Ledger::format_tiyn(30000000));
     EXPECT_EQ((*version->input_snapshot)["employer"]["director"].get<std::string>(), "Ахметов Ерлан Серикович");
     EXPECT_EQ((*version->input_snapshot)["employer"]["name"].get<std::string>(), org.name);
     // Both spellings come from the ONE integer salary_tenge was formatted
@@ -674,7 +682,8 @@ TEST_F(HrApiTest, GenerateContractDocumentOverrideSalaryRejectedAndValueUnchange
     auto version = documents.latest_version(org.id, doc->id);
     ASSERT_TRUE(version.has_value());
     ASSERT_TRUE(version->input_snapshot.has_value());
-    EXPECT_EQ((*version->input_snapshot)["salary_tenge"].get<std::string>(), "300000.00");
+    EXPECT_EQ((*version->input_snapshot)["salary_tenge"].get<std::string>(), "300 000,00");
+    EXPECT_NE((*version->input_snapshot)["salary_tenge"].get<std::string>(), Ledger::format_tiyn(30000000));
 }
 
 // P3: the amount spelled out in words used to be caller-supplied, so a

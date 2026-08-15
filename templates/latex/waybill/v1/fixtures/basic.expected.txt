@@ -2,3 +2,14 @@
 ИИК
 БИК
 КБе
+
+# Printed amounts, declared as INTEGER TIYN — scripts/check-render.py
+# derives the printed string from each one with the same algorithm the
+# server's Money::format_tiyn_ru uses. Never write the printed form here:
+# a hand-written expected form is what let v0.4.2 print "450000.00" on a
+# ФНО 300.00 with the gate green.
+amount items[].price 120000
+amount items[].amount 6000000
+amount items[].price 1500000
+amount items[].amount 4500000
+amount total 10500000

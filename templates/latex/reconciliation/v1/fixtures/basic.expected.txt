@@ -1,2 +1,15 @@
 # This fixture carries an opening balance, which prints its own row heading.
 Сальдо на начало периода
+
+# Printed amounts, declared as INTEGER TIYN — scripts/check-render.py
+# derives the printed string from each one with the same algorithm the
+# server's Money::format_tiyn_ru uses. Never write the printed form here:
+# a hand-written expected form is what let v0.4.2 print "450000.00" on a
+# ФНО 300.00 with the gate green.
+amount opening_balance.a_debit 5000000
+amount rows[].a_debit 3000000
+amount rows[].b_credit 3000000
+amount rows[].a_credit 4000000
+amount rows[].b_debit 4000000
+amount rows[].a_debit 1500000
+amount rows[].b_credit 1500000

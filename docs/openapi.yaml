@@ -2878,7 +2878,8 @@ paths:
         organization's bin/name, and `net_words` derived from the payslip's
         net) and CANNOT be overridden: any body key is a 422
         `not_allowed_override` naming that field, checked before the merge.
-        Amounts are rendered with Ledger::format_tiyn ("300000.00").
+        Amounts are rendered with Money::format_tiyn_ru ("300 000,00") — the
+        printed form, because this input is what the payslip is typeset from.
       tags: [payroll]
       security: [{ BearerAuth: [] }]
       requestBody:

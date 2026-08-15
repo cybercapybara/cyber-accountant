@@ -4,3 +4,20 @@
 БИК
 КБе
 Свидетельство плательщика НДС:
+
+# Printed amounts, declared as INTEGER TIYN — scripts/check-render.py
+# derives the printed string from each one with the same algorithm the
+# server's Money::format_tiyn_ru uses. Never write the printed form here:
+# a hand-written expected form is what let v0.4.2 print "450000.00" on a
+# ФНО 300.00 with the gate green.
+amount items[].price 5000000
+amount items[].amount 5000000
+amount items[].vat_amount 800000
+amount items[].total_with_vat 5800000
+amount items[].price 2000000
+amount items[].amount 4000000
+amount items[].vat_amount 640000
+amount items[].total_with_vat 4640000
+amount totals.amount 9000000
+amount totals.vat 1440000
+amount totals.with_vat 10440000
