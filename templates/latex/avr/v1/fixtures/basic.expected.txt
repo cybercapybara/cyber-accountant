@@ -1,0 +1,7 @@
+# Labels the AVR prints only when the fixture supplies the optional bank
+# details, a contract and a VAT line.
+ИИК
+БИК
+КБе
+Основание:
+НДС (

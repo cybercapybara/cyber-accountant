@@ -249,3 +249,21 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 ENTRYPOINT ["sh", "-c", "exec /app/$WORKER_BINARY \"$@\"", "--"]
 CMD ["config/config.json"]
+
+# Stage 6: CI-only image for the `template-render` job
+#
+# The gate that job runs (scripts/render-templates.sh -> scripts/check-render.py)
+# reads the PDF the worker just produced: it needs `pdftotext` (poppler) to
+# extract the text and the word boxes, and a `python3` to do the comparing.
+# Neither belongs in the shipped worker — the render job itself never reads a
+# PDF back — so they are added HERE, in a stage layered on top of the real
+# worker image, leaving worker-runtime byte-identical to what production runs.
+# `python3`, not `python3-minimal`: the gate imports `unicodedata`, which
+# lives in libpython3-stdlib and is absent from the minimal subset.
+FROM worker-runtime AS worker-render-check
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    poppler-utils \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+USER appuser

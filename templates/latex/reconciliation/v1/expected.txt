@@ -1,0 +1,14 @@
+# Static labels every reconciliation act prints, and its page margin box.
+# This is the widest table in the tree: six columns, two of them under a
+# \multicolumn party heading.
+margin 16mm
+
+Акт сверки взаиморасчётов за период с
+Сторона А:
+Сторона Б:
+БИН/ИИН
+По данным
+Дата
+Документ
+Дебет, ₸
+Кредит, ₸

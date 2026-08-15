@@ -1,0 +1,2 @@
+# No ends_on: the open-ended branch of clause 2 is printed instead.
+и заключён на неопределённый срок

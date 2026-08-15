@@ -12,8 +12,10 @@ just adding files in the right layout.
 templates/latex/<slug>/v<N>/
 ├── template.tex        # inja template — LaTeX source with {{ }} / {% %} placeholders
 ├── schema.json          # JSON Schema (draft-07) the input JSON must satisfy
+├── expected.txt         # page margin + the static labels this template prints
 └── fixtures/
-    └── *.json           # sample inputs, rendered by scripts/render-templates.sh
+    ├── *.json           # sample inputs, rendered by scripts/render-templates.sh
+    └── *.expected.txt   # optional: labels only THIS fixture's data switches on
 ```
 
 - `<slug>` is the document type, matching `documents.doc_type` /
@@ -25,9 +27,12 @@ templates/latex/<slug>/v<N>/
   `template_version` snapshot (`Ledger::Document::template_version`).
 - `fixtures/*.json` are sample inputs used ONLY by
   `scripts/render-templates.sh` (the `template-render` CI job) to smoke-test
-  that the template still compiles under a real XeLaTeX **and that nothing
-  overhangs the page** (see "Tables start their own paragraph") — they are not
-  read by the render job itself.
+  that the template still compiles under a real XeLaTeX **and that the PDF it
+  produced still says everything it was supposed to say** (see "The render
+  gate" below) — they are not read by the render job itself.
+- `expected.txt` is **required**: it declares the page margin box and the
+  static labels the template prints. Without it the gate refuses to run, since
+  it cannot tell a lost column from a template that never had one.
 
 `templates/latex/invoice/v1/` is the reference implementation.
 
@@ -127,9 +132,13 @@ So, above every full-width table:
   setup and can overhang by a few points on its own; `\emergencystretch=2em`
   in the preamble (see `labor_contract`) lets TeX loosen the line instead.
 
-`scripts/render-templates.sh` fails the `template-render` CI job on any
-overfull `\hbox` over `OVERFULL_MAX_PT` (default 1.0pt), so a regression here
-is caught before release rather than on a printed declaration.
+`scripts/render-templates.sh` still fails the `template-render` CI job on any
+overfull `\hbox` over `OVERFULL_MAX_PT` (default 1.0pt) — but that grep is no
+longer the gate, only a LaTeX-only tripwire for overflow in material that
+produces no extractable text (a `\hrulefill` signature rule, an `\hline`).
+The gate is "The render gate" below, which measures the PDF instead of the
+engine's opinion of it and would have caught the v0.3.0 defect even if XeLaTeX
+had reported nothing at all.
 
 ## Testing a template
 
@@ -144,6 +153,53 @@ is caught before release rather than on a printed declaration.
   `template-render` CI job on the worker image. Add a fixture for every new
   template (and every new required/optional field combination worth
   covering) so a broken template fails there instead of in production.
-  That script gates on the XeLaTeX *transcript*, not just the exit code: any
-  `Overfull \hbox` over `OVERFULL_MAX_PT` (default 1.0pt) fails the job,
-  because a document that overhangs the page still compiles happily.
+  That script does far more than check the exit code — see below.
+
+## The render gate
+
+`scripts/check-render.py` runs once per fixture, on the PDF the render just
+produced, and knows nothing about which engine produced it (it is written to
+survive the Typst migration unchanged — see
+`.superpowers/sdd/typst-migration-spike.md`). Two layers:
+
+1. **Content.** Every scalar in the fixture, and every static label in
+   `expected.txt`, must appear in the PDF's extracted text (`pdftotext
+   -layout` and `-raw`; content counts as present if it survives in either).
+   Amounts are compared **in the form they are printed** — thousands
+   separated by a space, decimal comma — so a `*_tiyn` integer is required as
+   `12 345,67`, never as `1234567`, and an amount that only survives split
+   across a line break counts as lost. Values the template deliberately never
+   prints (an order's `kind`, a period's `half`) must be declared
+   `unprinted <path>`, so the default for a new field is "must be printed".
+2. **Geometry.** Every word box from `pdftotext -bbox` must lie inside the
+   `margin <N>mm` box declared in `expected.txt` — 0.5pt of slack sideways
+   (measured: the worst healthy overshoot across all twenty renders is
+   0.01pt), 6.0pt vertically, which is the font-ascent artifact of a `\Large`
+   title (measured: 3.92–4.15pt) and still far below a real overflow.
+
+`expected.txt` format, one directive per line:
+
+```
+margin 18mm                    # required exactly once
+Сомасы, ₸ / Сумма, ₸           # a static label that must reach the PDF
+unprinted kind                 # a fixture value the template never prints
+known-defect balance_words     # printed nowhere because of an open BUG:
+                               # excluded, but re-announced on stderr on
+                               # every run so it cannot be forgotten
+```
+
+Every label must also occur **verbatim in `template.tex`**; a label that does
+not is reported as `EXPECTATION ROT`, so the file cannot drift into asserting
+something the template stopped printing.
+
+When you add or change a template, add its labels here — and when the gate
+fails, read the finding: it names the fixture, and the exact value, label or
+word that was lost.
+
+`scripts/check-render-selftest.sh` (a separate step of the same CI job) breaks
+`payslip`, `fno_910` and `tax_invoice` on purpose — amounts column emptied,
+one amount truncated to `10 000`, a table widened until its VAT columns fall
+off the page — renders each through the same pipeline and fails unless the
+gate catches all three *and* names what was lost. Each case renders the
+unmutated template first and requires a PASS, so a case cannot go green for
+the wrong reason.

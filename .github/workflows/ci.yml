@@ -338,11 +338,16 @@ jobs:
     # buckets stub DOCGEN_LATEX_CMD (tests/integration/test_render_job.cpp),
     # so this is the ONLY gate that would catch a template that passes
     # schema validation and inja rendering but doesn't actually compile.
-    # It also greps the XeLaTeX transcript for overfull \hbox warnings and
-    # fails on them: v0.3.0 shipped templates whose amounts table hung off the
-    # right edge of the page, which XeLaTeX reports as a warning with exit
-    # code 0, so "it compiled" was never enough. See the rationale block in
-    # scripts/render-templates.sh.
+    #
+    # "It compiled" was never enough, though: v0.3.0 shipped templates whose
+    # amounts table hung off the right edge of the page, which XeLaTeX reports
+    # as a *warning* with exit code 0. So this job then reads the PDF it just
+    # produced (scripts/check-render.py): every fixture value and every static
+    # label must be in the extracted text, and every word box must sit inside
+    # the page's margin box. The third step breaks three templates on purpose
+    # and requires the gate to catch all three, so it cannot rot into a green
+    # rubber stamp. See the rationale block in scripts/render-templates.sh.
+    #
     # Path-scoped via dorny/paths-filter (a workflow-level `on.paths` would
     # gate every OTHER job in this file too) — only runs the (slow) docker
     # build + render when something docgen-relevant changed.
@@ -364,18 +369,26 @@ jobs:
               - 'templates/**'
               - 'src/docgen/**'
               - 'docker/Dockerfile'
+              # The gate itself: a change to the render script, the PDF gate or
+              # its self-test has to re-run against every template.
+              - 'scripts/render-templates.sh'
+              - 'scripts/check-render.py'
+              - 'scripts/check-render-selftest.sh'
 
       - name: Set up Docker Buildx
         if: steps.changes.outputs.docgen == 'true'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
 
-      - name: Build worker image (worker-runtime target — has TeX Live)
+      - name: Build worker image (worker-render-check target — TeX Live + poppler)
         if: steps.changes.outputs.docgen == 'true'
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5.4.0
         with:
           context: .
           file: docker/Dockerfile
-          target: worker-runtime
+          # worker-runtime plus pdftotext and python3, which the PDF gate needs
+          # and the shipped worker does not — see the stage's comment. The
+          # worker-runtime layers underneath are exactly the production ones.
+          target: worker-render-check
           push: false
           load: true
           tags: cyber-accountant-template:worker-render
@@ -390,7 +403,7 @@ jobs:
             type=registry,ref=ghcr.io/${{ github.repository }}/builder:cache
           cache-to: type=gha,mode=max
 
-      - name: Render every template fixture through XeLaTeX (fails on overfull \hbox)
+      - name: Render every fixture and gate the PDF (content + geometry)
         if: steps.changes.outputs.docgen == 'true'
         run: |
           docker run --rm \
@@ -399,3 +412,18 @@ jobs:
             --entrypoint /bin/bash \
             cyber-accountant-template:worker-render \
             /scripts/render-templates.sh
+
+      - name: Prove the gate bites (three deliberate breakages)
+        if: steps.changes.outputs.docgen == 'true'
+        # Breaks payslip, fno_910 and tax_invoice on purpose — amounts column
+        # emptied, one amount truncated, table widened past the page — and
+        # fails unless the gate catches each one AND names what was lost. A
+        # gate only ever run against healthy input is indistinguishable from
+        # `exit 0`.
+        run: |
+          docker run --rm \
+            -v "$PWD/scripts:/scripts:ro" \
+            -w /app \
+            --entrypoint /bin/bash \
+            cyber-accountant-template:worker-render \
+            /scripts/check-render-selftest.sh

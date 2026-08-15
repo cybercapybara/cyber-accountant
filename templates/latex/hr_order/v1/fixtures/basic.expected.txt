@@ -1,0 +1,10 @@
+# kind == "hire", with both an optional Содержание and Основание supplied.
+Жұмысқа қабылдау туралы бұйрық / Приказ о приёме на работу
+на работу с
+на должность
+Мазмұны / Содержание:
+Негіздеме / Основание:
+
+# A hire order has no end date: `effective_to` is only printed by the
+# vacation and business-trip branches.
+unprinted effective_to

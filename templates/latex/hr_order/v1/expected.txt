@@ -1,0 +1,14 @@
+# Static labels every HR order prints, and its page margin box.
+# The five order kinds each print their own title; those live in the
+# per-fixture files next to the fixture that selects them.
+margin 18mm
+
+Бұйрық №
+Приказ №
+БСН/БИН
+ЖСН/ИИН
+Басшы / Директор
+Бұйрықпен таныстым / С приказом ознакомлен(а):
+
+# `kind` selects which block below is printed; it is never printed itself.
+unprinted kind

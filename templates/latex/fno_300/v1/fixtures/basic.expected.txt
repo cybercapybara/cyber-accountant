@@ -1,0 +1,14 @@
+# balance_kind == "to_pay".
+#
+# KNOWN DEFECT, found by this gate on the day it was written: neither the
+# closing sentence nor balance_words is ever printed, for either value of
+# balance_kind. `Docgen::render_tex` LaTeX-escapes every string leaf BEFORE
+# inja renders (src/docgen/Renderer.hpp), so the context holds `to\_pay`,
+# `{% if balance_kind == "to_pay" %}` is false, and the block is dropped
+# silently. Every ФНО 300.00 in production is missing its closing line.
+# The same mechanism kills hr_order's `business_trip` and `salary_change`
+# branches, which have no fixture and so are not visible here.
+# The fix belongs in the C++ escaping layer, which this change is not
+# allowed to touch — see .superpowers/sdd/render-gate-report.md.
+known-defect Сумма НДС, подлежащая уплате в бюджет:
+known-defect balance_words

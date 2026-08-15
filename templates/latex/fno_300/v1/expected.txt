@@ -1,0 +1,28 @@
+# Static labels ФНО 300.00 prints, and its page margin box.
+margin 18mm
+
+Декларация по налогу на добавленную стоимость
+(форма 300.00)
+квартал
+года
+Наименование:
+БИН:
+Показатель
+Код строки
+Сумма
+Оборот по реализации, облагаемый НДС
+300.00.001
+Сумма НДС, начисленная за налоговый период
+300.00.002
+Сумма НДС, относимая в зачёт
+300.00.003
+Сумма НДС к уплате (возврату)
+300.00.004
+Директор
+Бухгалтер
+Дата подписания:
+
+# period.quarter only selects a roman numeral; balance_kind only selects which
+# of the two closing sentences below is printed. Neither is printed itself.
+unprinted period.quarter
+unprinted balance_kind
