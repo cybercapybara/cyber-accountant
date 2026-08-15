@@ -27,6 +27,7 @@
 - **Весь пользовательский текст интерфейса — русский.** Единственное принятое заимствование — `Email`. Даты рендерятся только через `frontend/src/lib/dateFormat.ts` (фиксированный UTC+5), деньги показываются только через `<Money tiyn={...} />`.
 - **Сборки и тесты идут ТОЛЬКО в GitHub Actions.** Локально скомпилировать нельзя. Локально доступны: git, `clang-format` 17.0.6, `npx tsc --noEmit`, eslint, vitest, кодоген и шелл-гейты `./scripts/check-*.sh`. Итерация через CI ~40 минут, поэтому код вычитывается на компилируемость глазами ДО пуша.
 - **Коммиты — conventional, без AI-атрибуции.** Никаких `Co-Authored-By: Claude`, `Generated with Claude Code` и подобных трейлеров.
+- **Номера строк в этом плане — baseline на момент его написания** (`main`, коммит `34cd02d`); все они были проверены и верны на тот момент. Но задачи двигают друг друга: задача 4 вставляет строки в `DocgenController`/`TaxController`/`PayrollController`/`HrController` выше тех мест, на которые ссылается задача 6, а задача 6 схлопывает четырёхстрочные блоки выше тех, на которые ссылается задача 7. **Ищите по имени хендлера и по процитированному коду, а не по номеру строки** — номер здесь подсказка «примерно тут», а не адрес.
 
 ### Ошибки компиляции, которые ломали именно этот репозиторий
 
@@ -620,7 +621,9 @@ git commit -m "feat(money): Kazakh amount-in-words and salary_words_kk in the la
 
 **Почему это отдельная задача.** Спека §2 первой редакции обещала «шаблоны не трогаем» — неверно. `total_words` объявлен обязательным в этих четырёх схемах, а сумма там хранится **строкой** (`"total": {"type": "string"}`), то есть целого значения на сервере не существует ни в запросе, ни в БД. Вывести пропись из строки «12 345,67» означало бы распарсить форматированную строку обратно в деньги — ровно то, что запрещает инвариант «деньги — целые тиыны». Поэтому целое поле вводится в схему, и только потом (задача 4) сервер начинает считать из него и `total`, и `total_words`.
 
-**Почему у `tax_invoice` целых полей три, а не одно.** Спека §3.5 выводит из целого только сумму с НДС, оставляя `totals.amount` и `totals.vat` клиентскими строками. Это оставило бы ровно тот дефект, который фаза и закрывает: счёт-фактура, где напечатанные оборот и НДС **не сходятся** с напечатанной же итоговой суммой, — та же поверхность подделки, что убрана из ФНО 300.00. В отличие от декларации, выводимой из журнала, оборот и НДС в счёте-фактуре — собственные данные пользователя, серверного источника у них нет; поэтому решение не «вывести», а **сделать их целыми и внутренне непротиворечивыми**: клиент присылает три целых, сервер форматирует все три строки сам и проверяет `amount_tiyn + vat_tiyn == with_vat_tiyn` (задача 4), отвечая 422 при расхождении. Несогласованный счёт-фактура становится непредставимым, а не «нежелательным».
+**Почему у `tax_invoice` целых полей три, а не одно.** Спека §3.5 выводит из целого только сумму с НДС, оставляя `totals.amount` и `totals.vat` клиентскими строками. Это оставило бы ровно тот дефект, который фаза и закрывает: счёт-фактура, где напечатанные оборот и НДС **не сходятся** с напечатанной же итоговой суммой, — та же поверхность подделки, что убрана из ФНО 300.00. В отличие от декларации, выводимой из журнала, оборот и НДС в счёте-фактуре — собственные данные пользователя, серверного источника у них нет; поэтому решение не «вывести», а **сделать их целыми и сходящимися**: клиент присылает три целых, сервер форматирует все три строки сам и проверяет `amount_tiyn + vat_tiyn == with_vat_tiyn` (задача 4), отвечая 422 при расхождении.
+
+Точная граница того, что это даёт: **итоговая тройка внизу документа гарантированно сходится**. Строки позиций (`items[].amount`, `items[].vat_amount`, `items[].total_with_vat`) остаются свободными строками и с итогами НЕ сверяются — счёт-фактура, у которой позиции не дают заявленный оборот, всё ещё выпускается. Сверка позиций с итогом — отдельная работа: она требует и целых полей в каждой позиции, и решения о том, как построчное округление НДС соотносится с итоговым, — и в P3 она **вне области**. Не пишите в комментариях и в отчёте, что несогласованный счёт-фактура стал невозможен: непротиворечивой сделана печатная итоговая строка, а не документ целиком.
 
 - [ ] **Step 1: `invoice` — схема**
 
@@ -1111,7 +1114,13 @@ struct DerivedAmount {
     /// слагаемое сам И проверяет, что сумма слагаемых равна ровно итогу.
     /// Счёт-фактура, где напечатанные оборот и НДС не сходятся с
     /// напечатанной итоговой суммой, — та же поверхность подделки, что
-    /// убрана из ФНО 300.00; здесь она делается непредставимой.
+    /// убрана из ФНО 300.00.
+    ///
+    /// Область проверки ровно одна: ИТОГОВАЯ строка документа. Строки
+    /// позиций (items[].amount и соседи) остаются свободным текстом и с
+    /// итогом не сверяются — счёт-фактура, чьи позиции не дают заявленный
+    /// оборот, всё ещё выпускается. Сверка позиций — отдельная работа, вне
+    /// области P3.
     std::vector<std::pair<std::string, std::string>> components;
 };
 
@@ -1220,9 +1229,10 @@ inline bool read_tiyn(const json& input,
  * @details Три обязанности: (1) отвергнуть любое серверно-выводимое поле,
  *          присланное каллером; (2) прочитать итог и все его слагаемые как
  *          целые в допустимом диапазоне; (3) если разбивка объявлена —
- *          проверить, что слагаемые дают РОВНО итог. Последнее и делает
- *          несогласованный счёт-фактуру непредставимым: печатать оборот и
- *          НДС, не сходящиеся с итогом, больше нельзя.
+ *          проверить, что слагаемые дают РОВНО итог. Последнее делает
+ *          несходящуюся ИТОГОВУЮ строку невозможной: печатать оборот и
+ *          НДС, не дающие в сумме напечатанный итог, больше нельзя.
+ *          Позиции документа этой проверкой не покрыты (см. DerivedAmount).
  * @return false + заполненные @p error_field / @p error_code /
  *         @p error_message. Каллер обязан превратить это в 422 — все три
  *         случая (чужое поле, кривое целое, несходящаяся разбивка) суть
@@ -1390,7 +1400,7 @@ inline bool apply_derived_amount(const std::string& slug,
         input["balance_words"] = Money::to_words_ru(balance_tiyn < 0 ? -balance_tiyn : balance_tiyn);
 ```
 
-`calc.total_tiyn` и `balance_tiyn` — `long long` и уже не превышают `Money::kMaxTiyn` по построению расчёта; если `to_words_ru` всё же бросит `std::out_of_range`, это поймает существующий `with_repo_errors`/`try` вокруг `build_form_xml` — нет, не поймает: `build_form_input` вызывается раньше. Оберните оба вызова в общий `try { ... } catch (const std::exception& e) { missing_key = "amount_out_of_range"; return std::nullopt; }` внутри `build_form_input`, чтобы каллер отдал существующий 422 `incomplete_calculation` вместо 500.
+`calc.total_tiyn` и `balance_tiyn` — `long long` и уже не превышают `Money::kMaxTiyn` по построению расчёта. Но `build_form_input` вызывается РАНЬШЕ существующего `try` вокруг `build_form_xml`, поэтому брошенный `std::out_of_range` дошёл бы до клиента как 500. Оберните оба вызова в общий `try { ... } catch (const std::exception& e) { missing_key = "amount_out_of_range"; return std::nullopt; }` внутри `build_form_input`, чтобы каллер отдал существующий 422 `incomplete_calculation` вместо 500.
 
 - [ ] **Step 7: `PayrollController` — `net_words` выводится**
 
@@ -1603,7 +1613,7 @@ git commit -m "feat(docgen): derive amounts in words server-side and gate templa
 - `buildInvoiceInput` (строка ~358): заменить `total_words: values.total_words.trim(),` на `total_tiyn: subtotalTiyn + vatTiyn,` — целое уже посчитано двумя строками выше и уже используется для `total`. Саму строку `total: formatTiynRu(subtotalTiyn + vatTiyn),` **удалить**: её теперь считает сервер, а присланная даст 422.
 - `buildAvrInput` (строка ~839): то же самое.
 - `buildWaybillInput` (строка ~1092): то же самое.
-- `buildTaxInvoiceInput` (строка ~1092+): объект `totals` целиком заменить на три ЦЕЛЫХ поля и ни одной строки:
+- `buildTaxInvoiceInput` (строка ~1305, форма счёта-фактуры — та, что рендерит `id="ti-total-words"`): объект `totals` целиком заменить на три ЦЕЛЫХ поля и ни одной строки:
 
 ```ts
     totals: {
@@ -2052,9 +2062,11 @@ git commit -m "feat(tenancy): replace the viewer denylist with a deny-by-default
 
 **Interfaces:**
 - Consumes (задача 6): `Tenancy::OrgPerm::allows`, константы `Resource::*` / `Action::*`, макрос `API_REQUIRE_ORG_PERM(callback, ctx, RES, ACT)`.
-- Produces (на это опираются задачи 13, 14): значение роли `"hr"` принимается `Tenancy::is_valid_role`, миграцией и `OrganizationsController`; каждый org-scoped GET отвечает **403 `org_role_denied`** роли, у которой нет read на его ресурс.
+- Produces (на это опираются задачи 9, 11, 13, 14): значение роли `"hr"` принимается `Tenancy::is_valid_role`, миграцией и `OrganizationsController`; каждый org-scoped GET отвечает **403 `org_role_denied`** роли, у которой нет read на его ресурс; в `LedgerDocumentsController` появляются два приватных статических хелпера, которыми обязаны пользоваться ВСЕ семь маршрутов над одним документом:
+  - `static const char* resource_for(const Ledger::Document& doc)`;
+  - `static bool ensure_document_access(const std::function<void(const HttpResponsePtr&)>& callback, const Tenancy::OrgContext& ctx, const Ledger::Document& doc, const char* action)` — при отказе сам отвечает 403 `org_role_denied` и возвращает `false`.
 
-**Вторая половина проблемы RBAC.** В восьми доменных контроллерах 46 org-scoped маршрутов, и **21 GET-хендлер не имеет проверки роли вообще** (критика спеки говорила «20» — пересчёт по хендлерам даёт 21, полный перечень ниже), плюс два POST-маршрута выдачи presigned-ссылок, которые «read-only, но пишут URL». Значит правило «`—` = невидимо» сегодня невыразимо: чтобы кадровик не видел зарплатную ведомость, гейт нужно поставить туда, где его никогда не было.
+**Вторая половина проблемы RBAC.** В девяти доменных контроллерах 47 org-scoped маршрутов, и **21 GET-хендлер не имеет проверки роли вообще** (критика спеки говорила «20» — пересчёт по хендлерам даёт 21, полный перечень ниже), плюс два POST-маршрута выдачи presigned-ссылок, которые «read-only, но пишут URL». Значит правило «`—` = невидимо» сегодня невыразимо: чтобы кадровик не видел зарплатную ведомость, гейт нужно поставить туда, где его никогда не было.
 
 - [ ] **Step 1: Миграция роли**
 
@@ -2141,21 +2153,41 @@ inline bool is_valid_role(const std::string& role) {
 
 **Оговорка про `/documents`.** Кадровые документы (`doc_type = 'hr'`) лежат в той же таблице `documents`, что и первичка, и в матрице §5.3 они относятся к `hr_docs` (кадровику доступны), а первичка — к `documents` (кадровику невидима). Поэтому в `LedgerDocumentsController`:
 
-- `get` и `downloadUrl` (и, после задачи 9, версионные маршруты) выбирают ресурс по загруженной строке:
+- решение «какой ресурс у ЭТОГО документа» живёт в **одном** приватном хелпере, а не повторяется в каждом хендлере. Семь маршрутов принимают это решение (`get`, `downloadUrl` — здесь; `listVersions`, `createVersion`, `versionDownloadUrl` — задача 9; `remove`, `voidDocument` — задача 11), и семь копий одного условия разъедутся при первой же правке матрицы. В `private:`-секцию `LedgerDocumentsController` добавить:
 
 ```cpp
-            // Кадровые документы в матрице §5.3 — ресурс hr_docs (кадровик
-            // их видит), вся остальная первичка — documents (не видит).
-            // Обе ветки идут ПОСЛЕ find_in_org: до чтения строки тип
-            // документа неизвестен, а «не в этой организации» обязано
-            // оставаться 404, не 403.
-            const char* resource = found->doc_type == "hr" ? Tenancy::OrgPerm::Resource::kHrDocs
-                                                           : Tenancy::OrgPerm::Resource::kDocuments;
-            if (!Tenancy::OrgPerm::allows(ctx.role, resource, Tenancy::OrgPerm::Action::kRead)) {
-                callback(ErrorResponse::forbidden("org_role_denied",
-                                                  "Your role in this organization is not allowed to read this document"));
+    /// Ресурс матрицы §5.3 для КОНКРЕТНОГО документа: кадровые документы —
+    /// hr_docs (кадровик их видит), вся остальная первичка — documents (не
+    /// видит). Обе живут в одной таблице, поэтому ресурс определяется
+    /// строкой, а не маршрутом.
+    static const char* resource_for(const Ledger::Document& doc) {
+        return doc.doc_type == "hr" ? Tenancy::OrgPerm::Resource::kHrDocs : Tenancy::OrgPerm::Resource::kDocuments;
+    }
+
+    /// Проверить право @p action на @p doc; при отказе ответить 403 и
+    /// вернуть false (вызывающий делает `return;`). Функция, а не макрос
+    /// вроде API_REQUIRE_ORG_PERM: решение зависит от УЖЕ ПРОЧИТАННОЙ
+    /// строки, то есть от значения, а не только от ctx, и вызывается
+    /// строго ПОСЛЕ find_in_org — «не в этой организации» обязано
+    /// оставаться 404, а не превращаться в 403.
+    static bool ensure_document_access(const std::function<void(const HttpResponsePtr&)>& callback,
+                                       const Tenancy::OrgContext& ctx,
+                                       const Ledger::Document& doc,
+                                       const char* action) {
+        if (Tenancy::OrgPerm::allows(ctx.role, resource_for(doc), action))
+            return true;
+        callback(ErrorResponse::forbidden("org_role_denied",
+                                          "Your role in this organization is not allowed to " + std::string(action) +
+                                              " this document"));
+        return false;
+    }
+```
+
+и в `get` и `downloadUrl` сразу после проверки `if (!found)` писать одну строку:
+
+```cpp
+            if (!ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kRead))
                 return;
-            }
 ```
 
 - `list` пропускает вызывающего, если у него есть read хотя бы на один из двух ресурсов, и **принудительно сужает выборку до `doc_type='hr'`**, когда есть только `hr_docs`:
@@ -2220,26 +2252,56 @@ TEST_F(OrgReadGatesTest, HrIsDeniedReadOnPayrollJournalTaxAndDocuments) {
         const char* label;
         std::function<HttpResponsePtr(const Security::Auth::AuthPrincipal&)> invoke;
     };
+    // ПОЛНЫЙ перечень гейтов, закрытых для кадровика, — не выборка.
+    // Пятнадцать маршрутов, у каждого свой кейс; ещё три случая с
+    // документами разобраны отдельными тестами ниже, потому что там
+    // решение зависит от doc_type конкретной строки.
     const Case kCases[] = {
+        // payroll (2)
         {"GET /payroll-runs", [&](auto p) { return call_list(payroll_, p); }},
         {"GET /payroll-runs/{id}/payslips", [&](auto p) { return call_payslips(payroll_, p, run_id_); }},
+        // journal (3 — план счетов относится к тому же ресурсу)
         {"GET /journal-entries", [&](auto p) { return call_list(journal_, p); }},
         {"GET /journal-entries/{id}", [&](auto p) { return call_get(journal_, p, entry_id_); }},
         {"GET /accounts", [&](auto p) { return call_list(accounts_, p); }},
+        // counterparties (2)
         {"GET /counterparties", [&](auto p) { return call_list(counterparties_, p); }},
         {"GET /counterparties/{id}", [&](auto p) { return call_get(counterparties_, p, counterparty_id_); }},
+        // tax (7 — включая getFiling и POST-выдачу пресайна)
         {"GET /tax/rates", [&](auto p) { return call_rates(tax_, p); }},
         {"GET /tax/deadlines", [&](auto p) { return call_deadlines(tax_, p); }},
         {"GET /tax/alerts", [&](auto p) { return call_alerts(tax_, p); }},
         {"GET /tax/calculations", [&](auto p) { return call_calculations(tax_, p); }},
         {"GET /tax/filings", [&](auto p) { return call_filings(tax_, p); }},
+        {"GET /tax/filings/{id}", [&](auto p) { return call_get_filing(tax_, p, filing_id_); }},
+        {"POST /tax/filings/{id}/download-url", [&](auto p) { return call_filing_url(tax_, p, filing_id_); }},
+        // documents-как-реестр (1): шаблоны — тоже чтение ресурса documents
         {"GET /doc-templates", [&](auto p) { return call_templates(docgen_, p); }},
     };
+    ASSERT_EQ(std::size(kCases), 15u) << "перечень обязан покрывать ВСЕ закрытые для hr гейты, а не выборку";
     for (const auto& c : kCases) {
         auto resp = c.invoke(hr);
         EXPECT_EQ(resp->getStatusCode(), k403Forbidden) << c.label;
         EXPECT_EQ(body_of(resp)["error"].get<std::string>(), "org_role_denied") << c.label;
     }
+}
+
+TEST_F(OrgReadGatesTest, HrIsDeniedReadOnAnIndividualPrimaryDocument) {
+    // Оставшиеся два гейта над ОДНИМ документом: решение зависит от
+    // doc_type строки, поэтому они не влезают в табличный кейс выше.
+    // Оба обязаны быть 403, а не 404: документ существует и принадлежит
+    // этой организации — не та роль, а не «нет такого».
+    auto hr = member("hr5@example.com", org_.id, "hr");
+    const std::string invoice_id = seed_document("invoice", "generated");
+    for (const auto& c : {std::make_pair("GET /documents/{id}", 0), std::make_pair("POST /documents/{id}/download-url", 1)}) {
+        auto resp = c.second == 0 ? call_documents_get(documents_, hr, invoice_id)
+                                  : call_documents_download_url(documents_, hr, invoice_id);
+        EXPECT_EQ(resp->getStatusCode(), k403Forbidden) << c.first;
+        EXPECT_EQ(body_of(resp)["error"].get<std::string>(), "org_role_denied") << c.first;
+    }
+    // А свой, кадровый — читается и скачивается.
+    const std::string hr_doc = seed_document("hr", "generated");
+    EXPECT_EQ(call_documents_get(documents_, hr, hr_doc)->getStatusCode(), k200OK);
 }
 
 TEST_F(OrgReadGatesTest, HrMayReadEmployeesAndHrDocuments) {
@@ -2308,7 +2370,7 @@ TEST_F(OrgReadGatesTest, HrDoesNotCountAsAnOwnerForLastOwnerProtection) {
 }
 ```
 
-Имена хелперов подгоните под свой файл: важен не их вид, а покрытие — **на каждый из 21 read-гейта и каждый закрытый write должен быть кейс**.
+Имена хелперов подгоните под свой файл: важен не их вид, а покрытие. Сверка полноты, которую обязан сделать исполнитель перед коммитом: 15 табличных кейсов + 2 гейта над одним документом + `GET /documents` (сужение, отдельный тест) = 18 закрытых для кадровика чтений; плюс 5 открытых (`GET /employees`, `GET /employees/{id}`, `GET /hr-orders`, `GET /labor-contracts`, `GET /vacations`) = **все 21 GET-хендлера и оба POST-маршрута выдачи пресайна** из таблицы Step 4. Ни один не должен остаться без кейса — тест на 403 для POST `/payroll-runs` пройдёт, а забытый `GET /tax/filings/{id}` останется открытым, и это ровно тот класс ошибки, который дал утечку в P2.
 
 - [ ] **Step 7: Гейты, CI, коммит**
 
@@ -2614,7 +2676,7 @@ inline void to_json(nlohmann::json& j, const DocumentVersion& v) {
     }
 ```
 
-Добавить пять новых методов (`add_version`, `list_versions`, `find_version`, `latest_version`, `set_version_file`, `set_current_version`) с точными сигнатурами из блока Interfaces. Константа списка колонок версии:
+Добавить шесть новых методов (`add_version`, `list_versions`, `find_version`, `latest_version`, `set_version_file`, `set_current_version`) с точными сигнатурами из блока Interfaces. Константа списка колонок версии:
 
 ```cpp
     static constexpr const char* kVersionColumns =
@@ -2674,7 +2736,104 @@ inline void to_json(nlohmann::json& j, const DocumentVersion& v) {
     }
 ```
 
-**Удалить** старый `set_file(org_id, id, ...)`. Единственный его вызывающий — `Docgen::RenderJob::process_job` — переводится на `set_version_file` в задаче 10; чтобы ветка компилировалась уже сейчас, в этой задаче поменяйте `RenderJob` минимально: получить версию через `latest_version(org_id, document_id)` и вызвать `set_version_file(org_id, v->id, ...)`, оставив `set_status(..., "final")` как есть. Полную защиту джобы добавит задача 10.
+**Удалить** старый `set_file(org_id, id, ...)`. У него **пять** вызывающих, и все пять обязаны переехать в этой же задаче, иначе ветка не соберётся:
+
+| Файл : строка | Что делает | Как переписать |
+|---|---|---|
+| `src/api/LedgerDocumentsController.hpp:443` | `confirmUpload` | см. Step 4a ниже — там же чинится 409 |
+| `src/docgen/RenderJob.hpp:221` | `process_job` | `latest_version(org_id, document_id)` → `set_version_file(org_id, v->id, ...)`; `set_status(..., "final")` пока оставить как есть, полную защиту джобы добавит задача 10 |
+| `tests/integration/test_documents_api.cpp:349` | сид файла у документа | шаблон замены ниже |
+| `tests/integration/test_documents_api.cpp:470` | сид файла у документа | тот же шаблон |
+| `tests/integration/test_tax_api.cpp:1091` | сид PDF-документа филинга | тот же шаблон |
+
+Шаблон замены для тестов — файл кладётся в версию И публикуется, иначе `find_in_org` вернёт документ без `s3_key` и тест сломается на следующей же строке:
+
+```cpp
+    auto seeded_version = repo.latest_version(org.id, created.id);
+    ASSERT_TRUE(seeded_version);
+    ASSERT_TRUE(repo.set_version_file(org.id, seeded_version->id, key, std::string(64, 'a'), "application/pdf", 123));
+    ASSERT_TRUE(repo.set_current_version(org.id, created.id, seeded_version->id));
+```
+
+Комментарий `test_documents_api.cpp:314` («never had set_file() called») тоже поправить — теперь это «документ, у которого версия есть, но файла в ней нет».
+
+- [ ] **Step 4a: `confirmUpload` — иначе каждая загрузка отвечает 409**
+
+Это не косметика, а работающий баг, который создаёт сама эта задача. `confirmUpload` (`src/api/LedgerDocumentsController.hpp:400-448`) читает `found->s3_key`, то есть — после переезда — ключ **ТЕКУЩЕЙ** версии, а `set_pending_upload` пишет в **последнюю** и указатель не двигает. Значит `found->s3_key` пуст, и каждый `confirm-upload` падал бы в 409 `no_pending_upload`, ни разу не дойдя до хранилища.
+
+Лечится в двух местах.
+
+Первое — `set_pending_upload` публикует версию сразу (полное тело, заменяет вариант из Step 4):
+
+```cpp
+    bool set_pending_upload(const std::string& org_id,
+                            const std::string& id,
+                            const std::string& s3_key,
+                            const std::string& mime) {
+        return Database::get().execute_write([&](auto& txn) {
+            auto v = txn.exec_params(
+                "UPDATE document_versions v SET s3_key = $3, mime = $4 "
+                "  FROM documents d "
+                " WHERE v.document_id = d.id AND d.id = $1 AND d.org_id = $2 AND d.status = 'draft' "
+                "   AND v.version_no = (SELECT MAX(vv.version_no) FROM document_versions vv "
+                "                        WHERE vv.document_id = d.id) "
+                "RETURNING v.id",
+                id,
+                org_id,
+                s3_key,
+                mime);
+            if (v.empty())
+                return false;
+            // Указатель ставится СРАЗУ — в отличие от рендера, где он ждёт
+            // успеха джобы. У загруженного документа асинхронной джобы нет
+            // вовсе, а confirm-upload читает ключ через documents, то есть
+            // через ТЕКУЩУЮ версию: без этой строки каждая загрузка
+            // отвечала бы 409 no_pending_upload.
+            txn.exec_params("UPDATE documents SET current_version_id = $3 WHERE id = $1 AND org_id = $2",
+                            id,
+                            org_id,
+                            v[0][0].template as<std::string>());
+            return true;
+        });
+    }
+```
+
+Второе — сам `confirmUpload`: строку `repo.set_file(ctx.org_id, id, *found->s3_key, checksum, mime, size_bytes);` заменить на
+
+```cpp
+            // set_file(document_id, ...) больше нет: файловые метаданные
+            // живут в версии. У загруженного документа версия ровно одна и
+            // startUpload уже сделал её текущей.
+            if (!found->current_version_id) {
+                callback(ErrorResponse::conflict("no_pending_upload", "No upload was started for this document"));
+                return;
+            }
+            repo.set_version_file(ctx.org_id, *found->current_version_id, *found->s3_key, checksum, mime, size_bytes);
+```
+
+Тест, который обязан быть в `tests/integration/test_documents_api.cpp` (сквозной цикл загрузки уже есть — дополнить его этими проверками):
+
+```cpp
+TEST_F(LedgerDocumentsApiTest, UploadFlowPublishesVersionOneAndConfirmSucceeds) {
+    auto p = member("upload@example.com", org_.id, "accountant");
+    auto started = call_start_upload(ctrl, authed_json(Post, upload_body(), p));
+    ASSERT_EQ(started->getStatusCode(), k201Created);
+    const std::string doc_id = body_of(started)["data"]["id"].get<std::string>();
+
+    Ledger::DocumentRepository repo;
+    auto after_start = repo.find_in_org(doc_id, org_.id, /*from_primary=*/true);
+    ASSERT_TRUE(after_start);
+    // Ключ виден ЧЕРЕЗ документ — то есть указатель уже стоит.
+    ASSERT_TRUE(after_start->current_version_id);
+    ASSERT_TRUE(after_start->s3_key);
+
+    put_object(*after_start->s3_key, "содержимое");
+    auto confirmed = call_confirm_upload(ctrl, authed_json(Post, confirm_body(), p), doc_id);
+    EXPECT_EQ(confirmed->getStatusCode(), k200OK);  // НЕ 409
+    EXPECT_EQ(body_of(confirmed)["data"]["status"].get<std::string>(), "final");
+    EXPECT_EQ(repo.list_versions(org_.id, doc_id).size(), 1u);
+}
+```
 
 - [ ] **Step 5: `wipe_org_data` и OpenAPI**
 
@@ -2787,7 +2946,7 @@ git commit -m "feat(documents): move file metadata and input snapshots into docu
 - Test: `tests/integration/test_documents_api.cpp`
 
 **Interfaces:**
-- Consumes: `Docgen::InputPolicy::input_is_caller_authored / editable_fields / apply_derived_amount` (задача 4); `DocumentRepository::add_version / list_versions / find_version / latest_version` (задача 8); `Api::Validation::merge_allowed_extra` (`src/api/Validation.hpp:392`); `Tenancy::OrgPerm::Resource::kDocuments|kHrDocs` (задача 6).
+- Consumes: `Docgen::InputPolicy::input_is_caller_authored / editable_fields / apply_derived_amount` (задача 4); `DocumentRepository::add_version / list_versions / find_version / latest_version` (задача 8); `Api::Validation::merge_allowed_extra` (`src/api/Validation.hpp:392`); `Tenancy::OrgPerm::Action::kRead|kWrite` (задача 6) и приватные хелперы `resource_for(const Ledger::Document&)` / `ensure_document_access(callback, ctx, doc, action)` из `LedgerDocumentsController` (задача 7) — своей копии условия по `doc_type` не заводить.
 - Produces (на это опирается задача 13, а `version_id` в полезной нагрузке — задача 10):
   - `POST /api/v1/documents/{id}/versions` — тело `{input: {...}}`, ответ **202** `{document_id, version_id, version_no, render_queued}`;
   - `GET /api/v1/documents/{id}/versions` — ответ `{data: [DocumentVersion...]}`, по возрастанию `version_no`;
@@ -2898,9 +3057,9 @@ TEST_F(LedgerDocumentsApiTest, ViewerCannotEditButCanListVersions) {
     ADD_METHOD_TO(LedgerDocumentsController::versionDownloadUrl, "/api/v1/documents/{1}/versions/{2}/download-url", Post);
 ```
 
-`listVersions` — read-гейт по типу документа (как `get` в задаче 7), затем `repo.list_versions(ctx.org_id, id)` → `Response::list(data)`.
+`listVersions` — `find_in_org`, затем `if (!ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kRead)) return;` (хелпер объявлен задачей 7 в `private:`-секции этого же контроллера), затем `repo.list_versions(ctx.org_id, id)` → `Response::list(data)`.
 
-`versionDownloadUrl` — read-гейт, `find_version(ctx.org_id, id, version_no)`; отсутствует → 404; `s3_key` пуст → 409 `no_file`; иначе `s3->presign(*v->s3_key, "GET", kDownloadTtlSec)`. `version_no` парсится из строкового сегмента: не число или ≤ 0 → 400 `invalid_version`.
+`versionDownloadUrl` — тот же `ensure_document_access(..., kRead)`, затем `find_version(ctx.org_id, id, version_no)`; отсутствует → 404; `s3_key` пуст → 409 `no_file`; иначе `s3->presign(*v->s3_key, "GET", kDownloadTtlSec)`. `version_no` парсится из строкового сегмента: не число или ≤ 0 → 400 `invalid_version`.
 
 `createVersion` — полное тело:
 
@@ -2939,22 +3098,15 @@ TEST_F(LedgerDocumentsApiTest, ViewerCannotEditButCanListVersions) {
                 callback(ErrorResponse::not_found("document"));
                 return;
             }
-            const char* resource = found->doc_type == "hr" ? Tenancy::OrgPerm::Resource::kHrDocs
-                                                           : Tenancy::OrgPerm::Resource::kDocuments;
-            if (!Tenancy::OrgPerm::allows(ctx.role, resource, Tenancy::OrgPerm::Action::kWrite)) {
-                callback(ErrorResponse::forbidden("org_role_denied",
-                                                  "Your role in this organization is not allowed to edit this document"));
+            // Хелпер задачи 7 — единственная точка, где решается, какой
+            // ресурс матрицы §5.3 у этого документа.
+            if (!ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kWrite))
                 return;
-            }
             // Загруженные и пришедшие почтой документы не редактируются: у
             // них input_snapshot пуст по построению, редактировать нечего.
             if (found->source != "generated" || !found->template_slug || found->template_slug->empty()) {
                 callback(ErrorResponse::conflict("not_editable",
                                                  "Only documents generated from a template can be edited"));
-                return;
-            }
-            if (found->voided_at) {  // колонка появляется в задаче 11; до неё условие не пишется
-                callback(ErrorResponse::conflict("document_voided", "A voided document cannot be edited"));
                 return;
             }
             const std::string slug = *found->template_slug;
@@ -3043,7 +3195,7 @@ TEST_F(LedgerDocumentsApiTest, ViewerCannotEditButCanListVersions) {
 
 и `#include "jobs/Jobs.hpp"`, `#include "docgen/TemplateRegistry.hpp"`, `#include "docgen/InputPolicy.hpp"`.
 
-Замечание про порядок задач: условие `found->voided_at` относится к колонке, которую вводит задача 11. Если задача 9 выполняется раньше — строку не писать, а задача 11 обязана её добавить (это явно записано в её шагах).
+**Про аннулированные документы.** Проверки `found->voided_at` в теле выше намеренно НЕТ: колонку вводит задача 11, и до неё этот код не скомпилировался бы. Тело выше — полное и копируется как есть. Ветку «аннулированный документ не редактируется» добавляет задача 11 своим шагом, сразу после проверки `source`/`template_slug`.
 
 - [ ] **Step 3: `downloadUrl` документа — оговорка про пресайн**
 
@@ -3103,10 +3255,11 @@ git commit -m "feat(documents): edit through the creation allowlist, with versio
 ```cpp
 /// Можно ли класть результат рендера в эту версию.
 enum class VersionRenderState {
-    kMissing,      ///< версии нет в этой организации (или документ удалён)
-    kRenderable,   ///< самая новая версия живого документа — результат принимается
-    kSuperseded,   ///< поверх неё уже создана более новая версия — джоба no-op
-    kVoided,       ///< документ аннулирован — джоба no-op
+    kMissing,          ///< версии нет в этой организации (или документ удалён)
+    kRenderable,       ///< самая новая версия живого документа без файла — результат принимается
+    kAlreadyRendered,  ///< в версии УЖЕ лежит файл — повтор джобы не перезаписывает его
+    kSuperseded,       ///< поверх неё уже создана более новая версия — джоба no-op
+    kVoided,           ///< документ аннулирован — джоба no-op
 };
 ```
 
@@ -3125,6 +3278,7 @@ enum class VersionRenderState {
         return Database::get().execute_read([&](auto& txn) {
             auto r = txn.exec_params(
                 "SELECT (d.voided_at IS NOT NULL) AS voided, "
+                "       (v.s3_key IS NOT NULL) AS rendered, "
                 "       (v.version_no = (SELECT MAX(vv.version_no) FROM document_versions vv "
                 "                         WHERE vv.document_id = d.id)) AS newest "
                 "  FROM document_versions v JOIN documents d ON d.id = v.document_id "
@@ -3138,6 +3292,16 @@ enum class VersionRenderState {
                 return VersionRenderState::kVoided;
             if (!r[0]["newest"].template as<bool>())
                 return VersionRenderState::kSuperseded;
+            // Файл уже лежит в версии — повтор джобы (ручной re-enqueue,
+            // ретрай после таймаута, дубль в очереди) НЕ перерендеривает её.
+            // Спека §4.1: предыдущий PDF остаётся; версия — свидетельство, и
+            // подменять байты под уже выданной ссылкой нельзя. Проверка
+            // именно состояния, а не сравнение контрольных сумм: XeLaTeX в
+            // этом дереве собирает PDF без SOURCE_DATE_EPOCH (его нет нигде
+            // в репозитории), поэтому два рендера одного входа дают РАЗНЫЕ
+            // байты, и «перерендерил ли кто-то» по checksum не определяется.
+            if (r[0]["rendered"].template as<bool>())
+                return VersionRenderState::kAlreadyRendered;
             return VersionRenderState::kRenderable;
         });
     }
@@ -3184,9 +3348,10 @@ enum class VersionRenderState {
     // просто её результат больше никому не нужен, и повтор её не спасёт.
     const auto state = documents.version_render_state(org_id, document_id, version_id);
     if (state != Ledger::VersionRenderState::kRenderable) {
-        const char* reason = state == Ledger::VersionRenderState::kMissing     ? "missing"
-                             : state == Ledger::VersionRenderState::kVoided    ? "voided"
-                                                                               : "superseded";
+        const char* reason = state == Ledger::VersionRenderState::kMissing ? "missing"
+                             : state == Ledger::VersionRenderState::kVoided ? "voided"
+                             : state == Ledger::VersionRenderState::kAlreadyRendered ? "already_rendered"
+                                                                                     : "superseded";
         spdlog::info("docgen: skipping render of version {} of document {}: {}", version_id, document_id, reason);
         return json{{"document_id", document_id}, {"version_id", version_id}, {"skipped", reason}};
     }
@@ -3303,21 +3468,40 @@ TEST_F(RenderJobTest, IsANoOpForASupersededVersion) {
     EXPECT_FALSE(after->current_version_id.has_value());
 }
 
-TEST_F(RenderJobTest, DoesNotOverwriteAnAlreadyPublishedVersionOnRerun) {
+TEST_F(RenderJobTest, DoesNotOverwriteAnAlreadyRenderedVersionOnRerun) {
+    // ВАЖНО про форму проверки: PDF в этом дереве НЕ байт-стабилен —
+    // SOURCE_DATE_EPOCH нигде не выставляется, XeLaTeX штампует в файл дату
+    // сборки. Поэтому «повтор ничего не перезаписал» доказывается тем, что
+    // джоба вернула skipped и метаданные версии не изменились, а НЕ тем,
+    // что второй рендер дал ту же контрольную сумму: без гварда суммы
+    // разошлись бы, но и с наивным сравнением тест флакал бы на любом
+    // изменении шаблона.
     auto doc = repo_.create(org_.id, "invoice", "generated", "draft", std::nullopt, "invoice", "v1",
                             std::optional<nlohmann::json>{valid_invoice_input()});
     auto v1 = repo_.latest_version(org_.id, doc.id);
+    ASSERT_TRUE(v1);
     const json payload = {{"org_id", org_.id}, {"document_id", doc.id}, {"version_id", v1->id},
                           {"slug", "invoice"}, {"input", valid_invoice_input()}};
-    Docgen::process_job(payload);
+
+    auto first_result = Docgen::process_job(payload);
+    EXPECT_FALSE(first_result.contains("skipped"));
     const auto first = repo_.find_version(org_.id, doc.id, 1);
     ASSERT_TRUE(first);
+    ASSERT_TRUE(first->s3_key);
+    const std::string first_key = *first->s3_key;
     const std::string first_checksum = first->checksum_sha256.value_or("");
-    Docgen::process_job(payload);  // повтор
+    ASSERT_FALSE(first_checksum.empty());
+
+    auto second_result = Docgen::process_job(payload);  // повтор той же джобы
+    EXPECT_EQ(second_result["skipped"].get<std::string>(), "already_rendered");
+
     const auto again = repo_.find_version(org_.id, doc.id, 1);
     ASSERT_TRUE(again);
+    EXPECT_EQ(again->s3_key.value_or(""), first_key);
     EXPECT_EQ(again->checksum_sha256.value_or(""), first_checksum);
-    EXPECT_EQ(again->version_no, 1);
+    EXPECT_EQ(repo_.list_versions(org_.id, doc.id).size(), 1u);
+    // И содержимое объекта в хранилище то же — Storage::put повторно не звался.
+    EXPECT_EQ(Utils::Crypto::sha256_hex(Storage::get().get(first_key).value_or("")), first_checksum);
 }
 
 TEST_F(RenderJobTest, DoesNotResurrectAVoidedDocument) {
@@ -3359,10 +3543,10 @@ git commit -m "fix(docgen): key the render job on version_id and skip voided or 
 - Modify: `src/ledger/Document.hpp` (три поля + `to_json`), `src/ledger/DocumentRepository.hpp` (`kColumns`, `has_posted_entry_link`, `remove`, `void_document`, `version_render_state`)
 - Modify: `src/api/LedgerDocumentsController.hpp` (два маршрута + условие `voided_at` в `createVersion`)
 - Modify: `src/api/Endpoints.hpp`, `docs/openapi.yaml`, `frontend/src/lib/api/schema.gen.ts`
-- Test: `tests/integration/test_documents_api.cpp`
+- Test: `tests/integration/test_documents_api.cpp`, `tests/integration/test_render_job.cpp` (вернуть настоящее условие `voided_at` и включить `DoesNotResurrectAVoidedDocument`)
 
 **Interfaces:**
-- Consumes (задачи 6, 8, 10): `Tenancy::OrgPerm::Resource::kDocuments|kHrDocs`, `Ledger::DocumentVersion`, `DocumentRepository::version_render_state`.
+- Consumes (задачи 6, 7, 8, 10): `Tenancy::OrgPerm::Action::kWrite`, приватные хелперы `resource_for` / `ensure_document_access` из `LedgerDocumentsController` (задача 7), `Ledger::DocumentVersion`, `DocumentRepository::version_render_state`.
 - Produces (на это опираются задачи 10 и 13):
   - `Ledger::Document` дополнительно несёт `std::optional<std::string> voided_at, voided_by_user_id, void_reason;`
   - `bool DocumentRepository::has_posted_entry_link(const std::string& org_id, const std::string& document_id)`;
@@ -3509,7 +3693,7 @@ CREATE INDEX IF NOT EXISTS idx_documents_org_voided ON documents (org_id, voided
     ADD_METHOD_TO(LedgerDocumentsController::voidDocument, "/api/v1/documents/{1}/void", Post);
 ```
 
-`remove` — гейт `kWrite` по типу документа (как в задаче 9), затем:
+`remove` — `find_in_org` (его результат `found` нужен и для аудита ниже), затем `if (!ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kWrite)) return;` — тот же хелпер задачи 7, что и у остальных шести маршрутов над одним документом; своей копии условия по `doc_type` здесь быть не должно. Затем:
 
 ```cpp
             switch (repo.remove(ctx.org_id, id)) {
@@ -3545,9 +3729,9 @@ CREATE INDEX IF NOT EXISTS idx_documents_org_voided ON documents (org_id, voided
 
 Для `Security::Audit::record` нужен `#include "security/Audit.hpp"`; сигнатура — `record(actor_id, action, target_type, target_id, details = json::object())`, идиома вызова взята из `src/api/OrganizationsController.hpp:122`. `found` здесь — результат `repo.find_in_org(id, ctx.org_id)`, который надо прочитать ДО `remove()` (он же даёт `doc_type` для гейта прав). Аннулирование пишет в аудит так же: `Security::Audit::record(ctx.user_id, "document.void", "document", id, {{"reason", reason}});`.
 
-`voidDocument` — гейт `kWrite`, тело `{reason}` обязательно и непусто после trim (иначе 400 `missing`/422 `blank`), документ должен существовать (404), уже аннулированный → 409 `already_voided`, иначе `void_document(...)` и `Response::ok({{"data", json(*repo.find_in_org(id, ctx.org_id))}})`.
+`voidDocument` — `find_in_org` + `ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kWrite)`, тело `{reason}` обязательно и непусто после trim (иначе 400 `missing`/422 `blank`), документ должен существовать (404), уже аннулированный → 409 `already_voided`, иначе `void_document(...)` и `Response::ok({{"data", json(*repo.find_in_org(id, ctx.org_id))}})`.
 
-В `createVersion` (задача 9) раскомментировать/добавить ветку:
+В `createVersion` (её ввела задача 9, и она сознательно НЕ содержит этой проверки — колонки тогда ещё не было) добавить ветку сразу после проверки `source`/`template_slug`:
 
 ```cpp
             if (found->voided_at) {
@@ -3556,7 +3740,20 @@ CREATE INDEX IF NOT EXISTS idx_documents_org_voided ON documents (org_id, voided
             }
 ```
 
-Если `Response::no_content()` в `src/api/HandlerSupport.hpp` отсутствует — использовать ту форму 204, которой уже пользуется `DELETE /api/v1/account/api-keys/{id}` в `src/api/ApiKeysController.hpp`, и повторить её дословно.
+**Про 204 — хелпера НЕ существует, стройте ответ явно.** В `namespace Response` (`src/utils/ErrorResponse.hpp:109-156`) есть только `ok`, `created`, `accepted`, `paginated`, `list` — все с телом. `DELETE /api/v1/account/api-keys/{id}` (`src/api/ApiKeyController.hpp:80`, имя файла в единственном числе) отвечает **200** с `{"message": "API key revoked"}`, то есть образцом для 204 быть не может. Единственный `k204NoContent` во всём дереве — CORS-preflight в `src/api/Middleware.hpp:339`. Поэтому в ветке `kDeleted` пишите так:
+
+```cpp
+                    // 204 строится вручную: в Response:: хелпера без тела
+                    // нет, а заводить его ради одного вызова — лишняя
+                    // публичная поверхность. Тела у ответа нет вовсе, так
+                    // что setContentTypeCode не нужен.
+                    auto resp = drogon::HttpResponse::newHttpResponse();
+                    resp->setStatusCode(drogon::k204NoContent);
+                    callback(resp);
+                    return;
+```
+
+`switch` со `case`, объявляющим переменную, требует своей области видимости — оберните тело этого `case` в фигурные скобки (`case Ledger::DeleteOutcome::kDeleted: { ... }`), иначе GCC выдаст `jump to case label crosses initialization of 'resp'`.
 
 - [ ] **Step 4: Тройная синхронизация**
 
@@ -3765,9 +3962,26 @@ TEST_F(JournalCascadeTest, DirectUpdateOfAPostedEntryIsStillRejected) {
                  pqxx::sql_error);
 }
 
-TEST_F(JournalCascadeTest, WipeOrgDataNeedsNoManualTriggerDisabling) {
-    seed_fully_wired_org();
-    EXPECT_NO_THROW(TestHelpers::wipe_org_data());
+TEST_F(JournalCascadeTest, CarveOutUsesNeitherTriggerDepthNorASessionFlag) {
+    // Единственный тест, который ловит ЗАПРЕЩЁННЫЕ формы выреза: и
+    // pg_trigger_depth() > 1, и сессионный флаг прошли бы все проверки
+    // выше зелёными, оставив при этом дыру. Отличить их можно только по
+    // телу функции, поэтому оно и читается из каталога.
+    //
+    // (Тест «wipe_org_data не бросает» здесь стоял и был удалён намеренно:
+    // wipe_org_data TRUNCATE'ит journal_entries ДО удаления организаций, а
+    // TRUNCATE не запускает построчные триггеры вовсе — тест проходил и
+    // без выреза, то есть не мог упасть ни при какой реализации.)
+    const std::string src = Database::get().execute_read([](auto& txn) {
+        auto r = txn.exec("SELECT prosrc FROM pg_proc WHERE proname = 'journal_entries_immutability'");
+        return r.at(0).at(0).template as<std::string>();
+    });
+    EXPECT_EQ(src.find("pg_trigger_depth"), std::string::npos)
+        << "pg_trigger_depth снимает неизменяемость в любом вложенном триггере, а не только в нужном каскаде";
+    EXPECT_EQ(src.find("current_setting"), std::string::npos)
+        << "сессионный флаг вручает приложению рубильник от insert-only журнала";
+    EXPECT_NE(src.find("FROM organizations WHERE id = OLD.org_id"), std::string::npos)
+        << "разрешена только форма NOT EXISTS по родительской строке organizations";
 }
 ```
 
@@ -3887,6 +4101,7 @@ git commit -m "fix(journal): narrow cascade carve-out for org and author deletio
 
 **Files:**
 - Modify: `frontend/src/pages/Documents.tsx`
+- Modify: `frontend/src/pages/GenerateDocument.tsx` (вынести четыре формы первички в экспортируемые компоненты, чтобы диалог правки переиспользовал их, а не копировал)
 - Modify: `frontend/src/lib/api/queryKeys.ts` (строка 39-51, блок `documents`)
 - Modify: `frontend/src/lib/api/types.ts`
 - Modify: `frontend/src/lib/schemas/documents.ts` (схема причины аннулирования)
@@ -4168,7 +4383,7 @@ describe('groupNavLinks', () => {
     expect(groups.reduce((n, g) => n + g.links.length, 0)).toBe(10);
   });
 
-  it('shows the hr role only the people group', () => {
+  it('shows the hr role the people group without payroll, plus settings', () => {
     const groups = groupNavLinks(routes, plainUser, 'hr');
     expect(groups.map((g) => g.id)).toEqual(['people', 'settings']);
     const people = groups.find((g) => g.id === 'people');
@@ -4289,22 +4504,22 @@ SELECT COUNT(*) FROM documents WHERE NOT EXISTS (SELECT 1 FROM document_versions
 
 - [ ] **Step 4: Сквозной смоук через https://buh.cybercapybara.kz**
 
-Каждый пункт — с выводом в отчёт.
+Все **14** пунктов — с выводом в отчёт; пропуск пункта отмечается явно, а не молча.
 
 1. **Прописи в первичке.** Создать счёт на 12 345,67 ₸ через интерфейс → в PDF строка «(Двенадцать тысяч триста сорок пять тенге 67 тиын)». В форме поля ввода прописи нет.
 2. **Клиентская пропись отвергается.** `POST /api/v1/documents/generate` с `{"input": {..., "total_words": "Один тенге 00 тиын"}}` → 422 `not_allowed_override`.
 3. **Чужой слаг.** `POST /api/v1/documents/generate` с `template_slug: "payslip"` → **422** `unsupported_template` (до релиза здесь было 500).
-3a. **Несходящийся счёт-фактура.** `POST /api/v1/documents/generate` с `tax_invoice` и `totals: {amount_tiyn: 9000000, vat_tiyn: 1440000, with_vat_tiyn: 10400000}` → **422** `inconsistent_total`, документа в реестре не появилось. Тот же счёт-фактура с `with_vat_tiyn: 10440000` рендерится, и в PDF стоят «90 000,00», «14 400,00», «104 400,00» — ни одну из трёх строк клиент не присылал.
-4. **ФНО и расчётный листок.** Сформировать ФНО 910 и расчётный листок — в обоих PDF пропись есть, руками её никто не вводил. Отдельно: расчёт НДС с сальдо к возврату → ФНО 300 рендерится, `balance_kind = to_refund`, пропись без минуса.
-5. **Двуязычный трудовой договор.** Сгенерировать — в казахской половине стоит казахская пропись, в русской русская, и они различаются.
-6. **Версии.** Открыть счёт из п.1 → «Изменить» → сумма 2 000,00 ₸ → 202, появилась версия 2; после рендера текущая версия 2, а PDF версии 1 по-прежнему скачивается по своей ссылке.
-7. **Правка чужого поля.** `POST /api/v1/documents/{id}/versions` для ФНО-документа с `{"input": {"tax_tenge": "1,00"}}` → 422 `not_allowed_override`.
-8. **Правка загруженного.** Загрузить скан → «Изменить» недоступно; вызов API напрямую → 409 `not_editable`.
-9. **Удаление и аннулирование.** Ошибочно загруженный скан удаляется (204). Счёт, привязанный к проведённой проводке, на удалении даёт 409 `document_has_posted_entries`, аннулируется с причиной, в карточке плашка «Аннулирован», `status` остался `final`.
-10. **Кадровый документ под приказом.** Удаление → 409 `document_referenced` (не 500).
-11. **Роль кадровика.** Завести второго пользователя с ролью `hr`. Под ним: `/employees` и `/hr` открываются; `/payroll`, `/journal`, `/taxes`, `/counterparties` дают 403 `org_role_denied` **и на GET тоже**; в меню видны только разделы «Кадры и зарплата» (без «Зарплата») и «Настройки».
-12. **Меню.** Под владельцем — четыре раздела в порядке Учёт / Кадры и зарплата / Налоги / Настройки, десять пунктов; на узком экране мобильная панель показывает те же разделы заголовками; пустых разделов нет ни в одном из двух рендеров.
-13. **Удаление пользователя.** Удалить (в админке) учётную запись, которая когда-либо проводила запись в журнал → удаление проходит, проводка на месте, её автор стал пустым.
+4. **Несходящийся счёт-фактура.** `POST /api/v1/documents/generate` с `tax_invoice` и `totals: {amount_tiyn: 9000000, vat_tiyn: 1440000, with_vat_tiyn: 10400000}` → **422** `inconsistent_total`, документа в реестре не появилось. Тот же счёт-фактура с `with_vat_tiyn: 10440000` рендерится, и в PDF стоят «90 000,00», «14 400,00», «104 400,00» — ни одну из трёх строк клиент не присылал.
+5. **ФНО и расчётный листок.** Сформировать ФНО 910 и расчётный листок — в обоих PDF пропись есть, руками её никто не вводил. Отдельно: расчёт НДС с сальдо к возврату → ФНО 300 рендерится, `balance_kind = to_refund`, пропись без минуса.
+6. **Двуязычный трудовой договор.** Сгенерировать — в казахской половине стоит казахская пропись, в русской русская, и они различаются.
+7. **Версии.** Открыть счёт из п.1 → «Изменить» → сумма 2 000,00 ₸ → 202, появилась версия 2; после рендера текущая версия 2, а PDF версии 1 по-прежнему скачивается по своей ссылке.
+8. **Правка чужого поля.** `POST /api/v1/documents/{id}/versions` для ФНО-документа с `{"input": {"tax_tenge": "1,00"}}` → 422 `not_allowed_override`.
+9. **Правка загруженного.** Загрузить скан → «Изменить» недоступно; вызов API напрямую → 409 `not_editable`.
+10. **Удаление и аннулирование.** Ошибочно загруженный скан удаляется (204). Счёт, привязанный к проведённой проводке, на удалении даёт 409 `document_has_posted_entries`, аннулируется с причиной, в карточке плашка «Аннулирован», `status` остался `final`.
+11. **Кадровый документ под приказом.** Удаление → 409 `document_referenced` (не 500).
+12. **Роль кадровика.** Завести второго пользователя с ролью `hr`. Под ним: `/employees` и `/hr` открываются; `/payroll`, `/journal`, `/taxes`, `/counterparties` дают 403 `org_role_denied` **и на GET тоже**; в меню видны только разделы «Кадры и зарплата» (без «Зарплата») и «Настройки».
+13. **Меню.** Под владельцем — четыре раздела в порядке Учёт / Кадры и зарплата / Налоги / Настройки, десять пунктов; на узком экране мобильная панель показывает те же разделы заголовками; пустых разделов нет ни в одном из двух рендеров.
+14. **Удаление пользователя.** Удалить (в админке) учётную запись, которая когда-либо проводила запись в журнал → удаление проходит, проводка на месте, её автор стал пустым.
 
 - [ ] **Step 5: Коммит values и пуш**
 
