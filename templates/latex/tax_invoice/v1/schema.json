@@ -18,8 +18,11 @@
       }}},
     "totals": {
       "type": "object",
-      "required": ["amount", "vat", "with_vat"],
+      "required": ["amount_tiyn", "vat_tiyn", "with_vat_tiyn", "amount", "vat", "with_vat"],
       "properties": {
+        "amount_tiyn": {"type": "integer", "minimum": 0},
+        "vat_tiyn": {"type": "integer", "minimum": 0},
+        "with_vat_tiyn": {"type": "integer", "minimum": 0},
         "amount": {"type": "string"}, "vat": {"type": "string"}, "with_vat": {"type": "string"}
       }},
     "total_words": {"type": "string"}

@@ -40,6 +40,9 @@
     }
   ],
   "totals": {
+    "amount_tiyn": 9000000,
+    "vat_tiyn": 1440000,
+    "with_vat_tiyn": 10440000,
     "amount": "90 000,00",
     "vat": "14 400,00",
     "with_vat": "104 400,00"
