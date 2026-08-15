@@ -9,9 +9,9 @@
  * that either copies a hardcoded minimal PDF into `main.pdf` (success case)
  * or exits 1 without producing one (failure case). The full pipeline —
  * schema validation, inja rendering + LaTeX escaping, the two-pass "latex"
- * invocation, sha256, Storage::put, DocumentRepository::set_version_file/
- * set_current_version/set_status — runs for real; only the compiler itself
- * is faked. Real
+ * invocation, sha256, Storage::put, DocumentRepository::version_render_state/
+ * set_version_file/set_current_version/set_status_if — runs for real; only the
+ * compiler itself is faked. Real
  * XeLaTeX only ever runs via scripts/render-templates.sh (the
  * `template-render` CI job, on the worker image — see docker/Dockerfile).
  */
@@ -32,6 +32,7 @@
 #include "storage/Storage.hpp"
 #include "tenancy/OrganizationRepository.hpp"
 #include "test_helpers.hpp"
+#include "utils/Crypto.hpp"
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -141,12 +142,24 @@ protected:
         };
     }
 
+    /// Overwrite the bytes the succeeding stub copies into `main.pdf`. Lets
+    /// one test render TWICE and get DIFFERENT files, which is what makes
+    /// "version 1's object still holds version 1's content" a real assertion
+    /// instead of a tautology. Deliberately rewrites the canned PDF rather
+    /// than pointing DOCGEN_LATEX_CMD at a second script: re-seating
+    /// latex_cmd_env_ would construct the new ScopedEnv and only then destroy
+    /// the old one, and that destructor would restore the variable right back
+    /// over the new value.
+    void set_canned_pdf(const std::string& bytes) {
+        std::ofstream(scripts_dir_path() / "canned.pdf", std::ios::binary) << bytes;
+    }
+
     /// Points DOCGEN_LATEX_CMD at a stub script that copies the canned PDF
     /// into `main.pdf` (cwd, per compile_pdf's `cd <tex_dir> && ...`) and
     /// exits 0.
     void use_succeeding_latex_stub() {
         const fs::path pdf_path = scripts_dir_path() / "canned.pdf";
-        std::ofstream(pdf_path, std::ios::binary) << kFakePdfBytes;
+        set_canned_pdf(kFakePdfBytes);
 
         const fs::path script_path = scripts_dir_path() / "fake-latex-ok.sh";
         {
@@ -174,6 +187,11 @@ protected:
     }
 };
 
+// Payload WITHOUT version_id on purpose: jobs enqueued by an older build and
+// still sitting in Redis across a deploy must keep working, and they mean
+// "the newest version" — the behaviour they were enqueued under. Every
+// producer sets version_id now (the tests below use it); this one pins the
+// fallback so a future cleanup cannot quietly turn those jobs into skips.
 TEST_F(RenderJobTest, RenderJobHappyPath) {
     use_succeeding_latex_stub();
     auto org_id = make_org("111280000001");
@@ -268,5 +286,235 @@ TEST_F(RenderJobTest, RenderJobRejectsTraversalSlug) {
     EXPECT_EQ(stored->status, "draft");
     EXPECT_FALSE(stored->s3_key.has_value());
 }
+
+// ── P3 task 10: the job addresses a VERSION ──────────────────────────────────
+
+TEST_F(RenderJobTest, WritesTheFileIntoTheAddressedVersionAndPublishesIt) {
+    use_succeeding_latex_stub();
+    auto org_id = make_org("111280000005");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    auto v1 = documents.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+
+    auto result = Docgen::process_job(json{{"org_id", org_id},
+                                           {"document_id", doc.id},
+                                           {"version_id", v1->id},
+                                           {"slug", "invoice"},
+                                           {"input", valid_invoice_input()}});
+    EXPECT_FALSE(result.contains("skipped"));
+    EXPECT_EQ(result["version_id"].get<std::string>(), v1->id);
+
+    // The key names the VERSION and stays inside the org's own prefix — that
+    // is what keeps version N+1's render off version N's object, and one
+    // tenant's tree out of another's.
+    const std::string key = result["key"].get<std::string>();
+    EXPECT_EQ(key, "org/" + org_id + "/generated/" + v1->id + "/invoice.pdf");
+
+    auto after = documents.find_in_org(doc.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(after);
+    ASSERT_TRUE(after->current_version_id);
+    EXPECT_EQ(*after->current_version_id, v1->id);
+    EXPECT_EQ(after->status, "final");
+    ASSERT_TRUE(after->s3_key);
+    EXPECT_EQ(*after->s3_key, key);
+    EXPECT_TRUE(Storage::get().exists(key));
+}
+
+// THE property the whole versioning work exists for: a later render must not
+// touch an earlier version's bytes. Both renders produce genuinely different
+// PDFs (set_canned_pdf), so equal-looking objects could not hide a rewrite.
+TEST_F(RenderJobTest, RenderOfVersionTwoLeavesVersionOnesObjectIntact) {
+    use_succeeding_latex_stub();
+    auto org_id = make_org("111280000006");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    auto v1 = documents.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+
+    const std::string v1_bytes = std::string(kFakePdfBytes) + "% version one\n";
+    set_canned_pdf(v1_bytes);
+    auto first = Docgen::process_job(json{{"org_id", org_id},
+                                          {"document_id", doc.id},
+                                          {"version_id", v1->id},
+                                          {"slug", "invoice"},
+                                          {"input", valid_invoice_input()}});
+    ASSERT_FALSE(first.contains("skipped"));
+    const std::string v1_key = first["key"].get<std::string>();
+
+    auto v2 = documents.add_version(
+        org_id, doc.id, std::optional<nlohmann::json>{valid_invoice_input()}, std::string("v1"), std::nullopt);
+    const std::string v2_bytes = std::string(kFakePdfBytes) + "% version two\n";
+    set_canned_pdf(v2_bytes);
+    auto second = Docgen::process_job(json{{"org_id", org_id},
+                                           {"document_id", doc.id},
+                                           {"version_id", v2.id},
+                                           {"slug", "invoice"},
+                                           {"input", valid_invoice_input()}});
+    ASSERT_FALSE(second.contains("skipped")) << second.dump();
+    const std::string v2_key = second["key"].get<std::string>();
+
+    ASSERT_NE(v1_key, v2_key);
+    // Version 1's object still holds version 1's bytes — not version 2's.
+    auto v1_stored = Storage::get().get(v1_key);
+    ASSERT_TRUE(v1_stored.has_value());
+    EXPECT_EQ(*v1_stored, v1_bytes);
+    auto v2_stored = Storage::get().get(v2_key);
+    ASSERT_TRUE(v2_stored.has_value());
+    EXPECT_EQ(*v2_stored, v2_bytes);
+
+    // …and version 1's ROW still points at version 1's object, while the
+    // document now reports version 2's.
+    auto v1_row = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(v1_row);
+    EXPECT_EQ(v1_row->s3_key.value_or(""), v1_key);
+    EXPECT_EQ(v1_row->checksum_sha256.value_or(""), Utils::Crypto::sha256_hex(v1_bytes));
+    auto after = documents.find_in_org(doc.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(after);
+    ASSERT_TRUE(after->current_version_id);
+    EXPECT_EQ(*after->current_version_id, v2.id);
+    EXPECT_EQ(after->s3_key.value_or(""), v2_key);
+}
+
+TEST_F(RenderJobTest, IsANoOpForASupersededVersion) {
+    use_succeeding_latex_stub();
+    auto org_id = make_org("111280000007");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    auto v1 = documents.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+    documents.add_version(org_id,
+                          doc.id,
+                          std::optional<nlohmann::json>{valid_invoice_input()},
+                          std::string("v1"),
+                          std::nullopt);  // v2 вытесняет v1
+
+    auto result = Docgen::process_job(json{{"org_id", org_id},
+                                           {"document_id", doc.id},
+                                           {"version_id", v1->id},
+                                           {"slug", "invoice"},
+                                           {"input", valid_invoice_input()}});
+    EXPECT_EQ(result["skipped"].get<std::string>(), "superseded");
+
+    auto after = documents.find_in_org(doc.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(after);
+    EXPECT_FALSE(after->current_version_id.has_value());
+    EXPECT_EQ(after->status, "draft");
+    // Nothing was stored — the skip happens BEFORE the upload.
+    auto v1_row = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(v1_row);
+    EXPECT_FALSE(v1_row->s3_key.has_value());
+}
+
+TEST_F(RenderJobTest, DoesNotOverwriteAnAlreadyRenderedVersionOnRerun) {
+    // ВАЖНО про форму проверки: PDF в этом дереве НЕ байт-стабилен —
+    // SOURCE_DATE_EPOCH нигде не выставляется, XeLaTeX штампует в файл дату
+    // сборки. Поэтому «повтор ничего не перезаписал» доказывается тем, что
+    // джоба вернула skipped и байты в хранилище не изменились, а НЕ тем, что
+    // второй рендер дал ту же контрольную сумму: без гварда суммы разошлись
+    // бы, но и с наивным сравнением тест флакал бы на любом изменении
+    // шаблона. Второй рендер здесь намеренно выдаёт ДРУГИЕ байты — если бы
+    // гвард пропал, объект и checksum поехали бы, и тест это увидит.
+    use_succeeding_latex_stub();
+    auto org_id = make_org("111280000008");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    auto v1 = documents.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+    const json payload = {{"org_id", org_id},
+                          {"document_id", doc.id},
+                          {"version_id", v1->id},
+                          {"slug", "invoice"},
+                          {"input", valid_invoice_input()}};
+
+    auto first_result = Docgen::process_job(payload);
+    EXPECT_FALSE(first_result.contains("skipped"));
+    const auto first = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(first);
+    ASSERT_TRUE(first->s3_key);
+    const std::string first_key = *first->s3_key;
+    const std::string first_checksum = first->checksum_sha256.value_or("");
+    ASSERT_FALSE(first_checksum.empty());
+
+    set_canned_pdf(std::string(kFakePdfBytes) + "% a SECOND, different render\n");
+    auto second_result = Docgen::process_job(payload);  // повтор той же джобы
+    EXPECT_EQ(second_result["skipped"].get<std::string>(), "already_rendered");
+
+    const auto again = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(again);
+    EXPECT_EQ(again->s3_key.value_or(""), first_key);
+    EXPECT_EQ(again->checksum_sha256.value_or(""), first_checksum);
+    EXPECT_EQ(documents.list_versions(org_id, doc.id).size(), 1u);
+    // И содержимое объекта в хранилище то же — Storage::put повторно не звался.
+    EXPECT_EQ(Utils::Crypto::sha256_hex(Storage::get().get(first_key).value_or("")), first_checksum);
+}
+
+TEST_F(RenderJobTest, IsANoOpForAVersionOfAnotherOrg) {
+    use_succeeding_latex_stub();
+    auto org_id = make_org("111280000009");
+    auto other_org_id = make_org("111280000010");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    auto v1 = documents.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+
+    // Same version id, another tenant's org_id: the version is simply not
+    // there as far as that org is concerned, so nothing is rendered into it
+    // and no object lands under either org's prefix.
+    auto result = Docgen::process_job(json{{"org_id", other_org_id},
+                                           {"document_id", doc.id},
+                                           {"version_id", v1->id},
+                                           {"slug", "invoice"},
+                                           {"input", valid_invoice_input()}});
+    EXPECT_EQ(result["skipped"].get<std::string>(), "missing");
+
+    auto v1_row = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(v1_row);
+    EXPECT_FALSE(v1_row->s3_key.has_value());
+}
+
+// Задача 11 (аннулирование) обязана дописать сюда
+// DoesNotResurrectAVoidedDocument: аннулировать документ, запустить джобу на
+// его версии, ожидать skipped == "voided", воскрешения статуса в "final" не
+// допустить. Тест не написан здесь только потому, что колонки
+// documents.voided_at и метода void_document() ещё нет — ветка kVoided в
+// Ledger::VersionRenderState и её обработка в RenderJob уже на месте, и
+// задаче 11 остаётся заменить `FALSE AS voided` в version_render_state() на
+// (d.voided_at IS NOT NULL).
 
 }  // namespace

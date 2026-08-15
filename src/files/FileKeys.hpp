@@ -49,4 +49,41 @@ inline std::string org_key(const std::string& org_id, const std::string& kind, c
     return "org/" + org_id + "/" + kind + "/" + Jobs::generate_uuid() + "-" + sanitize_filename(filename);
 }
 
+/**
+ * @brief Key for a file that belongs to ONE document version.
+ * @param org_id     Owning organization id — same trusted-id contract as
+ *                    org_key(): it comes from the JWT claim / the job payload
+ *                    the org-scoped SQL has already matched a row against.
+ * @param kind       Sub-tree under the org (the render job passes "generated").
+ * @param version_id `document_versions.id` — the version these bytes ARE.
+ * @param filename   Human tail, sanitized (never trusted verbatim).
+ * @return "org/{org_id}/{kind}/{version_id}/{sanitized-filename}"
+ *
+ * Why not org_key(): its random uuid makes every CALL unique, which is the
+ * right property for an upload (two uploads of "scan.pdf" must not collide)
+ * but the wrong one for a render. A version's PDF is evidence — it is
+ * addressed by the version it belongs to, so the key itself says which
+ * version's bytes these are, an object can be traced back to its row without
+ * a database lookup, and version N+1's render lands in its OWN directory
+ * instead of anywhere near version N's object. Determinism is safe here
+ * precisely because RenderJob renders a given version at most once
+ * (DocumentRepository::version_render_state's kAlreadyRendered branch); the
+ * random component would only paper over a re-render that must not happen at
+ * all, and would leak the superseded object.
+ *
+ * Tenant safety: the prefix is pinned to @p org_id, so one tenant's objects
+ * are never under another's tree; @p version_id is a v4 UUID (unguessable)
+ * and is only ever learned through an org-scoped read; and the bucket stays
+ * private — the only way to any object is a short-lived presigned URL minted
+ * after that org-scoped read. @p version_id is sanitized too, so even a
+ * hostile job payload cannot smuggle a '/' into it and climb out of the org's
+ * prefix.
+ */
+inline std::string version_key(const std::string& org_id,
+                               const std::string& kind,
+                               const std::string& version_id,
+                               const std::string& filename) {
+    return "org/" + org_id + "/" + kind + "/" + sanitize_filename(version_id) + "/" + sanitize_filename(filename);
+}
+
 }  // namespace Files

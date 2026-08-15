@@ -33,8 +33,11 @@
  * temp-dir scratch space) — src/worker_main.cpp is its only other includer.
  * Bringing that machinery into the API server binary just for one string
  * constant would be a needless coupling; the payload SHAPE contract
- * (`{org_id, document_id, slug, input}`) is what actually has to match, and
- * it's documented on both sides. Same posture Webhooks.hpp/AccountEmails.hpp
+ * (`{org_id, document_id, version_id, slug, input}`) is what actually has to
+ * match, and it's documented on both sides. `version_id` is not optional in
+ * that contract: it is what makes the worker land the PDF on the version this
+ * request created instead of on whichever version is newest by the time the
+ * job runs (see Docgen::RenderJob.hpp). Same posture Webhooks.hpp/AccountEmails.hpp
  * take: the module that ENQUEUES a job type owns that type's string where it
  * doesn't already share a file with the module that PROCESSES it.
  *
@@ -336,8 +339,17 @@ public:
             // The document already exists; a submit() failure must not turn
             // it into a 500 the client would just retry into another
             // orphaned draft.
-            json payload = {
-                {"org_id", ctx.org_id}, {"document_id", created.id}, {"slug", template_slug}, {"input", input}};
+            // version_id names the row the render must land on — without it
+            // the worker would address "whatever is newest when it gets round
+            // to this", which an edit arriving first turns into the wrong
+            // version (RenderJob.hpp). create() made version 1 in the same
+            // transaction as the document, so this lookup finds it.
+            auto first_version = documents.latest_version(ctx.org_id, created.id, /*from_primary=*/true);
+            json payload = {{"org_id", ctx.org_id},
+                            {"document_id", created.id},
+                            {"version_id", first_version ? first_version->id : std::string{}},
+                            {"slug", template_slug},
+                            {"input", input}};
             bool render_queued = false;
             try {
                 auto job = Jobs::get().submit(kRenderJobType, payload);

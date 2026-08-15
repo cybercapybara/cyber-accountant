@@ -748,8 +748,15 @@ private:
             if (after_create)
                 after_create(created.id);
 
-            json payload = {
-                {"org_id", org_id}, {"document_id", created.id}, {"slug", std::string(slug)}, {"input", input}};
+            // version_id — see DocgenController::generate: the render lands on
+            // the version the payload NAMES, never on "the newest one at the
+            // time the worker got round to it".
+            auto first_version = documents.latest_version(org_id, created.id, /*from_primary=*/true);
+            json payload = {{"org_id", org_id},
+                            {"document_id", created.id},
+                            {"version_id", first_version ? first_version->id : std::string{}},
+                            {"slug", std::string(slug)},
+                            {"input", input}};
             bool render_queued = false;
             try {
                 auto job = Jobs::get().submit(kRenderJobType, payload);

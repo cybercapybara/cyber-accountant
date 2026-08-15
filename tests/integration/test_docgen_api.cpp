@@ -261,6 +261,10 @@ TEST_F(DocgenApiTest, GenerateValidInputAcceptedAndEnqueues) {
     EXPECT_EQ(job->status, "pending");
     EXPECT_EQ(job->payload["org_id"], org.id);
     EXPECT_EQ(job->payload["document_id"], document_id);
+    // …and it NAMES the version it must render into (P3 task 10). Without
+    // this key the worker would address whichever version is newest by the
+    // time it runs, which an edit arriving first makes the wrong one.
+    EXPECT_EQ(job->payload["version_id"], version->id);
     EXPECT_EQ(job->payload["slug"], "invoice");
     EXPECT_EQ(job->payload["input"], expected_invoice_snapshot());
 }

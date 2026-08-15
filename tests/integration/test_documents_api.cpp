@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -35,6 +36,7 @@
 #include "api/LedgerDocumentsController.hpp"
 #include "cache/Cache.hpp"
 #include "docgen/InputPolicy.hpp"
+#include "docgen/RenderJob.hpp"
 #include "domain/Role.hpp"
 #include "domain/User.hpp"
 #include "files/FileKeys.hpp"
@@ -113,6 +115,8 @@ bool is_minio_available() {
 class LedgerDocumentsApiTest : public TestHelpers::CoreBackedTest {
 protected:
     Api::LedgerDocumentsController ctrl;
+    std::unique_ptr<TestHelpers::ScopedEnv> latex_stub_;
+    std::filesystem::path latex_stub_dir_;
 
     std::string config_file_name() const override { return "documents_api_test_config.json"; }
 
@@ -171,8 +175,41 @@ protected:
     void TearDown() override {
         if (!::testing::Test::IsSkipped() && Cache::is_initialized())
             drain_queue();
+        latex_stub_.reset();
+        if (!latex_stub_dir_.empty()) {
+            std::error_code ec;
+            std::filesystem::remove_all(latex_stub_dir_, ec);
+        }
         Storage::reset_for_testing();
         TestHelpers::CoreBackedTest::TearDown();
+    }
+
+    /// Point DOCGEN_LATEX_CMD at a stub that "compiles" anything into
+    /// @p bytes, so a test can run the REAL Docgen::process_job (schema
+    /// validation, inja render, storage, repository writes) without TeX Live
+    /// — same idiom as tests/integration/test_render_job.cpp, which owns the
+    /// render pipeline's own coverage. Only the tests that actually drive the
+    /// worker call this.
+    void use_latex_stub(const std::string& bytes) {
+        latex_stub_dir_ = std::filesystem::temp_directory_path() / ("documents_api_latex_" + Jobs::generate_uuid());
+        std::filesystem::create_directories(latex_stub_dir_);
+        const std::filesystem::path pdf_path = latex_stub_dir_ / "canned.pdf";
+        std::ofstream(pdf_path, std::ios::binary) << bytes;
+        const std::filesystem::path script_path = latex_stub_dir_ / "fake-latex.sh";
+        {
+            std::ofstream script(script_path);
+            script << "#!/bin/sh\n"
+                   << "cp \"" << pdf_path.string() << "\" main.pdf\n"
+                   << "exit 0\n";
+        }
+        std::error_code ec;
+        std::filesystem::permissions(script_path,
+                                     std::filesystem::perms::owner_all | std::filesystem::perms::group_read |
+                                         std::filesystem::perms::group_exec | std::filesystem::perms::others_read |
+                                         std::filesystem::perms::others_exec,
+                                     std::filesystem::perm_options::replace,
+                                     ec);
+        latex_stub_ = std::make_unique<TestHelpers::ScopedEnv>("DOCGEN_LATEX_CMD", script_path.string());
     }
 
     static void drain_queue() { TestHelpers::drain_jobs({kRenderJobType}); }
@@ -937,6 +974,82 @@ TEST_F(LedgerDocumentsApiTest, EditCreatesANewVersionAndKeepsTheOldPdf) {
     EXPECT_EQ(job->payload["version_id"], v2->id);
     EXPECT_EQ(job->payload["slug"], "invoice");
     EXPECT_EQ(job->payload["input"], *v2->input_snapshot);
+}
+
+// ── P3 task 10: the RENDER of a new version leaves the old PDF alone ─────────
+//
+// EditCreatesANewVersionAndKeepsTheOldPdf proves the edit does not touch
+// version 1. This proves the half that actually writes to object storage: the
+// worker runs, for real, over the very payload that edit enqueued, against
+// real MinIO — and afterwards version 1 is still fetchable through ITS OWN
+// presigned URL and still contains ITS OWN bytes. Fetched with bare curl, so
+// what is proven is the object, not a database row: if the render job keyed
+// the object on the document instead of the version, version 2's bytes would
+// come back here and this test would fail.
+TEST_F(LedgerDocumentsApiTest, RenderingVersionTwoLeavesVersionOnesPdfDownloadable) {
+    if (!templates_available())
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    auto org = seed_org("444240000045", "Render Keeps Old Pdf Org LLP");
+    auto p = member("render-v2@example.com", org.id, "accountant");
+    const std::string original_pdf = "invoice-v1-bytes-" + Jobs::generate_uuid();
+    const std::string doc_id = seed_rendered_invoice(org.id, /*total_tiyn=*/1234567, original_pdf);
+
+    Ledger::DocumentRepository repo;
+    const auto v1 = repo.find_version(org.id, doc_id, 1);
+    ASSERT_TRUE(v1.has_value());
+    ASSERT_TRUE(v1->s3_key.has_value());
+    const std::string v1_key = *v1->s3_key;
+
+    HttpResponsePtr resp;
+    ctrl.createVersion(
+        authed_json(p, json{{"input", make_invoice_input(/*total_tiyn=*/200000)}}),
+        [&](const HttpResponsePtr& r) { resp = r; },
+        doc_id);
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k202Accepted) << std::string(resp->body());
+
+    // Run the worker over the payload the endpoint actually enqueued — no
+    // hand-built job, so the producer's version_id is part of what is tested.
+    std::vector<std::string> ids;
+    Cache::get().get_client().lrange(Jobs::queue_key(kRenderJobType), 0, -1, std::back_inserter(ids));
+    ASSERT_EQ(ids.size(), 1U);
+    auto job = Jobs::get().get_status(ids[0]);
+    ASSERT_TRUE(job.has_value());
+
+    const std::string rendered_pdf = "%PDF-1.1 rendered-version-2-" + Jobs::generate_uuid() + "\n";
+    use_latex_stub(rendered_pdf);
+    auto result = Docgen::process_job(job->payload);
+    ASSERT_FALSE(result.contains("skipped")) << result.dump();
+    const std::string v2_key = result["key"].get<std::string>();
+    ASSERT_NE(v2_key, v1_key);
+
+    // Version 1: its own presigned URL, its own bytes — unchanged.
+    HttpResponsePtr url1;
+    ctrl.versionDownloadUrl(
+        authed(p, Post), [&](const HttpResponsePtr& r) { url1 = r; }, doc_id, "1");
+    ASSERT_NE(url1, nullptr);
+    ASSERT_EQ(url1->statusCode(), k200OK);
+    EXPECT_EQ(run_capture("curl -s '" + json::parse(std::string(url1->body()))["url"].get<std::string>() + "'"),
+              original_pdf);
+
+    // Version 2: its own presigned URL, the freshly rendered bytes.
+    HttpResponsePtr url2;
+    ctrl.versionDownloadUrl(
+        authed(p, Post), [&](const HttpResponsePtr& r) { url2 = r; }, doc_id, "2");
+    ASSERT_NE(url2, nullptr);
+    ASSERT_EQ(url2->statusCode(), k200OK);
+    EXPECT_EQ(run_capture("curl -s '" + json::parse(std::string(url2->body()))["url"].get<std::string>() + "'"),
+              rendered_pdf);
+
+    // The document itself has moved on to version 2, and version 1's row
+    // still names version 1's object.
+    auto after = repo.find_in_org(doc_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(after.has_value());
+    EXPECT_EQ(after->s3_key.value_or(""), v2_key);
+    EXPECT_EQ(after->status, "final");
+    const auto v1_again = repo.find_version(org.id, doc_id, 1);
+    ASSERT_TRUE(v1_again.has_value());
+    EXPECT_EQ(v1_again->s3_key.value_or(""), v1_key);
 }
 
 TEST_F(LedgerDocumentsApiTest, EditRejectsFieldsOutsideTheCreationAllowlist) {

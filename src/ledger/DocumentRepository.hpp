@@ -58,6 +58,16 @@
 
 namespace Ledger {
 
+/// Можно ли класть результат рендера в эту версию — ответ
+/// DocumentRepository::version_render_state() ниже.
+enum class VersionRenderState {
+    kMissing,     ///< версии нет в этой организации (или документ удалён)
+    kRenderable,  ///< самая новая версия живого документа без файла — результат принимается
+    kAlreadyRendered,  ///< в версии УЖЕ лежит файл — повтор джобы не перезаписывает его
+    kSuperseded,  ///< поверх неё уже создана более новая версия — джоба no-op
+    kVoided,      ///< документ аннулирован — джоба no-op
+};
+
 class DocumentRepository : public Tenancy::OrgCrudBase<DocumentRepository, Document, std::string> {
 public:
     // OrgCrudBase contract — supplies find_in_org(id,org_id) /
@@ -383,8 +393,15 @@ public:
     /// The highest-numbered version of @p document_id — the one an edit or a
     /// render is currently working on, which is NOT necessarily the current
     /// (published) one.
-    std::optional<DocumentVersion> latest_version(const std::string& org_id, const std::string& document_id) {
-        return Database::get().execute_read([&](auto& txn) -> std::optional<DocumentVersion> {
+    /// @p from_primary forces the primary, the same read-after-write escape
+    /// hatch find_in_org() has: every caller that looks the version up in
+    /// order to NAME it in a docgen.render payload has just created the
+    /// document, and a lagging replica would answer "no versions" for a row
+    /// it simply has not seen yet.
+    std::optional<DocumentVersion> latest_version(const std::string& org_id,
+                                                  const std::string& document_id,
+                                                  bool from_primary = false) {
+        auto query = [&](auto& txn) -> std::optional<DocumentVersion> {
             auto r = txn.exec_params(std::string("SELECT ") + kVersionColumns +
                                          " FROM document_versions WHERE org_id = $1 AND document_id = $2 "
                                          "ORDER BY version_no DESC LIMIT 1",
@@ -393,6 +410,61 @@ public:
             if (r.empty())
                 return std::nullopt;
             return DocumentVersion::from_row(r[0]);
+        };
+        return from_primary ? Database::get().execute_read_primary(query) : Database::get().execute_read(query);
+    }
+
+    /**
+     * @brief Решение «принимать ли результат рендера для этой версии».
+     * @details Один запрос вместо трёх чтений: гонка «версия вытеснена
+     *          между проверкой и записью» здесь всё равно возможна, и
+     *          защищает от неё not-superseded-условие в самом UPDATE
+     *          set_current_version(), а эта функция даёт джобе внятную
+     *          причину не делать ничего и не шуметь ошибкой.
+     *
+     *          Читает с ПЕРВИЧНОЙ базы (execute_read_primary), а не с реплики:
+     *          это решение «писать или не писать», и версия здесь моложе
+     *          типичного лага репликации — джоба ставится в очередь сразу
+     *          после INSERT'а версии. С реплики та же версия выглядела бы как
+     *          kMissing, и рендер молча пропал бы вместо того, чтобы
+     *          выполниться.
+     */
+    VersionRenderState version_render_state(const std::string& org_id,
+                                            const std::string& document_id,
+                                            const std::string& version_id) {
+        return Database::get().execute_read_primary([&](auto& txn) -> VersionRenderState {
+            auto r = txn.exec_params(
+                // FALSE AS voided — заглушка: колонки documents.voided_at ещё
+                // нет, её добавляет задача 11, и она же ОБЯЗАНА заменить эту
+                // константу на (d.voided_at IS NOT NULL). Ветка kVoided ниже
+                // написана целиком, чтобы той задаче осталась ровно одна
+                // правка — в SQL, а не в логике джобы.
+                "SELECT FALSE AS voided, "
+                "       (v.s3_key IS NOT NULL) AS rendered, "
+                "       (v.version_no = (SELECT MAX(vv.version_no) FROM document_versions vv "
+                "                         WHERE vv.document_id = d.id)) AS newest "
+                "  FROM document_versions v JOIN documents d ON d.id = v.document_id "
+                " WHERE v.id = $1 AND v.document_id = $2 AND v.org_id = $3",
+                version_id,
+                document_id,
+                org_id);
+            if (r.empty())
+                return VersionRenderState::kMissing;
+            if (r[0]["voided"].template as<bool>())
+                return VersionRenderState::kVoided;
+            if (!r[0]["newest"].template as<bool>())
+                return VersionRenderState::kSuperseded;
+            // Файл уже лежит в версии — повтор джобы (ручной re-enqueue,
+            // ретрай после таймаута, дубль в очереди) НЕ перерендеривает её.
+            // Спека §4.1: предыдущий PDF остаётся; версия — свидетельство, и
+            // подменять байты под уже выданной ссылкой нельзя. Проверка
+            // именно состояния, а не сравнение контрольных сумм: XeLaTeX в
+            // этом дереве собирает PDF без SOURCE_DATE_EPOCH (его нет нигде
+            // в репозитории), поэтому два рендера одного входа дают РАЗНЫЕ
+            // байты, и «перерендерил ли кто-то» по checksum не определяется.
+            if (r[0]["rendered"].template as<bool>())
+                return VersionRenderState::kAlreadyRendered;
+            return VersionRenderState::kRenderable;
         });
     }
 
@@ -443,6 +515,17 @@ public:
      * Checking the version's own (id, org_id, document_id) up front turns
      * that into this method's normal `false`, the same contract
      * set_version_file()/set_status() already have.
+     *
+     * P3 task 10 — the EXISTS additionally requires @p version_id to still be
+     * the NEWEST version of the document. That is the anti-race half of
+     * version_render_state(): a render can take a minute, an edit takes
+     * milliseconds, and a job that checked "renderable" and only then finished
+     * would otherwise publish a version an edit has already superseded —
+     * i.e. the document would report an OLD file under a NEW version number.
+     * Losing that race is not an error for the job (its own version's file is
+     * safely stored under its own key either way); the newer version's render
+     * publishes next. Every existing caller publishes the newest version, so
+     * this narrows nothing they rely on.
      */
     bool set_current_version(const std::string& org_id, const std::string& document_id, const std::string& version_id) {
         return Database::get().execute_write([&](auto& txn) {
@@ -450,7 +533,9 @@ public:
                 "UPDATE documents SET current_version_id = $3 "
                 " WHERE id = $1 AND org_id = $2 "
                 "   AND EXISTS (SELECT 1 FROM document_versions v "
-                "                WHERE v.id = $3 AND v.org_id = $2 AND v.document_id = $1) "
+                "                WHERE v.id = $3 AND v.org_id = $2 AND v.document_id = $1 "
+                "                  AND v.version_no = (SELECT MAX(vv.version_no) FROM document_versions vv "
+                "                                       WHERE vv.document_id = $1)) "
                 "RETURNING id",
                 document_id,
                 org_id,
@@ -469,6 +554,34 @@ public:
         return Database::get().execute_write([&](auto& txn) {
             auto r = txn.exec_params(
                 "UPDATE documents SET status = $3 WHERE id = $1 AND org_id = $2 RETURNING id", id, org_id, status);
+            return !r.empty();
+        });
+    }
+
+    /**
+     * @brief Перевести статус, только если он всё ещё @p from. Возвращает
+     *        false и когда документа нет, и когда он уже в другом состоянии —
+     *        джобе достаточно знать, что ничего не записано.
+     * @details Нужен рендер-джобе: безусловный set_status(..., "final") на
+     *          документе, который успели отправить ('sent') или аннулировать,
+     *          откатывал бы его назад по жизненному циклу — джоба не имеет
+     *          права двигать статус, который сменил кто-то другой, пока она
+     *          рендерила. Именно эта форма (одно условие в WHERE), а не
+     *          «прочитать статус и потом записать»: между чтением и записью
+     *          состояние может смениться, а здесь проверка и запись — один
+     *          оператор.
+     */
+    bool set_status_if(const std::string& org_id,
+                       const std::string& id,
+                       const std::string& from,
+                       const std::string& to) {
+        return Database::get().execute_write([&](auto& txn) {
+            auto r = txn.exec_params(
+                "UPDATE documents SET status = $4 WHERE id = $1 AND org_id = $2 AND status = $3 RETURNING id",
+                id,
+                org_id,
+                from,
+                to);
             return !r.empty();
         });
     }
