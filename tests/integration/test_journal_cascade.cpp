@@ -6,7 +6,8 @@
  *        NO ACTION, tax_filings.document_id и hr_orders.document_id — тоже
  *        NO ACTION (первый DEFERRABLE, то есть срабатывает на COMMIT).
  *
- *        Проверяется вырез из migrations/020_journal_cascade_carveout.sql:
+ *        Проверяется вырез из migrations/020_journal_cascade_carveout.sql
+ *        в редакции migrations/021_journal_carveout_schema_qualified.sql:
  *        два ранее заблокированных пути (DELETE FROM organizations и
  *        DELETE FROM users для автора проведённой записи) проходят, а
  *        прямые DELETE/UPDATE проведённой записи по-прежнему отвергаются.
@@ -15,6 +16,22 @@
  *        пользователя: инварианты живут в БД и обязаны держаться независимо
  *        от того, какой прикладной код пишет в эти таблицы (та же идиома,
  *        что в test_journal_schema.cpp).
+ *
+ *        Fix round 1 (ревью на живой PostgreSQL 16.15) добавил три теста на
+ *        подмену имён через pg_temp: обращения к organizations/users/
+ *        journal_lines внутри SECURITY INVOKER-функции были без схемы, а
+ *        pg_temp просматривается при разрешении имён ОТНОШЕНИЙ первой и
+ *        право создавать временные таблицы есть у PUBLIC — то есть обычная
+ *        роль вешала CREATE TEMP TABLE organizations и правила/удаляла
+ *        проведённые проводки. Лечится квалификацией public.* в
+ *        migrations/021_journal_carveout_schema_qualified.sql; все три теста
+ *        проверены на том, что БЕЗ 021 они падают.
+ *
+ *        Плюс DeletingTheAuthorChangesTheAuthorColumnAndNothingElse: ветка
+ *        удаления автора сравнивает строку целиком (to_jsonb), а не список
+ *        колонок — в 020 список из пяти имён оставлял id, created_at и
+ *        created_by_run_id незакреплёнными, и created_at проведённой записи
+ *        переписывался на 1970 год.
  *
  *        NB: теста «wipe_org_data() не бросает» здесь НЕТ намеренно —
  *        wipe_org_data() TRUNCATE'ит journal_entries ДО удаления
@@ -31,6 +48,7 @@
 #include <string>
 
 #include <gtest/gtest.h>
+#include <spdlog/spdlog.h>
 
 #include "database/Database.hpp"
 #include "repositories/RoleRepository.hpp"
@@ -39,6 +57,26 @@
 #include "test_helpers.hpp"
 
 namespace {
+
+/// Заглушает лог на время ожидаемо падающих транзакций: Database.hpp пишет
+/// ERROR на КАЖДУЮ непрошедшую транзакцию, а в этом файле их больше десятка
+/// — без этого вывод CI тонет в сообщениях об ошибках, которых мы как раз и
+/// добиваемся. Уровень восстанавливается в деструкторе, в том числе когда
+/// EXPECT_THROW уходит по исключению.
+class QuietLogs {
+public:
+    QuietLogs() : previous_(spdlog::default_logger()->level()) {
+        spdlog::default_logger()->set_level(spdlog::level::critical);
+    }
+    ~QuietLogs() { spdlog::default_logger()->set_level(previous_); }
+    QuietLogs(const QuietLogs&) = delete;
+    QuietLogs& operator=(const QuietLogs&) = delete;
+    QuietLogs(QuietLogs&&) = delete;
+    QuietLogs& operator=(QuietLogs&&) = delete;
+
+private:
+    spdlog::level::level_enum previous_;
+};
 
 class JournalCascadeTest : public TestHelpers::CoreBackedTest {
 protected:
@@ -313,9 +351,114 @@ TEST_F(JournalCascadeTest, DeletingAUserWhoPostedAnEntrySetsTheAuthorToNull) {
     EXPECT_GT(still_posted, 0);
 }
 
+/// Ветка «автор удалён» на настоящем каскаде: меняется РОВНО одна колонка.
+/// Сравнение идёт по всей строке (to_jsonb), поэтому тест поймает и добавление
+/// нового поля в каскад, и возврат к ручному списку колонок — под 020 список
+/// из пяти имён оставлял id, created_at и created_by_run_id незакреплёнными.
+TEST_F(JournalCascadeTest, DeletingTheAuthorChangesTheAuthorColumnAndNothingElse) {
+    const std::string org_id = seed_fully_wired_org();
+    const std::string entry_id = posted_entry_of(org_id);
+    const std::string user_id = author_of_the_posted_entry(org_id);
+
+    const std::string before = Database::get().execute_read([&](auto& txn) {
+        return txn.exec_params("SELECT to_jsonb(j) - 'updated_at' FROM journal_entries j WHERE id = $1", entry_id)
+            .at(0)
+            .at(0)
+            .template as<std::string>();
+    });
+
+    EXPECT_NO_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec_params("DELETE FROM users WHERE id = $1", user_id);
+        return 0;
+    }));
+
+    const bool only_the_author_changed = Database::get().execute_read([&](auto& txn) {
+        return txn
+            .exec_params(
+                "SELECT (to_jsonb(j) - 'updated_at') "
+                "     = (jsonb_set($2::jsonb, '{created_by_user_id}', 'null'::jsonb) - 'updated_at') "
+                "  FROM journal_entries j WHERE id = $1",
+                entry_id,
+                before)
+            .at(0)
+            .at(0)
+            .template as<bool>();
+    });
+    EXPECT_TRUE(only_the_author_changed)
+        << "каскад ON DELETE SET NULL обязан менять только created_by_user_id; строка до удаления: " << before;
+}
+
+/// pg_temp-подмена имени organizations. БЕЗ квалификации public.* обе
+/// операции ниже проходили: пустая временная таблица делает NOT EXISTS
+/// истинным, и вырез считает организацию удалённой. Право CREATE TEMP есть
+/// у PUBLIC, так что это доступно любой роли.
+TEST_F(JournalCascadeTest, TempTableNamedOrganizationsCannotDisableImmutability) {
+    const std::string org_id = seed_fully_wired_org();
+    const std::string entry_id = posted_entry_of(org_id);
+    QuietLogs quiet;
+    // ON COMMIT DROP: если вырез когда-нибудь снова пропустит эту операцию,
+    // транзакция закоммитится — и временная таблица не должна пережить её на
+    // пуловом соединении, иначе отравит все последующие тесты.
+    EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec("CREATE TEMP TABLE organizations (id uuid) ON COMMIT DROP");
+        txn.exec_params("UPDATE journal_entries SET description = 'подделка', status = 'draft' WHERE id = $1",
+                        entry_id);
+        return 0;
+    }),
+                 pqxx::sql_error);
+    EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec("CREATE TEMP TABLE organizations (id uuid) ON COMMIT DROP");
+        txn.exec_params("DELETE FROM journal_entries WHERE id = $1", entry_id);
+        return 0;
+    }),
+                 pqxx::sql_error);
+}
+
+/// pg_temp-подмена имени users открывала ветку удаления автора при живом
+/// авторе — через неё переписывался created_at проведённой записи.
+TEST_F(JournalCascadeTest, TempTableNamedUsersCannotOpenTheAuthorBranch) {
+    const std::string org_id = seed_fully_wired_org();
+    const std::string entry_id = posted_entry_of(org_id);
+    QuietLogs quiet;
+    EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec("CREATE TEMP TABLE users (id uuid) ON COMMIT DROP");
+        txn.exec_params("UPDATE journal_entries SET created_by_user_id = NULL, created_at = '1970-01-01' WHERE id = $1",
+                        entry_id);
+        return 0;
+    }),
+                 pqxx::sql_error);
+}
+
+/// pg_temp-подмена имени journal_lines била по проверке «нельзя провести
+/// проводку без строк» (миграция 009, найдена секьюрити-сканом): временная
+/// таблица с одной строкой делала NOT EXISTS ложным, и пустая проводка
+/// проводилась.
+TEST_F(JournalCascadeTest, TempTableNamedJournalLinesCannotPostAnEmptyEntry) {
+    const std::string org_id = seed_fully_wired_org();
+    QuietLogs quiet;
+    std::string empty_id;
+    Database::get().execute_write([&](auto& txn) {
+        empty_id = txn.exec_params(
+                          "INSERT INTO journal_entries (org_id, entry_date, description) "
+                          "VALUES ($1, '2026-05-01', 'Без строк') RETURNING id",
+                          org_id)
+                       .at(0)
+                       .at(0)
+                       .template as<std::string>();
+        return 0;
+    });
+    EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
+        txn.exec_params("CREATE TEMP TABLE journal_lines ON COMMIT DROP AS SELECT $1::uuid AS entry_id", empty_id);
+        txn.exec_params("UPDATE journal_entries SET status = 'posted' WHERE id = $1", empty_id);
+        return 0;
+    }),
+                 pqxx::sql_error);
+}
+
 TEST_F(JournalCascadeTest, DirectDeleteOfAPostedEntryIsStillRejected) {
     const std::string org_id = seed_fully_wired_org();
     const std::string entry_id = posted_entry_of(org_id);
+    QuietLogs quiet;
     EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
         txn.exec_params("DELETE FROM journal_entries WHERE id = $1", entry_id);
         return 0;
@@ -326,6 +469,7 @@ TEST_F(JournalCascadeTest, DirectDeleteOfAPostedEntryIsStillRejected) {
 TEST_F(JournalCascadeTest, DirectUpdateOfAPostedEntryIsStillRejected) {
     const std::string org_id = seed_fully_wired_org();
     const std::string entry_id = posted_entry_of(org_id);
+    QuietLogs quiet;
     EXPECT_THROW(Database::get().execute_write([&](auto& txn) {
         txn.exec_params("UPDATE journal_entries SET description = 'подделка' WHERE id = $1", entry_id);
         return 0;
@@ -365,8 +509,28 @@ TEST_F(JournalCascadeTest, CarveOutUsesNeitherTriggerDepthNorASessionFlag) {
         << "pg_trigger_depth снимает неизменяемость в любом вложенном триггере, а не только в нужном каскаде";
     EXPECT_EQ(src.find("current_setting"), std::string::npos)
         << "сессионный флаг вручает приложению рубильник от insert-only журнала";
-    EXPECT_NE(src.find("FROM organizations WHERE id = OLD.org_id"), std::string::npos)
+    // Разрешённая форма ищется по признаку, а не по точной строке целиком:
+    // так тест переживает переформатирование условия и правку комментариев.
+    EXPECT_NE(src.find("WHERE id = OLD.org_id"), std::string::npos)
         << "разрешена только форма NOT EXISTS по родительской строке organizations";
+
+    // Квалификация схемой. Без неё pg_temp перехватывает имя отношения (для
+    // ОТНОШЕНИЙ временная схема просматривается первой, даже когда её нет в
+    // search_path), и CREATE TEMP TABLE organizations обычной ролью снимает
+    // неизменяемость журнала целиком. Проверяем отсутствие НЕквалифицированной
+    // формы: "FROM organizations" не является подстрокой "FROM public.organizations".
+    EXPECT_EQ(src.find("FROM organizations"), std::string::npos)
+        << "обращение к organizations обязано быть public.organizations — иначе его перехватывает pg_temp";
+    EXPECT_EQ(src.find("FROM users"), std::string::npos)
+        << "обращение к users обязано быть public.users — иначе его перехватывает pg_temp";
+    EXPECT_EQ(src.find("FROM journal_lines"), std::string::npos)
+        << "обращение к journal_lines обязано быть public.journal_lines — иначе его перехватывает pg_temp";
+
+    // Ветка удаления автора обязана сравнивать строку ЦЕЛИКОМ: ручной список
+    // колонок (как в 020) оставлял id, created_at и created_by_run_id
+    // незакреплёнными и не защищал бы колонку, добавленную в будущем.
+    EXPECT_NE(src.find("to_jsonb(NEW)"), std::string::npos)
+        << "ветка удалённого автора обязана сравнивать всю строку, а не перечислять колонки";
 }
 
 }  // namespace
