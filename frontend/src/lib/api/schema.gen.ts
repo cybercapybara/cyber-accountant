@@ -2393,7 +2393,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                /** @description No org context, or your organization role is not allowed to read this document (payroll for doc_type=payroll, hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2444,7 +2444,8 @@ export interface paths {
          *     known, tracked leak (cybercapybara/cyber-accountant#11), not an
          *     oversight.
          *
-         *     Write-gated per document (`hr_docs` for `doc_type=hr`, `documents`
+         *     Write-gated per document (`payroll` for `doc_type=payroll`, `hr_docs` for
+         *     `doc_type=hr`, `documents`
          *     otherwise), checked after the row is located so another organization's
          *     document stays a 404.
          */
@@ -2473,7 +2474,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                /** @description No org context, or your organization role is not allowed to write this document (payroll for doc_type=payroll, hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2562,7 +2563,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                /** @description No org context, or your organization role is not allowed to write this document (payroll for doc_type=payroll, hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2614,6 +2615,7 @@ export interface paths {
          * @description POST, but semantically a READ — it mints a time-limited S3 GET URL
          *     (TTL 300s) and writes nothing, so it carries no write gate. It DOES
          *     carry the same per-document read gate as `GET /documents/{id}`:
+         *     `doc_type=payroll` rows (payslips) are the `payroll` resource,
          *     `doc_type=hr` rows are the `hr_docs` resource, every other document
          *     is `documents`, and a role without read on that resource gets 403
          *     `org_role_denied` (checked after the row is located, so another
@@ -2646,7 +2648,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                /** @description No org context, or your organization role is not allowed to read this document (payroll for doc_type=payroll, hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2694,7 +2696,8 @@ export interface paths {
         /**
          * List a document's versions (oldest first)
          * @description The document's history. A READ of the document, gated exactly like
-         *     `GET /documents/{id}` — `doc_type=hr` rows are the `hr_docs`
+         *     `GET /documents/{id}` — `doc_type=payroll` rows are the `payroll`
+         *     resource, `doc_type=hr` rows are the `hr_docs`
          *     resource, every other document is `documents`, checked after the row
          *     is located so another organization's document stays a 404.
          *     `input_snapshot` is deliberately absent from every item: it is the
@@ -2727,7 +2730,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                /** @description No org context, or your organization role is not allowed to read this document (payroll for doc_type=payroll, hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2762,7 +2765,8 @@ export interface paths {
          *     Only a document with `source='generated'` AND a `template_slug` can
          *     be edited; `uploaded`/`email` documents have no render input by
          *     construction and are a 409 `not_editable`. Write-gated per document
-         *     (`hr_docs` for `doc_type=hr`, `documents` otherwise), checked after
+         *     (`payroll` for `doc_type=payroll`, `hr_docs` for `doc_type=hr`,
+         *     `documents` otherwise), checked after
          *     the row is located.
          *
          *     The body is optional: sending none (or `{}`) edits nothing and queues
@@ -2801,7 +2805,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                /** @description No org context, or your organization role is not allowed to write this document (payroll for doc_type=payroll, hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2893,7 +2897,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                /** @description No org context, or your organization role is not allowed to read this document (payroll for doc_type=payroll, hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4635,9 +4639,13 @@ export interface paths {
         /**
          * Generate the payslip document for one employee of a run (accountant/owner only)
          * @description Builds the `payslip` template input from the payslip + employee +
-         *     organization, creates a draft document (doc_type='hr',
+         *     organization, creates a draft document (doc_type='payroll',
          *     source='generated') and enqueues a docgen.render job — same async
-         *     contract as POST /documents/generate. Every field is authoritative
+         *     contract as POST /documents/generate. doc_type is `payroll`, not the
+         *     generic `hr` bucket it used to be: that is what puts the resulting
+         *     document under the §5.3 `payroll` resource, so the `hr` role gets 403
+         *     on reading, downloading, editing, deleting and voiding it, and it is
+         *     excluded from that role's `GET /documents` rows and `total` alike. Every field is authoritative
          *     (the payslip's own amounts, the employee's iin/name, the
          *     organization's bin/name, and `net_words` derived from the payslip's
          *     net) and CANNOT be overridden: any body key is a 422
@@ -5795,7 +5803,7 @@ export interface components {
             /** Format: uuid */
             org_id: string;
             /** @enum {string} */
-            doc_type: "invoice" | "avr" | "waybill" | "tax_invoice" | "reconciliation" | "power_of_attorney" | "incoming" | "bank_statement" | "hr" | "fno" | "other";
+            doc_type: "invoice" | "avr" | "waybill" | "tax_invoice" | "reconciliation" | "power_of_attorney" | "incoming" | "bank_statement" | "hr" | "payroll" | "fno" | "other";
             /** @enum {string} */
             source: "generated" | "uploaded" | "email";
             /** @enum {string} */
@@ -5853,7 +5861,7 @@ export interface components {
             filename: string;
             mime: string;
             /** @enum {string} */
-            doc_type: "invoice" | "avr" | "waybill" | "tax_invoice" | "reconciliation" | "power_of_attorney" | "incoming" | "bank_statement" | "hr" | "fno" | "other";
+            doc_type: "invoice" | "avr" | "waybill" | "tax_invoice" | "reconciliation" | "power_of_attorney" | "incoming" | "bank_statement" | "hr" | "payroll" | "fno" | "other";
         };
         DocumentUploadResponse: {
             data: components["schemas"]["Document"];

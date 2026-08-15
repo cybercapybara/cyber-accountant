@@ -95,11 +95,19 @@
  * stored payslip and is therefore off the allowlist) — a second money
  * formatter, or a template-side change, is the honest way to get it.
  *
- * `doc_type` for the generated payslip is `"hr"` — migrations/010_documents.sql's
- * CHECK list has one generic HR bucket and no `payslip` entry ("payslip"
- * exists only as a docgen TEMPLATE slug, in `documents.template_slug`, which
- * has no CHECK at all). Same one exception to DocgenController's
- * doc_type == template_slug identity that HrController already documents.
+ * `doc_type` for the generated payslip is `"payroll"` (kPayslipDocType) —
+ * NOT the `"hr"` generic bucket it used to be, and not the template slug
+ * either, so this stays one of the two exceptions to DocgenController's
+ * doc_type == template_slug identity (HrController documents the other).
+ * The change is migrations/023_payroll_doc_type.sql, and it is a SECURITY
+ * fix, not tidying: Api::LedgerDocumentsController::resource_for() maps a
+ * document to a §5.3 resource BY doc_type, so while a payslip was `"hr"` it
+ * was the `hr_docs` resource — readable by the кадровик, whom §5.3 denies
+ * payroll outright («Оклад видит, расчёты — нет»). A payslip is precisely
+ * the расчёт: gross, ОПВ, ВОСМС, ИПН, СО, ОСМС, ОПВР, соцналог and net. The
+ * leak was found on the v0.4.0 production acceptance run. Anything that
+ * generates a new kind of payroll document must use this same doc_type — the
+ * document surface has no other way to know it is looking at payroll data.
  */
 
 #pragma once
@@ -163,6 +171,11 @@ public:
 
     /// Docgen template slug for a payslip (templates/latex/payslip/v1/).
     static constexpr const char* kPayslipSlug = "payslip";
+
+    /// `documents.doc_type` for a generated payslip — the §5.3 `payroll`
+    /// resource, see this file's header. Deliberately NOT "hr": that is what
+    /// leaked the calculation to the кадровик before migrations/023.
+    static constexpr const char* kPayslipDocType = "payroll";
 
     /// Пустой: после P3 у расчётного листка не осталось ни одного поля,
     /// которое клиент вправе прислать — `net_words` выводится сервером из
@@ -484,10 +497,12 @@ public:
 
         with_repo_errors(callback, "payroll generate-document", [&] {
             Ledger::DocumentRepository documents;
-            // doc_type is "hr" (the generic bucket), NOT the template slug —
-            // see file header.
+            // doc_type is "payroll" (kPayslipDocType), NOT the template slug
+            // and NOT the "hr" bucket — see file header: this is what puts
+            // the document under the §5.3 payroll resource instead of
+            // hr_docs, and it is the whole fix for the кадровик leak.
             auto created = documents.create(ctx.org_id,
-                                            "hr",
+                                            kPayslipDocType,
                                             "generated",
                                             "draft",
                                             std::nullopt,
