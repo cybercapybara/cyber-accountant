@@ -27,6 +27,30 @@
  *   POST /api/v1/documents/{id}/versions/{version_no}/download-url
  *                                              presigned GET for ONE
  *                                                historical version, TTL 300s
+ *   DELETE /api/v1/documents/{id}              physically delete a document
+ *                                                NOT linked to a posted (or
+ *                                                reversed) journal entry — 204
+ *   POST /api/v1/documents/{id}/void           mark it void ({reason}); the
+ *                                                row, the file and the whole
+ *                                                version history stay
+ *
+ * Delete versus void (P3 task 11) — the rule and why it is shaped this way.
+ * The ledger is insert-only and is corrected only by storno, so a document
+ * that is the basis of a POSTED (or REVERSED) entry can never be destroyed:
+ * it is voided instead, and the entry is fixed by its own mechanism. The
+ * condition is therefore the LINK, not the status — an earlier draft keyed
+ * deletion on `status='draft'`, which only source='generated' rows ever carry,
+ * so an uploaded or emailed scan (inbox -> recognized -> linked -> archived)
+ * could never have been deleted at all. A link to a DRAFT entry does not
+ * block deletion: document_entries cascades, the draft is left without its
+ * basis, and that fact is written to the audit log. A document nothing has
+ * posted against but which an HR order or a tax filing points at
+ * (hr_orders.document_id / tax_filings.document_id, both NO ACTION) is a 409
+ * `document_referenced`, translated from SQLSTATE 23503 in
+ * DocumentRepository::remove() — never a 500. Versions are never deletable
+ * individually; both routes act on the document as a whole. Objects in S3 are
+ * removed by NEITHER path — a stated retention policy, see the header of
+ * migrations/019_document_voiding.sql.
  *
  * Editing (P3 task 9) — why the body is `{input}` and not a snapshot.
  * An accounting document is evidence: overwriting one in place silently
@@ -167,6 +191,7 @@
 #include "ledger/Document.hpp"
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/DocumentVersion.hpp"
+#include "security/Audit.hpp"
 #include "storage/Storage.hpp"
 #include "tenancy/OrgContext.hpp"
 #include "tenancy/OrgPermissions.hpp"
@@ -196,6 +221,8 @@ public:
     // clang-format off
     ADD_METHOD_TO(LedgerDocumentsController::versionDownloadUrl, "/api/v1/documents/{1}/versions/{2}/download-url", Post);
     // clang-format on
+    ADD_METHOD_TO(LedgerDocumentsController::remove, "/api/v1/documents/{1}", Delete);
+    ADD_METHOD_TO(LedgerDocumentsController::voidDocument, "/api/v1/documents/{1}/void", Post);
     METHOD_LIST_END
 
     /// TTL of every presigned GET this controller mints — the document's
@@ -659,6 +686,17 @@ public:
                     ErrorResponse::conflict("not_editable", "Only documents generated from a template can be edited"));
                 return;
             }
+            // Аннулированный документ не редактируется: новая версия и её
+            // рендер вернули бы ему живой файл поверх пометки «недействителен»
+            // — ровно то, что аннулирование обязано исключить. Проверка
+            // появилась только сейчас, вместе с колонкой
+            // (migrations/019_document_voiding.sql); её второй, серверный
+            // близнец — ветка kVoided в DocumentRepository::version_render_state,
+            // которая гасит уже стоящую в очереди джобу.
+            if (found->voided_at) {
+                callback(ErrorResponse::conflict("document_voided", "A voided document cannot be edited"));
+                return;
+            }
             const std::string slug = *found->template_slug;
 
             auto previous = repo.latest_version(ctx.org_id, id);
@@ -785,7 +823,165 @@ public:
         });
     }
 
+    // -------------------------------------------------------------------
+    // DELETE /api/v1/documents/{id} — физическое удаление, и только для
+    // документа, НЕ связанного с проведённой (или сторнированной)
+    // проводкой. Ключ — связь, а не статус: 'draft' бывает только у
+    // source='generated', и по статусу ошибочно загруженный скан не
+    // удалился бы никогда, потому что он живёт в цикле inbox -> recognized
+    // -> linked -> archived. Всё, что уже стало основанием проводки,
+    // удалению не подлежит вовсе — журнал append-only, правится сторно, а
+    // документ аннулируется (POST .../void ниже).
+    //
+    // Объекты в S3 при удалении НЕ трогаются — принятая политика хранения,
+    // записанная в заголовке migrations/019_document_voiding.sql: удаляются
+    // только метаданные, сборщика объектов в P3 нет.
+    // -------------------------------------------------------------------
+    void remove(const HttpRequestPtr& req,
+                std::function<void(const HttpResponsePtr&)>&& callback,
+                const std::string& id) {
+        API_REQUIRE_ORG(req, callback, ctx);
+        if (!is_valid_uuid(id)) {
+            callback(ErrorResponse::bad_request("invalid_id", "Malformed document id"));
+            return;
+        }
+
+        with_repo_errors(callback, "documents remove", [&] {
+            Ledger::DocumentRepository repo;
+            auto found = repo.find_in_org(id, ctx.org_id);
+            if (!found) {
+                callback(ErrorResponse::not_found("document"));
+                return;
+            }
+            // Тот же хелпер задачи 7, что и у остальных маршрутов над одним
+            // документом: кадровый документ — ресурс hr_docs, вся прочая
+            // первичка — documents. Своей копии условия по doc_type здесь
+            // быть не должно.
+            if (!ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kWrite))
+                return;
+
+            switch (repo.remove(ctx.org_id, id)) {
+                case Ledger::DeleteOutcome::kDeleted: {
+                    // Факт удаления пишется в аудит, а не только в лог: связь
+                    // с ЧЕРНОВОЙ проводкой каскадится молча (document_entries
+                    // — ON DELETE CASCADE), черновик остаётся без основания, и
+                    // единственный след этого события живёт здесь.
+                    Security::Audit::record(ctx.user_id,
+                                            "document.delete",
+                                            "document",
+                                            id,
+                                            {{"org_id", ctx.org_id}, {"doc_type", found->doc_type}});
+                    // 204 строится вручную: в Response:: хелпера без тела
+                    // нет, а заводить его ради одного вызова — лишняя
+                    // публичная поверхность. Тела у ответа нет вовсе, так
+                    // что setContentTypeCode не нужен.
+                    auto resp = drogon::HttpResponse::newHttpResponse();
+                    resp->setStatusCode(drogon::k204NoContent);
+                    callback(resp);
+                    return;
+                }
+                case Ledger::DeleteOutcome::kNotFound:
+                    callback(ErrorResponse::not_found("document"));
+                    return;
+                case Ledger::DeleteOutcome::kHasPostedEntries:
+                    callback(ErrorResponse::conflict(
+                        "document_has_posted_entries",
+                        "This document is linked to a posted journal entry — void it instead of deleting it"));
+                    return;
+                case Ledger::DeleteOutcome::kReferenced:
+                    callback(ErrorResponse::conflict(
+                        "document_referenced",
+                        "This document is referenced by an HR order or a tax filing — void it instead of deleting it"));
+                    return;
+            }
+        });
+    }
+
+    // -------------------------------------------------------------------
+    // POST /api/v1/documents/{id}/void — тело {reason}. Аннулирование: строка,
+    // файл и вся история версий остаются на месте, документ лишь помечен
+    // тремя колонками (voided_at/voided_by_user_id/void_reason). В `status`
+    // ничего не пишется — иначе аудит потерял бы, был документ 'final' или
+    // 'sent'. Повторное аннулирование — 409: важнее ПЕРВОЕ решение и его
+    // автор, а не последнее.
+    // -------------------------------------------------------------------
+    void voidDocument(const HttpRequestPtr& req,
+                      std::function<void(const HttpResponsePtr&)>&& callback,
+                      const std::string& id) {
+        API_REQUIRE_ORG(req, callback, ctx);
+        if (!is_valid_uuid(id)) {
+            callback(ErrorResponse::bad_request("invalid_id", "Malformed document id"));
+            return;
+        }
+        json body;
+        if (!Validation::parse_body(req, body, callback))
+            return;
+
+        // Фаза 1 — структура (нет поля / не тот тип): 400. Та же двухфазная
+        // разбивка, что у startUpload/confirmUpload выше.
+        Validation::Errors errs;
+        Validation::require(errs, body, "reason");
+        if (body.contains("reason") && !body["reason"].is_string())
+            errs.add("reason", "not_string", "must be a string");
+        if (errs.any()) {
+            callback(Validation::response_400(errs));
+            return;
+        }
+
+        // Фаза 2 — значение: 422. Причина из одних пробелов — это НЕ
+        // причина: аннулирование без объяснения превращает запись аудита в
+        // пустую строку, а именно она и есть весь смысл этих колонок.
+        const std::string reason = trimmed(body["reason"].get<std::string>());
+        if (reason.empty()) {
+            callback(Validation::response_422("reason", "blank", "must not be blank"));
+            return;
+        }
+
+        with_repo_errors(callback, "documents voidDocument", [&] {
+            Ledger::DocumentRepository repo;
+            auto found = repo.find_in_org(id, ctx.org_id);
+            if (!found) {
+                callback(ErrorResponse::not_found("document"));
+                return;
+            }
+            if (!ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kWrite))
+                return;
+            if (found->voided_at) {
+                callback(ErrorResponse::conflict("already_voided", "This document is already voided"));
+                return;
+            }
+            // Гонка «двое аннулируют одновременно» решается не этой
+            // проверкой, а условием `voided_at IS NULL` в самом UPDATE:
+            // проигравший получает false и тот же 409, что и выше.
+            if (!repo.void_document(ctx.org_id, id, ctx.user_id, reason)) {
+                callback(ErrorResponse::conflict("already_voided", "This document is already voided"));
+                return;
+            }
+            Security::Audit::record(ctx.user_id, "document.void", "document", id, {{"reason", reason}});
+            auto fresh = repo.find_in_org(id, ctx.org_id, /*from_primary=*/true);
+            if (!fresh) {
+                // Документ был только что прочитан и обновлён — исчезнуть он
+                // мог только под конкурентным удалением, и это не 500.
+                callback(ErrorResponse::not_found("document"));
+                return;
+            }
+            callback(Response::ok({{"data", json(*fresh)}}));
+        });
+    }
+
 private:
+    /// Обрезать ASCII-пробелы по краям. Тела запросов здесь бывают на
+    /// кириллице, поэтому режутся ТОЛЬКО пробельные ASCII-байты — они не
+    /// могут оказаться продолжением многобайтового символа UTF-8 (у тех
+    /// старший бит всегда выставлен).
+    static std::string trimmed(const std::string& s) {
+        const std::string::size_type a = s.find_first_not_of(" \t\r\n");
+        if (a == std::string::npos)
+            return {};
+        const std::string::size_type b = s.find_last_not_of(" \t\r\n");
+        return s.substr(a, b - a + 1);
+    }
+
     /// Parse the `{version_no}` path segment. Digits only, no sign, no
     /// whitespace, at most 9 of them (so std::stoi below cannot throw or
     /// overflow), and strictly positive — version numbers start at 1
@@ -822,10 +1018,10 @@ private:
     /// оставаться 404, а не превращаться в 403.
     ///
     /// Все маршруты над ОДНИМ документом обязаны ходить через неё, а не
-    /// повторять условие у себя: сейчас их пять (get, downloadUrl и три
-    /// маршрута версий из задачи 9), задача 11 добавит ещё два (remove,
-    /// voidDocument), и семь копий одного условия разъедутся при первой же
-    /// правке матрицы. @p action здесь не только kRead: createVersion —
+    /// повторять условие у себя: сейчас их семь (get, downloadUrl, три
+    /// маршрута версий из задачи 9 и remove/voidDocument из задачи 11), и
+    /// семь копий одного условия разъехались бы при первой же правке
+    /// матрицы. @p action здесь не только kRead: createVersion —
     /// запись, и та же функция решает, по какому ресурсу её проверять.
     static bool ensure_document_access(const std::function<void(const HttpResponsePtr&)>& callback,
                                        const Tenancy::OrgContext& ctx,

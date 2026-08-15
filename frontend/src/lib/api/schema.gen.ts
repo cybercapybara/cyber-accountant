@@ -2411,6 +2411,181 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        /**
+         * Delete a document that is not linked to a posted journal entry
+         * @description Physically deletes the document row together with its versions and its
+         *     `document_entries` links. What decides deletable-versus-voidable is
+         *     NOT the status but the LINK: a document tied to a `posted` (or
+         *     `reversed`) journal entry can never be deleted — the ledger is
+         *     insert-only and is corrected by storno — so it answers 409
+         *     `document_has_posted_entries` and must be voided instead
+         *     (`POST /documents/{id}/void`). Keying this on `status='draft'` would be
+         *     wrong: only `source=generated` documents ever carry that status, so an
+         *     uploaded or emailed scan (`inbox -> recognized -> linked -> archived`)
+         *     could never be deleted at all.
+         *
+         *     A link to a DRAFT entry does not block deletion: `document_entries`
+         *     cascades and the draft is left without its document, which is accepted
+         *     and written to the audit log (`document.delete`).
+         *
+         *     An HR document referenced by an HR order (`hr_orders.document_id`) or
+         *     by a tax filing (`tax_filings.document_id`) is a 409
+         *     `document_referenced`, not a 500: those foreign keys are NO ACTION, and
+         *     the resulting SQLSTATE 23503 is translated into that conflict.
+         *
+         *     Object-storage retention policy: the stored objects in S3 are NOT
+         *     removed — only the metadata is deleted. There is no reaper job in P3;
+         *     this is a stated policy (see the header of
+         *     `migrations/019_document_voiding.sql`), not an oversight.
+         *
+         *     Write-gated per document (`hr_docs` for `doc_type=hr`, `documents`
+         *     otherwise), checked after the row is located so another organization's
+         *     document stays a 404.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted (no body) */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a document belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description document_has_posted_entries (linked to a posted/reversed journal entry) or document_referenced (an HR order or a tax filing points at it) — void it instead */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/void": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Void a document (keeps the row, the file and the history)
+         * @description The alternative to deletion for a document that may not be destroyed.
+         *     The row, its stored file and its whole version history stay exactly
+         *     where they are; three columns are filled in — `voided_at`,
+         *     `voided_by_user_id`, `void_reason`. `status` is deliberately NOT
+         *     touched: writing a `void` status would erase whether the document was
+         *     `final` or `sent`, which is precisely what an audit needs, and it would
+         *     collide with the already-taken `archived`.
+         *
+         *     `reason` is mandatory and must not be blank after trimming — an absent
+         *     or wrongly-typed field is a 400, a whitespace-only one is a 422.
+         *     Voiding twice is a 409 `already_voided`: the FIRST decision and its
+         *     author are what matter, not the last.
+         *
+         *     A voided document cannot be edited (`POST /documents/{id}/versions`
+         *     answers 409 `document_voided`) and an already-queued render will not
+         *     resurrect it — the render job sees the void and no-ops.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["VoidDocumentRequest"];
+                };
+            };
+            responses: {
+                /** @description The voided document */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentDetailResponse"];
+                    };
+                };
+                /** @description Malformed id, malformed JSON body, or `reason` missing / not a string */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a document belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description already_voided — this document was already voided */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description `reason` is blank after trimming */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -2634,7 +2809,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description not_editable (source is uploaded/email, or the document has no template_slug) */
+                /** @description not_editable (source is uploaded/email, or the document has no template_slug), or document_voided (a voided document cannot be edited) */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -5641,6 +5816,15 @@ export interface components {
             current_version_id: string | null;
             /** @description Highest existing version number; may exceed the current version while a render is in flight */
             latest_version_no: number;
+            /** @description Set by POST /documents/{id}/void. Voiding lives in THESE columns, never in `status` — writing a void status would erase whether the document was final or sent, which is exactly what an audit needs. A voided document stays listable and downloadable; it is marked, not hidden */
+            voided_at: string | null;
+            /**
+             * Format: uuid
+             * @description Who voided it. May be null even on a voided document: the FK is ON DELETE SET NULL so deleting a user is never blocked by this row
+             */
+            voided_by_user_id: string | null;
+            /** @description Why it was voided — required (non-blank) when voiding */
+            void_reason: string | null;
             created_at: string;
             updated_at: string;
         };
@@ -5715,6 +5899,10 @@ export interface components {
             version_no: number;
             /** @description false if the docgen.render job could not be enqueued (e.g. a transient Redis error) — the version row still exists; an operator must re-enqueue it */
             render_queued: boolean;
+        };
+        VoidDocumentRequest: {
+            /** @description Why the document is being voided. Mandatory and non-blank after trimming: voiding without a reason is not a state, it is a lost audit record. Stored in documents.void_reason alongside voided_at and voided_by_user_id. */
+            reason: string;
         };
         JournalLine: {
             /** Format: uuid */

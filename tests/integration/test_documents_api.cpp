@@ -40,9 +40,13 @@
 #include "domain/Role.hpp"
 #include "domain/User.hpp"
 #include "files/FileKeys.hpp"
+#include "hr/EmployeeRepository.hpp"
+#include "hr/HrRepository.hpp"
 #include "jobs/Job.hpp"
 #include "jobs/Jobs.hpp"
 #include "ledger/DocumentRepository.hpp"
+#include "ledger/JournalRepository.hpp"
+#include "ledger/JournalService.hpp"
 #include "money/AmountInWords.hpp"
 #include "money/MoneyFormat.hpp"
 #include "repositories/RepoErrors.hpp"
@@ -347,6 +351,72 @@ protected:
             {"director", "Директор из расчёта"},
             {"accountant", "Бухгалтер из расчёта"},
         };
+    }
+
+    // ── P3 task 11 (delete vs void) fixtures ────────────────────────────────
+    //
+    // What separates a deletable document from a voidable one is the LINK to a
+    // posted (or reversed) journal entry, not the status — so these two
+    // fixtures build exactly that difference and nothing else.
+
+    /// A balanced entry left in 'draft'. Deleting a document attached to it is
+    /// allowed: document_entries cascades and the draft is left without its
+    /// document, which is the accepted outcome (recorded in the audit log).
+    std::string seed_draft_entry(const std::string& org_id, const std::string& user_id) {
+        Ledger::JournalService svc;
+        Ledger::JournalLine debit;
+        debit.account_code = "1030";
+        debit.side = "debit";
+        debit.amount = "1000.00";
+        Ledger::JournalLine credit;
+        credit.account_code = "6010";
+        credit.side = "credit";
+        credit.amount = "1000.00";
+        return svc.create_draft(org_id, user_id, "2026-01-15", "Delete-vs-void fixture", {debit, credit}).id;
+    }
+
+    /// The same entry, posted. A document linked to THIS can never be deleted:
+    /// the ledger is insert-only and is corrected by storno, so the document
+    /// stays as the evidence the entry was made on.
+    std::string seed_posted_entry(const std::string& org_id, const std::string& user_id) {
+        const std::string entry_id = seed_draft_entry(org_id, user_id);
+        Ledger::JournalService svc;
+        auto posted = svc.post(org_id, entry_id);
+        if (!posted)
+            throw std::runtime_error("fixture: could not post the seeded entry");
+        return entry_id;
+    }
+
+    /// An HR document with NO journal link at all, but referenced by an HR
+    /// order (hr_orders.document_id, a NO ACTION FK — migrations/012_hr.sql).
+    /// Deleting it must surface as a 409, not as the raw SQLSTATE 23503 that
+    /// would otherwise reach the client as a 500.
+    std::string seed_hr_document_referenced_by_an_order(const std::string& org_id, const std::string& iin) {
+        Ledger::DocumentRepository docs;
+        auto doc = docs.create(org_id, "hr", "uploaded", "inbox");
+
+        Hr::Employee draft;
+        draft.iin = iin;
+        draft.last_name = "Аннулиров";
+        draft.first_name = "Тест";
+        draft.position = "Бухгалтер";
+        draft.salary_tiyn = 30000000;
+        draft.hired_on = "2026-01-05";
+        draft.payout_iik = "KZ000000000000000000";
+        Hr::EmployeeRepository employees;
+        auto employee = employees.create(org_id, draft);
+
+        Hr::HrRepository hr;
+        hr.create_order(org_id,
+                        employee.id,
+                        "hire",
+                        "1",
+                        "2026-01-05",
+                        "2026-01-05",
+                        /*effective_to=*/std::nullopt,
+                        /*payload=*/std::nullopt,
+                        /*document_id=*/doc.id);
+        return doc.id;
     }
 
     static std::string seed_fno910_document(const std::string& org_id) {
@@ -1391,6 +1461,252 @@ TEST_F(LedgerDocumentsApiTest, SetCurrentVersionRejectsAVersionFromAnotherOrgani
     EXPECT_FALSE(after->current_version_id.has_value());
     // The legitimate publish still works.
     EXPECT_TRUE(repo.set_current_version(org_b.id, doc_b.id, version_b->id));
+}
+
+// ── P3 task 11: DELETE /documents/{id} vs POST /documents/{id}/void ──────────
+//
+// These assert the RULE, not a happy path: what may be destroyed is decided by
+// the link to a posted journal entry, and everything that may not be destroyed
+// must still be disposable — by voiding.
+
+// An uploaded scan that never became the basis of anything is genuinely
+// deletable. Note the status: 'inbox', never 'draft' — keying deletion on
+// status='draft' (the spec's first draft) would have made this document
+// undeletable forever, because only source='generated' rows ever reach that
+// status.
+TEST_F(LedgerDocumentsApiTest, DeletesADocumentWithNoPostedLink) {
+    auto org = seed_org("444240000045", "Delete Plain Org LLP");
+    auto p = member("del1@example.com", org.id, "accountant");
+    Ledger::DocumentRepository repo;
+    auto doc = repo.create(org.id, "incoming", "uploaded", "inbox");
+
+    HttpResponsePtr resp;
+    ctrl.remove(
+        authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k204NoContent);
+    EXPECT_TRUE(resp->body().empty());
+    // Physically gone, not merely hidden.
+    EXPECT_FALSE(repo.find_in_org(doc.id, org.id, /*from_primary=*/true).has_value());
+    EXPECT_TRUE(repo.list_versions(org.id, doc.id).empty());
+}
+
+// A link to a DRAFT entry does not protect the document: the entry has not
+// entered the ledger yet. document_entries cascades, the draft survives
+// without its basis, and the audit log is the only trace of that — which is
+// why the handler records it.
+TEST_F(LedgerDocumentsApiTest, DeletesADocumentLinkedOnlyToADraftEntry) {
+    auto org = seed_org("444240000046", "Delete Draft-Link Org LLP");
+    auto p = member("del2@example.com", org.id, "accountant");
+    Ledger::DocumentRepository repo;
+    auto doc = repo.create(org.id, "invoice", "generated", "draft");
+    const std::string draft_entry = seed_draft_entry(org.id, p.subject);
+    ASSERT_TRUE(repo.link_entry(org.id, doc.id, draft_entry));
+
+    HttpResponsePtr resp;
+    ctrl.remove(
+        authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k204NoContent);
+    EXPECT_FALSE(repo.find_in_org(doc.id, org.id, /*from_primary=*/true).has_value());
+
+    // Черновая проводка осталась — связь каскадится, это принято.
+    Ledger::JournalRepository journal;
+    EXPECT_TRUE(journal.find_in_org(draft_entry, org.id, /*from_primary=*/true).has_value());
+    EXPECT_TRUE(repo.list_for_entry(org.id, draft_entry).empty());
+}
+
+// The rule itself: posted entry -> deletion is a 409 forever, and voiding is
+// the way out. `status` survives the void, because "was it final or sent" is
+// exactly what an audit asks.
+TEST_F(LedgerDocumentsApiTest, RefusesToDeleteADocumentOnAPostedEntry) {
+    auto org = seed_org("444240000047", "Posted-Link Org LLP");
+    auto p = member("del3@example.com", org.id, "accountant");
+    Ledger::DocumentRepository repo;
+    auto doc = repo.create(org.id, "invoice", "generated", "final");
+    ASSERT_TRUE(repo.link_entry(org.id, doc.id, seed_posted_entry(org.id, p.subject)));
+
+    HttpResponsePtr resp;
+    ctrl.remove(
+        authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k409Conflict);
+    EXPECT_EQ(json::parse(std::string(resp->body()))["error"].get<std::string>(), "document_has_posted_entries");
+    EXPECT_TRUE(repo.find_in_org(doc.id, org.id, /*from_primary=*/true).has_value());
+
+    // ...и аннулирование при этом доступно.
+    HttpResponsePtr voided;
+    ctrl.voidDocument(
+        authed_json(p, json{{"reason", "ошибка"}}), [&](const HttpResponsePtr& r) { voided = r; }, doc.id);
+    ASSERT_NE(voided, nullptr);
+    ASSERT_EQ(voided->statusCode(), k200OK);
+    auto body = json::parse(std::string(voided->body()));
+    EXPECT_FALSE(body["data"]["voided_at"].is_null());
+    EXPECT_EQ(body["data"]["void_reason"].get<std::string>(), "ошибка");
+    EXPECT_EQ(body["data"]["voided_by_user_id"].get<std::string>(), p.subject);
+    // status НЕ затёрт — аудит видит, чем документ был.
+    EXPECT_EQ(body["data"]["status"].get<std::string>(), "final");
+}
+
+// No journal link at all, and still not destroyable: an HR order points at it.
+// hr_orders.document_id is NO ACTION, so without the 23503 -> kReferenced
+// translation this would be a 500.
+TEST_F(LedgerDocumentsApiTest, HrDocumentReferencedByAnOrderIsFourZeroNineNotFiveHundred) {
+    auto org = seed_org("444240000048", "HR Referenced Org LLP");
+    auto p = member("del4@example.com", org.id, "accountant");
+    const std::string hr_doc = seed_hr_document_referenced_by_an_order(org.id, "870101300123");
+
+    Ledger::DocumentRepository repo;
+    ASSERT_FALSE(repo.has_posted_entry_link(org.id, hr_doc));  // не проводка держит документ
+
+    HttpResponsePtr resp;
+    ctrl.remove(
+        authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, hr_doc);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k409Conflict);
+    EXPECT_EQ(json::parse(std::string(resp->body()))["error"].get<std::string>(), "document_referenced");
+    EXPECT_TRUE(repo.find_in_org(hr_doc, org.id, /*from_primary=*/true).has_value());
+
+    // И здесь тоже остаётся аннулирование.
+    HttpResponsePtr voided;
+    ctrl.voidDocument(
+        authed_json(p, json{{"reason", "скан не тот"}}), [&](const HttpResponsePtr& r) { voided = r; }, hr_doc);
+    ASSERT_NE(voided, nullptr);
+    EXPECT_EQ(voided->statusCode(), k200OK);
+}
+
+// The reason is not decoration: it is the whole audit value of the three
+// columns. Missing field -> 400 (shape), blank -> 422 (value), repeat -> 409
+// (state) — the file's usual three-way split.
+TEST_F(LedgerDocumentsApiTest, VoidRequiresAReasonAndIsIdempotentlyRejected) {
+    auto org = seed_org("444240000049", "Void Reason Org LLP");
+    auto p = member("del5@example.com", org.id, "accountant");
+    Ledger::DocumentRepository repo;
+    auto doc = repo.create(org.id, "invoice", "generated", "final");
+
+    HttpResponsePtr missing;
+    ctrl.voidDocument(
+        authed_json(p, json::object()), [&](const HttpResponsePtr& r) { missing = r; }, doc.id);
+    ASSERT_NE(missing, nullptr);
+    EXPECT_EQ(missing->statusCode(), k400BadRequest);
+
+    HttpResponsePtr blank;
+    ctrl.voidDocument(
+        authed_json(p, json{{"reason", "  "}}), [&](const HttpResponsePtr& r) { blank = r; }, doc.id);
+    ASSERT_NE(blank, nullptr);
+    EXPECT_EQ(blank->statusCode(), k422UnprocessableEntity);
+
+    HttpResponsePtr first;
+    ctrl.voidDocument(
+        authed_json(p, json{{"reason", "дубль"}}), [&](const HttpResponsePtr& r) { first = r; }, doc.id);
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first->statusCode(), k200OK);
+
+    HttpResponsePtr again;
+    ctrl.voidDocument(
+        authed_json(p, json{{"reason", "ещё раз"}}), [&](const HttpResponsePtr& r) { again = r; }, doc.id);
+    ASSERT_NE(again, nullptr);
+    EXPECT_EQ(again->statusCode(), k409Conflict);
+    EXPECT_EQ(json::parse(std::string(again->body()))["error"].get<std::string>(), "already_voided");
+    // Первое решение и его причина уцелели — второе не перезаписало их.
+    auto stored = repo.find_in_org(doc.id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_EQ(stored->void_reason.value_or(""), "дубль");
+}
+
+// A voided document is not editable: a new version would be rendered and would
+// hand the document a live file back.
+TEST_F(LedgerDocumentsApiTest, AVoidedDocumentCannotBeEdited) {
+    if (!templates_available())
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    auto org = seed_org("444240000050", "Void Then Edit Org LLP");
+    auto p = member("del6@example.com", org.id, "accountant");
+    const std::string doc_id = seed_rendered_invoice(org.id, /*total_tiyn=*/1234567, "seed-bytes");
+
+    HttpResponsePtr voided;
+    ctrl.voidDocument(
+        authed_json(p, json{{"reason", "выписан не тому"}}), [&](const HttpResponsePtr& r) { voided = r; }, doc_id);
+    ASSERT_NE(voided, nullptr);
+    ASSERT_EQ(voided->statusCode(), k200OK);
+
+    HttpResponsePtr edit;
+    ctrl.createVersion(
+        authed_json(p, json{{"input", make_invoice_input(1234567)}}),
+        [&](const HttpResponsePtr& r) { edit = r; },
+        doc_id);
+    ASSERT_NE(edit, nullptr);
+    EXPECT_EQ(edit->statusCode(), k409Conflict);
+    EXPECT_EQ(json::parse(std::string(edit->body()))["error"].get<std::string>(), "document_voided");
+    Ledger::DocumentRepository repo;
+    EXPECT_EQ(repo.list_versions(org.id, doc_id).size(), 1U);
+}
+
+// Both routes are writes, so a viewer is refused on both — and the document is
+// untouched by either attempt.
+TEST_F(LedgerDocumentsApiTest, ViewerCanNeitherDeleteNorVoid) {
+    auto org = seed_org("444240000051", "Void Viewer Org LLP");
+    auto v = member("viewer12@example.com", org.id, "viewer");
+    Ledger::DocumentRepository repo;
+    auto doc = repo.create(org.id, "invoice", "generated", "final");
+
+    HttpResponsePtr del;
+    ctrl.remove(
+        authed(v, Delete), [&](const HttpResponsePtr& r) { del = r; }, doc.id);
+    ASSERT_NE(del, nullptr);
+    EXPECT_EQ(del->statusCode(), k403Forbidden);
+
+    HttpResponsePtr voided;
+    ctrl.voidDocument(
+        authed_json(v, json{{"reason", "нет"}}), [&](const HttpResponsePtr& r) { voided = r; }, doc.id);
+    ASSERT_NE(voided, nullptr);
+    EXPECT_EQ(voided->statusCode(), k403Forbidden);
+
+    auto still = repo.find_in_org(doc.id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(still.has_value());
+    EXPECT_FALSE(still->voided_at.has_value());
+}
+
+// The кадровик's grant is per-RESOURCE, and one table holds two resources: hr
+// documents are hr_docs (rw), everything else is `documents` (no grant at
+// all). Both routes go through the same task-7 helper, so both split the same
+// way — a fourth copy of the doc_type condition would have drifted.
+TEST_F(LedgerDocumentsApiTest, HrRoleMayVoidHrDocumentsButNotPrimaryOnes) {
+    auto org = seed_org("444240000052", "HR Role Void Org LLP");
+    auto hr_user = member("hr-void@example.com", org.id, "hr");
+    Ledger::DocumentRepository repo;
+    auto hr_doc = repo.create(org.id, "hr", "uploaded", "inbox");
+    auto invoice = repo.create(org.id, "invoice", "generated", "final");
+
+    HttpResponsePtr hr_resp;
+    ctrl.voidDocument(
+        authed_json(hr_user, json{{"reason", "приказ отменён"}}),
+        [&](const HttpResponsePtr& r) { hr_resp = r; },
+        hr_doc.id);
+    ASSERT_NE(hr_resp, nullptr);
+    EXPECT_EQ(hr_resp->statusCode(), k200OK);
+
+    HttpResponsePtr invoice_resp;
+    ctrl.voidDocument(
+        authed_json(hr_user, json{{"reason", "не моё"}}),
+        [&](const HttpResponsePtr& r) { invoice_resp = r; },
+        invoice.id);
+    ASSERT_NE(invoice_resp, nullptr);
+    EXPECT_EQ(invoice_resp->statusCode(), k403Forbidden);
+
+    HttpResponsePtr invoice_del;
+    ctrl.remove(
+        authed(hr_user, Delete), [&](const HttpResponsePtr& r) { invoice_del = r; }, invoice.id);
+    ASSERT_NE(invoice_del, nullptr);
+    EXPECT_EQ(invoice_del->statusCode(), k403Forbidden);
+    EXPECT_TRUE(repo.find_in_org(invoice.id, org.id, /*from_primary=*/true).has_value());
+
+    // А свой кадровый документ он и удалить может — если тот ничем не занят.
+    auto spare_hr_doc = repo.create(org.id, "hr", "uploaded", "inbox");
+    HttpResponsePtr hr_del;
+    ctrl.remove(
+        authed(hr_user, Delete), [&](const HttpResponsePtr& r) { hr_del = r; }, spare_hr_doc.id);
+    ASSERT_NE(hr_del, nullptr);
+    EXPECT_EQ(hr_del->statusCode(), k204NoContent);
 }
 
 }  // namespace

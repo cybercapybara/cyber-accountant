@@ -31,6 +31,15 @@
  * the DEFERRABLE documents_current_version_fk fail at COMMIT. See each
  * method's comment for the exact mechanism.
  *
+ * P3 task 11: удаление и аннулирование — remove() и void_document(). Что
+ * из двух допустимо, решает НЕ статус, а has_posted_entry_link(): документ,
+ * висящий на проведённой (или сторнированной) проводке, физически удалить
+ * нельзя никогда — журнал append-only и правится только сторно. Аннулирование
+ * живёт в колонках voided_at/voided_by_user_id/void_reason
+ * (migrations/019_document_voiding.sql), а не в значении `status`, чтобы не
+ * стирать, был документ 'final' или 'sent'. Объекты в S3 ни один из двух путей
+ * не удаляет — политика хранения записана в заголовке той миграции.
+ *
  * `status` values are NOT validated here — migrations/010_documents.sql's
  * CHECK constraint is the source of truth for the allowed set (spanning both
  * the generated and the inbound lifecycle), and it is the API layer's job
@@ -68,6 +77,16 @@ enum class VersionRenderState {
     kVoided,      ///< документ аннулирован — джоба no-op
 };
 
+/// Исход DocumentRepository::remove(). Не bool: «нет такого документа» и
+/// «удалять нельзя» — разные ответы HTTP (404 против 409), и разные причины
+/// «нельзя» тоже различимы, потому что подсказка пользователю у них разная.
+enum class DeleteOutcome {
+    kDeleted,   ///< строка физически удалена вместе с версиями и связями
+    kNotFound,  ///< документа нет в этой организации
+    kHasPostedEntries,  ///< есть связь с проведённой/сторнированной проводкой — только аннулирование
+    kReferenced,  ///< на документ ссылается приказ или налоговая форма — только аннулирование
+};
+
 class DocumentRepository : public Tenancy::OrgCrudBase<DocumentRepository, Document, std::string> {
 public:
     // OrgCrudBase contract — supplies find_in_org(id,org_id) /
@@ -90,6 +109,7 @@ public:
         "d.current_version_id, "
         "COALESCE((SELECT MAX(vv.version_no) FROM document_versions vv WHERE vv.document_id = d.id), 0) "
         "AS latest_version_no, "
+        "d.voided_at, d.voided_by_user_id, d.void_reason, "
         "d.created_at, d.updated_at";
     static constexpr const char* kIdColumn = "d.id";
     static constexpr const char* kOrderBy = "d.created_at DESC";
@@ -434,12 +454,14 @@ public:
                                             const std::string& version_id) {
         return Database::get().execute_read_primary([&](auto& txn) -> VersionRenderState {
             auto r = txn.exec_params(
-                // FALSE AS voided — заглушка: колонки documents.voided_at ещё
-                // нет, её добавляет задача 11, и она же ОБЯЗАНА заменить эту
-                // константу на (d.voided_at IS NOT NULL). Ветка kVoided ниже
-                // написана целиком, чтобы той задаче осталась ровно одна
-                // правка — в SQL, а не в логике джобы.
-                "SELECT FALSE AS voided, "
+                // Задача 11 заменила заглушку `FALSE AS voided` настоящим
+                // условием: колонка documents.voided_at существует
+                // (migrations/019_document_voiding.sql), и рендер НЕ имеет
+                // права воскрешать аннулированный документ — иначе джоба,
+                // поставленная в очередь до аннулирования, дописала бы файл и
+                // перевела статус обратно в 'final' уже после того, как
+                // человек объявил документ недействительным.
+                "SELECT (d.voided_at IS NOT NULL) AS voided, "
                 "       (v.s3_key IS NOT NULL) AS rendered, "
                 "       (v.version_no = (SELECT MAX(vv.version_no) FROM document_versions vv "
                 "                         WHERE vv.document_id = d.id)) AS newest "
@@ -651,6 +673,106 @@ public:
                 out.push_back(Document::from_row(row));
             return out;
         });
+    }
+
+    /// Есть ли у документа связь с ПРОВЕДЁННОЙ (или сторнированной)
+    /// проводкой. Это, а не status, отделяет удаляемое от аннулируемого:
+    /// 'draft' бывает только у source='generated', и по статусу
+    /// ошибочно загруженный скан не удалился бы никогда.
+    ///
+    /// Читает с ПЕРВИЧНОЙ базы по той же причине, что и
+    /// version_render_state(): ответ — основание решения «удалять или нет», а
+    /// отставшая реплика ответила бы «связи нет» про связь, которую она просто
+    /// ещё не видела, и документ под проведённой проводкой был бы уничтожен.
+    bool has_posted_entry_link(const std::string& org_id, const std::string& document_id) {
+        return Database::get().execute_read_primary(
+            [&](auto& txn) { return posted_link_exists(txn, org_id, document_id); });
+    }
+
+    /**
+     * @brief Физически удалить документ вместе с его версиями и связями.
+     * @details Связь с ЧЕРНОВОЙ проводкой удалению не мешает:
+     *          document_entries.document_id — ON DELETE CASCADE, черновик
+     *          останется без основания, и это принято (факт удаления
+     *          пишется в аудит вызывающим). Связь с ПРОВЕДЁННОЙ проводкой
+     *          проверяется в той же транзакции и даёт kHasPostedEntries.
+     *
+     *          hr_orders.document_id и tax_filings.document_id — NO ACTION
+     *          (migrations/012_hr.sql, migrations/016_tax_filings.sql), и
+     *          последний ещё и DEFERRABLE, то есть срабатывает на COMMIT.
+     *          Поэтому SQLSTATE 23503 ловится здесь и превращается в
+     *          kReferenced -> 409, а не всплывает 500-й: подписанный
+     *          трудовой договор, на который ссылается приказ, физически
+     *          уничтожить нельзя — только аннулировать. try/catch обнимает
+     *          ВЕСЬ execute_write, а не одну инструкцию внутри него, именно
+     *          из-за отложенного FK: он падает на COMMIT, то есть уже за
+     *          пределами лямбды.
+     *
+     *          Объекты в S3 этот метод не трогает — принятая политика
+     *          хранения, см. заголовок migrations/019_document_voiding.sql.
+     */
+    DeleteOutcome remove(const std::string& org_id, const std::string& document_id) {
+        try {
+            return Database::get().execute_write([&](auto& txn) -> DeleteOutcome {
+                // Проверка живёт В ТОЙ ЖЕ транзакции, что и DELETE, а не в
+                // отдельном чтении перед ней. Иначе между «связи нет» и
+                // удалением успевает вклиниться проведение проводки, а
+                // document_entries.document_id — ON DELETE CASCADE, то есть
+                // связь исчезла бы МОЛЧА и проведённая проводка осталась бы
+                // без основания. Публичный has_posted_entry_link() выше
+                // отвечает на тот же вопрос вызывающим, которым не нужно
+                // удаление.
+                if (posted_link_exists(txn, org_id, document_id))
+                    return DeleteOutcome::kHasPostedEntries;
+                auto r = txn.exec_params(
+                    "DELETE FROM documents WHERE id = $1 AND org_id = $2 RETURNING id", document_id, org_id);
+                return r.empty() ? DeleteOutcome::kNotFound : DeleteOutcome::kDeleted;
+            });
+        } catch (const pqxx::sql_error& e) {
+            if (std::string_view(e.sqlstate()) == "23503")
+                return DeleteOutcome::kReferenced;
+            throw;
+        }
+    }
+
+    /// Пометить документ аннулированным. Повторное аннулирование — no-op
+    /// (`voided_at IS NULL` в WHERE): первое решение и его автор важнее
+    /// последнего. Строка остаётся на месте вместе с файлом и историей —
+    /// аннулирование не прячет документ, оно его помечает.
+    /// @return false, если документа нет в этой организации ИЛИ он уже
+    ///         аннулирован — вызывающий различает их отдельным find_in_org.
+    bool void_document(const std::string& org_id,
+                       const std::string& document_id,
+                       const std::string& user_id,
+                       const std::string& reason) {
+        return Database::get().execute_write([&](auto& txn) {
+            auto r = txn.exec_params(
+                "UPDATE documents SET voided_at = now(), voided_by_user_id = $3, void_reason = $4 "
+                " WHERE id = $1 AND org_id = $2 AND voided_at IS NULL RETURNING id",
+                document_id,
+                org_id,
+                user_id,
+                reason);
+            return !r.empty();
+        });
+    }
+
+private:
+    /// Единственная формулировка предиката «документ висит на проведённой
+    /// (или сторнированной) проводке» — вызывается и из чтения, и изнутри
+    /// транзакции удаления, чтобы две копии одного условия не разъехались.
+    /// Шаблон по типу транзакции: libpqxx отдаёт разные типы для work и
+    /// read_transaction, и оба приходят сюда завёрнутыми в TracingTxn.
+    template <typename Txn>
+    static bool posted_link_exists(Txn& txn, const std::string& org_id, const std::string& document_id) {
+        auto r = txn.exec_params(
+            "SELECT EXISTS (SELECT 1 FROM document_entries de "
+            "                 JOIN journal_entries je ON je.id = de.entry_id "
+            "                WHERE de.document_id = $1 AND de.org_id = $2 "
+            "                  AND je.status IN ('posted','reversed'))",
+            document_id,
+            org_id);
+        return r.at(0).at(0).template as<bool>();
     }
 };
 

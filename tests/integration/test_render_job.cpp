@@ -20,6 +20,7 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -28,7 +29,10 @@
 
 #include "database/Database.hpp"
 #include "docgen/RenderJob.hpp"
+#include "jobs/Job.hpp"
 #include "ledger/DocumentRepository.hpp"
+#include "repositories/RoleRepository.hpp"
+#include "repositories/UserRepository.hpp"
 #include "storage/Storage.hpp"
 #include "tenancy/OrganizationRepository.hpp"
 #include "test_helpers.hpp"
@@ -116,6 +120,28 @@ protected:
     std::string make_org(const std::string& bin) {
         Tenancy::OrganizationRepository orgs;
         return orgs.create(bin, "RenderJob Test Org " + bin, "snr_simplified", false).id;
+    }
+
+    /// A real users row — documents.voided_by_user_id is a FK onto it, so a
+    /// made-up uuid would trip 23503 instead of testing anything. Same idiom
+    /// as tests/integration/test_documents.cpp's seed_user(). The email is
+    /// made unique per call because this fixture does not wipe `users`
+    /// (wipe_org_data() deliberately leaves them alone).
+    std::string seed_user(const std::string& email) {
+        Repositories::RoleRepository roles;
+        Repositories::UserRepository users;
+        auto role = roles.find_by_name("User");
+        if (!role) {
+            ADD_FAILURE() << "role 'User' missing — seed migration?";
+            throw std::runtime_error("seed role missing: User");
+        }
+        auto created = users.create(Jobs::generate_uuid() + "." + email,
+                                    std::string("$argon2id$placeholder"),
+                                    std::nullopt,
+                                    std::nullopt,
+                                    role->id,
+                                    /*confirmed=*/true);
+        return created.id;
     }
 
     /// A valid input for templates/latex/invoice/v1's schema.json.
@@ -508,13 +534,48 @@ TEST_F(RenderJobTest, IsANoOpForAVersionOfAnotherOrg) {
     EXPECT_FALSE(v1_row->s3_key.has_value());
 }
 
-// Задача 11 (аннулирование) обязана дописать сюда
-// DoesNotResurrectAVoidedDocument: аннулировать документ, запустить джобу на
-// его версии, ожидать skipped == "voided", воскрешения статуса в "final" не
-// допустить. Тест не написан здесь только потому, что колонки
-// documents.voided_at и метода void_document() ещё нет — ветка kVoided в
-// Ledger::VersionRenderState и её обработка в RenderJob уже на месте, и
-// задаче 11 остаётся заменить `FALSE AS voided` в version_render_state() на
-// (d.voided_at IS NOT NULL).
+// Задача 11: аннулирование существует, и рендер не имеет права его отменять.
+// Джоба, поставленная в очередь ДО аннулирования, доедет до воркера уже
+// после — и если бы она отработала, документ получил бы файл и статус
+// 'final' поверх пометки «недействителен», то есть аннулирование можно было
+// бы обойти простым ожиданием. Единственное, что этого не допускает, —
+// (d.voided_at IS NOT NULL) в version_render_state() и ветка kVoided.
+TEST_F(RenderJobTest, DoesNotResurrectAVoidedDocument) {
+    use_succeeding_latex_stub();
+    auto org_id = make_org("111280000011");
+    auto user_id = seed_user("voider@example.com");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    auto v1 = documents.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+
+    ASSERT_TRUE(documents.void_document(org_id, doc.id, user_id, "выписан по ошибке"));
+
+    auto result = Docgen::process_job(json{{"org_id", org_id},
+                                           {"document_id", doc.id},
+                                           {"version_id", v1->id},
+                                           {"slug", "invoice"},
+                                           {"input", valid_invoice_input()}});
+    EXPECT_EQ(result["skipped"].get<std::string>(), "voided");
+
+    // Ни файла в версии, ни опубликованного указателя, ни воскрешённого
+    // статуса — документ остался ровно тем, чем его оставил человек.
+    auto version = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(version);
+    EXPECT_FALSE(version->s3_key.has_value());
+    auto after = documents.find_in_org(doc.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(after);
+    EXPECT_FALSE(after->current_version_id.has_value());
+    EXPECT_EQ(after->status, "draft");
+    ASSERT_TRUE(after->voided_at.has_value());
+    EXPECT_EQ(after->void_reason.value_or(""), "выписан по ошибке");
+}
 
 }  // namespace
