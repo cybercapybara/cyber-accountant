@@ -214,10 +214,13 @@ protected:
 };
 
 // Payload WITHOUT version_id on purpose: jobs enqueued by an older build and
-// still sitting in Redis across a deploy must keep working, and they mean
-// "the newest version" — the behaviour they were enqueued under. Every
-// producer sets version_id now (the tests below use it); this one pins the
-// fallback so a future cleanup cannot quietly turn those jobs into skips.
+// still sitting in Redis across a deploy must keep working. Such a job was
+// enqueued by the request that CREATED the document, so what it means is
+// version 1 — and the fallback is bounded to exactly that, untouched (see
+// IsANoOpForALegacyPayloadWhoseDocumentWasEditedAcrossTheDeploy for the bound
+// itself). Every producer sets version_id now (the tests below use it); this
+// one pins the fallback so a future cleanup cannot quietly turn those jobs
+// into skips.
 TEST_F(RenderJobTest, RenderJobHappyPath) {
     use_succeeding_latex_stub();
     auto org_id = make_org("111280000001");
@@ -394,7 +397,19 @@ TEST_F(RenderJobTest, RenderOfVersionTwoLeavesVersionOnesObjectIntact) {
     ASSERT_FALSE(second.contains("skipped")) << second.dump();
     const std::string v2_key = second["key"].get<std::string>();
 
+    // The keys are not merely DIFFERENT — each names its own version. Two
+    // distinct keys prove nothing on their own: the old per-document scheme
+    // also produced distinct paths (a random uuid per call), so a byte
+    // comparison alone would still pass after a revert to it. Asserting the
+    // relationship is what actually pins the scheme.
     ASSERT_NE(v1_key, v2_key);
+    EXPECT_EQ(v1_key, "org/" + org_id + "/generated/" + v1->id + "/invoice.pdf");
+    EXPECT_EQ(v2_key, "org/" + org_id + "/generated/" + v2.id + "/invoice.pdf");
+    EXPECT_NE(v1_key.find(v1->id), std::string::npos);
+    EXPECT_NE(v2_key.find(v2.id), std::string::npos);
+    EXPECT_EQ(v1_key.find(v2.id), std::string::npos);
+    EXPECT_EQ(v2_key.find(v1->id), std::string::npos);
+
     // Version 1's object still holds version 1's bytes — not version 2's.
     auto v1_stored = Storage::get().get(v1_key);
     ASSERT_TRUE(v1_stored.has_value());
@@ -445,6 +460,14 @@ TEST_F(RenderJobTest, IsANoOpForASupersededVersion) {
 
     auto after = documents.find_in_org(doc.id, org_id, /*from_primary=*/true);
     ASSERT_TRUE(after);
+    // The NULL pointer here is the ACCEPTED state, not an oversight, and this
+    // assertion is what pins it (RenderJob.hpp's set_current_version comment
+    // points back at this test): if a first render loses the race to an edit
+    // and the newer version's render never succeeds, the document keeps
+    // reporting no file at all. Publishing this version instead would make
+    // the document report an OLD file under a NEWER version number, which for
+    // evidence is worse; the earlier version's PDF, once it exists, stays
+    // reachable through versions/{n}/download-url either way.
     EXPECT_FALSE(after->current_version_id.has_value());
     EXPECT_EQ(after->status, "draft");
     // Nothing was stored — the skip happens BEFORE the upload.
@@ -532,6 +555,84 @@ TEST_F(RenderJobTest, IsANoOpForAVersionOfAnotherOrg) {
     auto v1_row = documents.find_version(org_id, doc.id, 1);
     ASSERT_TRUE(v1_row);
     EXPECT_FALSE(v1_row->s3_key.has_value());
+}
+
+// Fix round 1 — the version_id-less fallback must not GUESS which version a
+// legacy job meant. This is the crossing-a-deploy shape: the job was
+// enqueued by the old build (its `input` IS version 1's snapshot), sat in
+// Redis, and by the time the new worker picked it up an edit had appended
+// version 2. Resolving "the newest version" here would render version 1's
+// input into version 2, publish it, and make version 2's own job skip as
+// already_rendered — a document whose PDF contradicts its own
+// input_snapshot, undetectably. Skipping is the only safe answer: the job
+// can be re-enqueued by hand with the right version_id.
+TEST_F(RenderJobTest, IsANoOpForALegacyPayloadWhoseDocumentWasEditedAcrossTheDeploy) {
+    use_succeeding_latex_stub();
+    auto org_id = make_org("111280000012");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    auto v1 = documents.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+    auto v2 = documents.add_version(
+        org_id, doc.id, std::optional<nlohmann::json>{valid_invoice_input()}, std::string("v1"), std::nullopt);
+
+    // No version_id — exactly what the old build enqueued.
+    auto result = Docgen::process_job(
+        json{{"org_id", org_id}, {"document_id", doc.id}, {"slug", "invoice"}, {"input", valid_invoice_input()}});
+    EXPECT_EQ(result["skipped"].get<std::string>(), "superseded");
+    EXPECT_EQ(result["version_id"].get<std::string>(), v2.id);
+
+    // Neither version received the stale render, and nothing was published.
+    auto v1_row = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(v1_row);
+    EXPECT_FALSE(v1_row->s3_key.has_value());
+    auto v2_row = documents.find_version(org_id, doc.id, 2);
+    ASSERT_TRUE(v2_row);
+    EXPECT_FALSE(v2_row->s3_key.has_value());
+    auto after = documents.find_in_org(doc.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(after);
+    EXPECT_FALSE(after->current_version_id.has_value());
+    EXPECT_EQ(after->status, "draft");
+}
+
+// The fallback's other bound, on the same legacy shape: version 1 is still
+// the newest, but a duplicate of the same old job already rendered it. The
+// file stays as it is — a re-run overwrites nothing whether or not the
+// payload names its version.
+TEST_F(RenderJobTest, IsANoOpForALegacyPayloadWhoseVersionOneAlreadyHasAFile) {
+    use_succeeding_latex_stub();
+    auto org_id = make_org("111280000013");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    const json legacy_payload = {
+        {"org_id", org_id}, {"document_id", doc.id}, {"slug", "invoice"}, {"input", valid_invoice_input()}};
+
+    auto first = Docgen::process_job(legacy_payload);
+    ASSERT_FALSE(first.contains("skipped")) << first.dump();
+    const std::string key = first["key"].get<std::string>();
+
+    set_canned_pdf(std::string(kFakePdfBytes) + "% a SECOND, different render\n");
+    auto second = Docgen::process_job(legacy_payload);
+    EXPECT_EQ(second["skipped"].get<std::string>(), "already_rendered");
+
+    auto v1_row = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(v1_row);
+    EXPECT_EQ(v1_row->s3_key.value_or(""), key);
+    EXPECT_EQ(Utils::Crypto::sha256_hex(Storage::get().get(key).value_or("")), v1_row->checksum_sha256.value_or(""));
 }
 
 // Задача 11: аннулирование существует, и рендер не имеет права его отменять.

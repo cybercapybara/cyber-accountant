@@ -36,7 +36,17 @@ inline std::string sanitize_filename(const std::string& filename) {
     return out;
 }
 
-/// Build the storage key for an org-scoped file.
+/// Build the storage key for an org-scoped file whose identity is the UPLOAD
+/// itself: the random uuid makes every call unique, so two uploads of
+/// "scan.pdf" cannot collide. Correct for inbox uploads, bank statements and
+/// one-off artifacts (a filing's XML).
+///
+/// NOT correct for a file that belongs to a document VERSION — use
+/// version_key() below for that. The difference matters: a key minted here
+/// says nothing about which row owns the object, so re-running a producer
+/// silently orphans the previous object instead of being refused, and
+/// nothing about the key itself proves version N+1's bytes did not land on
+/// version N's object. version_key() makes that structural.
 /// @param org_id   Owning organization id (caller-validated; not sanitized
 ///                  here — pass a trusted id, e.g. from the auth principal).
 /// @param kind     Sub-tree under the org, e.g. "generated" | "inbox" |
@@ -51,9 +61,9 @@ inline std::string org_key(const std::string& org_id, const std::string& kind, c
 
 /**
  * @brief Key for a file that belongs to ONE document version.
- * @param org_id     Owning organization id — same trusted-id contract as
- *                    org_key(): it comes from the JWT claim / the job payload
- *                    the org-scoped SQL has already matched a row against.
+ * @param org_id     Owning organization id — from the JWT claim / the job
+ *                    payload the org-scoped SQL has already matched a row
+ *                    against. Sanitized here regardless (see below).
  * @param kind       Sub-tree under the org (the render job passes "generated").
  * @param version_id `document_versions.id` — the version these bytes ARE.
  * @param filename   Human tail, sanitized (never trusted verbatim).
@@ -75,15 +85,20 @@ inline std::string org_key(const std::string& org_id, const std::string& kind, c
  * are never under another's tree; @p version_id is a v4 UUID (unguessable)
  * and is only ever learned through an org-scoped read; and the bucket stays
  * private — the only way to any object is a short-lived presigned URL minted
- * after that org-scoped read. @p version_id is sanitized too, so even a
- * hostile job payload cannot smuggle a '/' into it and climb out of the org's
- * prefix.
+ * after that org-scoped read. EVERY component is sanitized, @p org_id
+ * included: today's only caller builds the key strictly after the org-scoped
+ * row match, so a traversal-shaped org id could not reach here anyway — but
+ * that is call ORDER, and a future caller reordering two statements must not
+ * be able to turn this into a path-traversal primitive. Sanitizing here
+ * makes "cannot leave org/{org}/" a property of the function rather than of
+ * its callers.
  */
 inline std::string version_key(const std::string& org_id,
                                const std::string& kind,
                                const std::string& version_id,
                                const std::string& filename) {
-    return "org/" + org_id + "/" + kind + "/" + sanitize_filename(version_id) + "/" + sanitize_filename(filename);
+    return "org/" + sanitize_filename(org_id) + "/" + sanitize_filename(kind) + "/" + sanitize_filename(version_id) +
+           "/" + sanitize_filename(filename);
 }
 
 }  // namespace Files

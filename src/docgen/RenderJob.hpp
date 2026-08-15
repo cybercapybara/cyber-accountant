@@ -232,9 +232,10 @@ inline json process_job(const json& payload) {
     // puts it in the payload (DocgenController, TaxController,
     // PayrollController, HrController, LedgerDocumentsController::
     // createVersion). Absent = a job enqueued by an older build and still in
-    // Redis across the deploy: those are resolved to the latest version below
-    // rather than dropped, which is exactly the behaviour they were enqueued
-    // under. `.value`, not `.at`, only for that window.
+    // Redis across the deploy: those are resolved below, but only to an
+    // UNTOUCHED version 1 — see that block for why the fallback may not
+    // simply take whatever is newest. `.value`, not `.at`, only for that
+    // window.
     std::string version_id = payload.value("version_id", std::string{});
 
     ScopedTempDir tmp("docgen-");
@@ -250,16 +251,41 @@ inline json process_job(const json& payload) {
 
     Ledger::DocumentRepository documents;
     if (version_id.empty()) {
-        // Legacy payload (see the version_id comment above): the newest
-        // version is what such a job meant, and create() made version 1 in the
-        // same transaction as the document, so there is always at least one.
+        // Legacy payload (see the version_id comment above): create() made
+        // version 1 in the same transaction as the document, so there is
+        // always at least one version to look at.
         auto latest = documents.latest_version(org_id, document_id, /*from_primary=*/true);
         if (!latest)
             throw std::runtime_error("docgen: no version found for document " + document_id + " in org " + org_id);
+        // …but the fallback is BOUNDED to "version 1, no file yet", and that
+        // bound is the whole point. Such a job was enqueued by a build that
+        // did not name its version, i.e. before the deploy; its `input` is
+        // version 1's snapshot. Resolving "the newest version" at RENDER time
+        // would let an edit that landed in between receive version 1's input:
+        // the job would render stale input into version 2, publish it, and
+        // version 2's own job would then skip as already_rendered — leaving a
+        // document whose PDF contradicts its own input_snapshot. That is the
+        // exact class of defect versioning exists to remove, so anything
+        // other than the untouched version 1 is skipped rather than guessed
+        // at. A skipped legacy job is re-enqueueable by hand with the right
+        // version_id; a wrong PDF under a right-looking version number is
+        // not detectable at all.
+        if (latest->version_no != 1 || latest->s3_key.has_value()) {
+            const char* reason = latest->version_no != 1 ? "superseded" : "already_rendered";
+            spdlog::warn(
+                "docgen: payload for document {} carries no version_id and its newest version is {} (no {}); "
+                "skipping as {} rather than rendering stale input into it",
+                document_id,
+                latest->id,
+                latest->version_no != 1 ? "longer version 1" : "empty file slot",
+                reason);
+            return json{{"document_id", document_id}, {"version_id", latest->id}, {"skipped", reason}};
+        }
         version_id = latest->id;
-        spdlog::warn("docgen: payload for document {} carries no version_id; falling back to the latest version {}",
-                     document_id,
-                     version_id);
+        spdlog::warn(
+            "docgen: payload for document {} carries no version_id; falling back to its untouched version 1 {}",
+            document_id,
+            version_id);
     }
 
     // State is checked BEFORE the upload: a voided, superseded or
@@ -294,6 +320,18 @@ inline json process_job(const json& payload) {
     // this version is still the newest one. "Version N+1 created, its render
     // unfinished" keeps the pointer on N; a lost race (N+2 appeared while we
     // rendered) is not an error, the next job publishes its own version.
+    //
+    // Accepted consequence, documented rather than fixed: if the FIRST render
+    // of a document loses this race and the newer version's render never
+    // succeeds (a template that stopped compiling, a job lost before its
+    // retry), `current_version_id` stays NULL — the document reports no file
+    // even though version 1's PDF is sitting in storage under its own key,
+    // and `download-url` honestly answers 409 no_file while
+    // `versions/1/download-url` still serves it. That is the deliberate
+    // trade: publishing version 1 here would make the document report an
+    // OLD file under a NEWER version number, which for evidence is worse
+    // than reporting none. The state is pinned by
+    // RenderJobTest::IsANoOpForASupersededVersion.
     if (!documents.set_current_version(org_id, document_id, version_id)) {
         // set_current_version() returns false for the whole family of "this
         // (document, version) pair is not publishable right now": the version

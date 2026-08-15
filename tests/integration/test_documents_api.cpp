@@ -1092,6 +1092,15 @@ TEST_F(LedgerDocumentsApiTest, RenderingVersionTwoLeavesVersionOnesPdfDownloadab
     ASSERT_FALSE(result.contains("skipped")) << result.dump();
     const std::string v2_key = result["key"].get<std::string>();
     ASSERT_NE(v2_key, v1_key);
+    // Not just "a different key": version 2's object is addressed BY version
+    // 2, under this org's prefix and nobody else's. Distinctness alone would
+    // survive a revert to the per-document key (its random uuid also makes
+    // paths differ), so the identity is what holds the scheme in place.
+    const auto v2_row = repo.find_version(org.id, doc_id, 2);
+    ASSERT_TRUE(v2_row.has_value());
+    EXPECT_EQ(v2_key, "org/" + org.id + "/generated/" + v2_row->id + "/invoice.pdf");
+    EXPECT_EQ(v2_row->s3_key.value_or(""), v2_key);
+    EXPECT_EQ(v1_key.find(v2_row->id), std::string::npos);
 
     // Version 1: its own presigned URL, its own bytes — unchanged.
     HttpResponsePtr url1;
