@@ -56,6 +56,17 @@
 #   helm dependency build ./helm/cpp-env   # only if helm/cpp-env/charts/*.tgz are stale
 #   KUBECONFIG=../cluster/kubeconfig helm upgrade --install cyber-accountant ./helm/cpp-env \
 #     -n cyber-accountant -f helm/cpp-env/values-cybercapybara.yaml
+#
+# WARNING: every credential in this file is deliberately blank (see the
+# externalDatabase / externalRedis / mail / storage.s3 / auth blocks). The
+# bare `-f` command above therefore does NOT deploy a working release on its
+# own — it will fail-closed. Real deploys must ALSO carry the secrets, either
+# `--reuse-values` (keeps whatever is live) or an explicit `--set-string` per
+# credential, including BOTH jwtSecret entries:
+#   --set-string cyber-accountant.auth.jwtSecret="$JWT_SECRET" \
+#   --set-string cyber-accountant-worker.auth.jwtSecret="$JWT_SECRET"
+# The image tags below also lag production (deploys pin them via --set), so
+# treat this file as the shape of the release, not its full source of truth.
 # ═══════════════════════════════════════════════════════════════
 #
 # Update 2026-08-14 — owner decision: use the SHARED Postgres/Redis already
@@ -288,6 +299,38 @@ cyber-accountant:
       # anonymous bucket listing/reads — presigned signature required).
       publicEndpoint: "https://s3.cybercapybara.kz"
 
+  # ── Auth / JWT signing key ──
+  # SECURITY (2026-08-15): this block used to be absent entirely, so the
+  # release silently inherited `auth.jwtSecret` from helm/cpp-env/values.yaml
+  # — the chart's PUBLIC placeholder ("test-jwt-secret-change-me-…"). That is
+  # a published default in a public repo, so anyone could forge an HS256
+  # token for any organization and read/write another tenant's payroll,
+  # ledger and tax data. Verified live before the fix: a token signed with
+  # the placeholder passed signature verification; it is now rejected
+  # (401 bad_signature). Rotated to 32 bytes of `openssl rand -hex 32`.
+  #
+  # Blank here ON PURPOSE — same convention as externalDatabase.password /
+  # externalRedis.password / storage.s3.secretKey above: the real value is
+  # supplied at `helm upgrade` time and never committed. Being explicitly
+  # empty is what makes the old failure mode impossible: an empty jwtSecret
+  # drops the JWT_SECRET env var entirely and the api fail-closes at boot
+  # (loud CrashLoop) instead of silently serving on a public placeholder.
+  #
+  # MUST match the cyber-accountant-worker block below (the worker signs the
+  # tokens embedded in confirm/reset email links; a mismatch makes those
+  # links silently unverifiable).
+  #
+  # Supply it either way:
+  #   --reuse-values                                   # keeps the live value
+  #   --set-string cyber-accountant.auth.jwtSecret="$JWT_SECRET" \
+  #   --set-string cyber-accountant-worker.auth.jwtSecret="$JWT_SECRET"
+  # Live value: Secrets `api` and `worker` (key `jwt-secret`), namespace
+  # cyber-accountant — read it back with:
+  #   kubectl -n cyber-accountant get secret api \
+  #     -o jsonpath='{.data.jwt-secret}' | base64 -d
+  auth:
+    jwtSecret: ""
+
 cyber-accountant-worker:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-worker
@@ -351,6 +394,15 @@ cyber-accountant-worker:
       accessKey: ""
       secretKey: ""
       publicEndpoint: "https://s3.cybercapybara.kz"   # see the cyber-accountant block's comment above
+
+  # ── Auth / JWT signing key ──
+  # Blank on purpose, supplied at `helm upgrade` time — see the identical
+  # block in the `cyber-accountant` (api) section above for the full
+  # rationale and the 2026-08-15 rotation note. This value MUST match the
+  # api's: the worker signs the tokens embedded in confirm/reset email
+  # links, so a mismatch makes every account email silently unverifiable.
+  auth:
+    jwtSecret: ""
 
 cpp-frontend:
   image:

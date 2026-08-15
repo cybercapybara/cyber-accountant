@@ -14,7 +14,8 @@
 \vspace{4mm}
 \noindent\field{Наименование:} {{ org.name }}\\
 \noindent\field{БИН:} {{ org.bin }}
-\vspace{4mm}
+((# \par is unconditional by design -- the full-width table below has to start its
+    own paragraph. See templates/latex/README.md, "Tables start their own paragraph". #))\par\vspace{4mm}
 \noindent\begin{tabularx}{\textwidth}{@{}X c r@{}}
 \toprule
 Показатель & Код строки & Сумма \\
