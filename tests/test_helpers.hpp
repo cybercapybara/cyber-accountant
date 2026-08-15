@@ -64,18 +64,50 @@ inline std::string redis_url() {
 }
 
 /**
- * @brief Process-wide metrics-port allocator. Every fixture that boots
- *        Observability must use a fresh port: rebinding the same one
- *        immediately after the previous test's shutdown races the socket's
- *        TIME_WAIT. One counter (instead of per-fixture statics with magic
- *        disjoint bases) can't collide as suites grow.
+ * @brief Process-wide metrics-port allocator, for the FEW tests that
+ *        deliberately bind a real Prometheus exposer (tests/unit/
+ *        test_observability.cpp). Every such test must use a fresh port:
+ *        rebinding the same one immediately after the previous test's
+ *        shutdown races the socket's TIME_WAIT. One counter (instead of
+ *        per-fixture statics with magic disjoint bases) can't collide as
+ *        suites grow.
+ *
+ *        Do NOT reach for this in a normal fixture — see minimal_config().
  */
 inline int next_metrics_port() {
     static std::atomic<int> port{19100};
     return port.fetch_add(1);
 }
 
-// Minimal config JSON for tests (uses env-aware hosts)
+/**
+ * @brief Minimal config JSON for tests (uses env-aware hosts).
+ *
+ * `observability.metrics_address` is deliberately EMPTY, which
+ * Observability::Metrics::initialize() reads as "build the registry, start
+ * no HTTP exposer". This is the single biggest lever on suite runtime and
+ * it is not a matter of taste:
+ *
+ *   prometheus-cpp's Exposer is a CivetWeb HTTP server. Its listener thread
+ *   parks in poll() with CivetWeb's SOCKET_TIMEOUT_QUANTUM (2000 ms), and
+ *   the destructor (`exposer.reset()` in Metrics::shutdown) blocks until
+ *   that thread observes the stop flag — i.e. until the current 2 s quantum
+ *   expires. Because every CoreBackedTest booted Core (and therefore an
+ *   exposer) per test, EVERY service-backed test paid a flat ~2.01 s in
+ *   TearDown, whatever it actually did. Measured in CI: 374 of 442 tests in
+ *   the integration/api binary landed in 2009–2030 ms, and the same flat 2 s
+ *   showed up in tests/unit/test_observability.cpp — which touches neither
+ *   Postgres nor Redis — in exactly the tests that constructed an Exposer
+ *   and in no others.
+ *
+ * Nothing under test scrapes the exposer: /metrics is served ONLY by the
+ * exposer itself (no Drogon route), so no test loses coverage. The exposer
+ * bind path stays covered directly, on a real port, by
+ * tests/unit/test_observability.cpp. src/main.cpp does the same thing for
+ * CLI subcommands (`setenv("METRICS_ADDRESS", "")`).
+ *
+ * Leaving it empty also removes the port-reuse/TIME_WAIT hazard that
+ * next_metrics_port() exists to work around.
+ */
 inline std::string minimal_config() {
     return R"({
     "logging": {
@@ -84,8 +116,7 @@ inline std::string minimal_config() {
         "level": "warn"
     },
     "observability": {
-        "metrics_address": "0.0.0.0:)" +
-           std::to_string(next_metrics_port()) + R"(",
+        "metrics_address": "",
         "service_name": "test_service"
     },
     "async": {

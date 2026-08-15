@@ -53,14 +53,22 @@ TEST_F(LoggerTest, Shutdown) {
 
 // --- Metrics tests ---
 
-// All fixtures draw ports from the single process-wide allocator — local
-// per-fixture counters with hand-picked bases collided with each other and
-// with TestHelpers::minimal_config() in a full-binary run.
+// Binding a real Prometheus exposer costs a FLAT ~2 s per test: prometheus-cpp
+// runs it on CivetWeb, whose listener thread sits in poll() for a 2000 ms
+// quantum, and ~Exposer blocks until that quantum expires. So exactly ONE test
+// per subsystem here binds a real port (that IS the thing under test); every
+// other test passes an empty bind address, which builds the registry and starts
+// no HTTP server. See the note on TestHelpers::minimal_config().
+//
+// The port-binding tests draw from the single process-wide allocator — local
+// per-fixture counters with hand-picked bases collided with each other in a
+// full-binary run.
 class MetricsTest : public ::testing::Test {
 protected:
     static std::string get_metrics_addr() { return "0.0.0.0:" + std::to_string(TestHelpers::next_metrics_port()); }
 };
 
+// The one test that actually stands up the HTTP exposer.
 TEST_F(MetricsTest, Initialize) {
     Observability::Metrics metrics;
     EXPECT_NO_THROW(metrics.initialize(get_metrics_addr()));
@@ -68,9 +76,18 @@ TEST_F(MetricsTest, Initialize) {
     metrics.shutdown();
 }
 
+// Empty bind address = registry only, no exposer. This is the contract every
+// test fixture in the repo relies on, so assert it explicitly.
+TEST_F(MetricsTest, InitializeWithoutExposer) {
+    Observability::Metrics metrics;
+    EXPECT_NO_THROW(metrics.initialize(""));
+    EXPECT_NE(metrics.get_registry(), nullptr);
+    metrics.shutdown();
+}
+
 TEST_F(MetricsTest, CreateCounter) {
     Observability::Metrics metrics;
-    metrics.initialize(get_metrics_addr());
+    metrics.initialize("");
 
     auto& counter_family = metrics.create_counter("test_counter", "A test counter");
     auto& counter = counter_family.Add({{"label", "value"}});
@@ -81,7 +98,7 @@ TEST_F(MetricsTest, CreateCounter) {
 
 TEST_F(MetricsTest, CreateGauge) {
     Observability::Metrics metrics;
-    metrics.initialize(get_metrics_addr());
+    metrics.initialize("");
 
     auto& gauge_family = metrics.create_gauge("test_gauge", "A test gauge");
     auto& gauge = gauge_family.Add({{"label", "value"}});
@@ -92,7 +109,7 @@ TEST_F(MetricsTest, CreateGauge) {
 
 TEST_F(MetricsTest, CreateHistogram) {
     Observability::Metrics metrics;
-    metrics.initialize(get_metrics_addr());
+    metrics.initialize("");
 
     auto& hist_family = metrics.create_histogram("test_histogram", "A test histogram");
     auto& hist = hist_family.Add({{"label", "value"}}, prometheus::Histogram::BucketBoundaries{0.1, 1.0, 10.0});
@@ -148,14 +165,14 @@ TEST_F(ObservabilitySystemTest, Initialize) {
 
 TEST_F(ObservabilitySystemTest, DoubleInitThrows) {
     Observability::ObservabilitySystem sys;
-    sys.initialize("obs_test2", "logs/obs_test2.log", get_metrics_addr(), "obs_test_svc2");
-    EXPECT_THROW(sys.initialize("obs_test2", "", get_metrics_addr(), ""), std::runtime_error);
+    sys.initialize("obs_test2", "logs/obs_test2.log", /*metrics_addr=*/"", "obs_test_svc2");
+    EXPECT_THROW(sys.initialize("obs_test2", "", /*metrics_addr=*/"", ""), std::runtime_error);
     sys.shutdown();
 }
 
 TEST_F(ObservabilitySystemTest, AccessSubsystems) {
     Observability::ObservabilitySystem sys;
-    sys.initialize("obs_test3", "logs/obs_test3.log", get_metrics_addr(), "obs_test_svc3");
+    sys.initialize("obs_test3", "logs/obs_test3.log", /*metrics_addr=*/"", "obs_test_svc3");
 
     EXPECT_NE(sys.logger().get(), nullptr);
     EXPECT_NE(sys.metrics().get_registry(), nullptr);
@@ -165,16 +182,16 @@ TEST_F(ObservabilitySystemTest, AccessSubsystems) {
 
 // --- Global singleton tests ---
 
+// Singleton wiring only — the exposer bind is covered by MetricsTest.Initialize
+// and ObservabilitySystemTest.Initialize, so every test here runs exposer-less.
 class ObservabilityGlobalTest : public ::testing::Test {
 protected:
-    static std::string get_metrics_addr() { return "0.0.0.0:" + std::to_string(TestHelpers::next_metrics_port()); }
-
     void TearDown() override { TestHelpers::reset_all_globals(); }
 };
 
 TEST_F(ObservabilityGlobalTest, GlobalInitAndShutdown) {
     EXPECT_FALSE(Observability::is_initialized());
-    Observability::initialize("global_test", "logs/global_test.log", get_metrics_addr(), "global_svc");
+    Observability::initialize("global_test", "logs/global_test.log", /*metrics_addr=*/"", "global_svc");
     EXPECT_TRUE(Observability::is_initialized());
 
     Observability::shutdown();
@@ -182,8 +199,8 @@ TEST_F(ObservabilityGlobalTest, GlobalInitAndShutdown) {
 }
 
 TEST_F(ObservabilityGlobalTest, GlobalDoubleInitThrows) {
-    Observability::initialize("global_test2", "logs/global_test2.log", get_metrics_addr(), "global_svc2");
-    EXPECT_THROW(Observability::initialize("global_test2b", "", get_metrics_addr(), ""), std::runtime_error);
+    Observability::initialize("global_test2", "logs/global_test2.log", /*metrics_addr=*/"", "global_svc2");
+    EXPECT_THROW(Observability::initialize("global_test2b", "", /*metrics_addr=*/"", ""), std::runtime_error);
 }
 
 TEST_F(ObservabilityGlobalTest, GlobalGetBeforeInitThrows) {
@@ -191,7 +208,7 @@ TEST_F(ObservabilityGlobalTest, GlobalGetBeforeInitThrows) {
 }
 
 TEST_F(ObservabilityGlobalTest, GlobalShutdownIdempotent) {
-    Observability::initialize("global_test3", "logs/global_test3.log", get_metrics_addr(), "global_svc3");
+    Observability::initialize("global_test3", "logs/global_test3.log", /*metrics_addr=*/"", "global_svc3");
     EXPECT_NO_THROW(Observability::shutdown());
     EXPECT_NO_THROW(Observability::shutdown());
 }

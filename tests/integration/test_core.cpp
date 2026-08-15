@@ -8,7 +8,7 @@
 
 // ---------------------------------------------------------------------------
 // Tests that need a real Postgres + Redis. Config comes from
-// TestHelpers::minimal_config() (env-aware hosts, fresh metrics port); the
+// TestHelpers::minimal_config() (env-aware hosts, no metrics exposer); the
 // suite tests Core::initialize itself, so it writes the config and calls
 // initialize per-test rather than deriving from CoreBackedTest.
 // ---------------------------------------------------------------------------
