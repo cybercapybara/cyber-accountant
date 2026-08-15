@@ -7,10 +7,12 @@
  *          аннулирование — операции над документом целиком; строка версии
  *          исчезает только вместе с ним (FK ON DELETE CASCADE).
  *
- * Тот же from_row/to_json-идиом, что и у Ledger::Document, с одним
- * отличием: from_row здесь НЕ шаблон — версии читаются только этим
- * репозиторием и только из pqxx::row, а конкретный тип избавляет от
- * `.template as<T>()` внутри тела.
+ * Тот же from_row/to_json-идиом, что и у Ledger::Document: from_row —
+ * ШАБЛОН. Первая редакция сделала его нешаблонным ради избавления от
+ * `.template as<T>()`, и это уронило сборку: libpqxx отдаёт `row_ref` при
+ * индексации и обходе результата, а `row_ref` не приводится к
+ * `const pqxx::row&`. Конкретный тип здесь не компилируется нигде, где
+ * фабрику реально вызывают.
  *
  * `input_snapshot` наружу через to_json НЕ отдаётся: это полный вход
  * рендера, включая суммы и подписантов, и его место — в детальном ответе
@@ -43,36 +45,41 @@ struct DocumentVersion {
     std::string created_at;
     std::string updated_at;
 
-    static DocumentVersion from_row(const pqxx::row& r) {
+    /// Templated like every other model's factory (Ledger::Document,
+    /// Ledger::Counterparty, Hr::Employee): libpqxx hands out `row_ref` when a
+    /// result is indexed or iterated, which does not convert to `const row&`.
+    /// A non-templated overload compiles nowhere it is actually called.
+    template <typename Row>
+    static DocumentVersion from_row(const Row& r) {
         DocumentVersion v;
-        v.id = r["id"].as<std::string>();
-        v.org_id = r["org_id"].as<std::string>();
-        v.document_id = r["document_id"].as<std::string>();
-        v.version_no = r["version_no"].as<int>();
+        v.id = r["id"].template as<std::string>();
+        v.org_id = r["org_id"].template as<std::string>();
+        v.document_id = r["document_id"].template as<std::string>();
+        v.version_no = r["version_no"].template as<int>();
         if (!r["s3_key"].is_null())
-            v.s3_key = r["s3_key"].as<std::string>();
+            v.s3_key = r["s3_key"].template as<std::string>();
         if (!r["checksum_sha256"].is_null())
-            v.checksum_sha256 = r["checksum_sha256"].as<std::string>();
+            v.checksum_sha256 = r["checksum_sha256"].template as<std::string>();
         if (!r["mime"].is_null())
-            v.mime = r["mime"].as<std::string>();
+            v.mime = r["mime"].template as<std::string>();
         if (!r["size_bytes"].is_null())
-            v.size_bytes = r["size_bytes"].as<long long>();
+            v.size_bytes = r["size_bytes"].template as<long long>();
         if (!r["template_version"].is_null())
-            v.template_version = r["template_version"].as<std::string>();
+            v.template_version = r["template_version"].template as<std::string>();
         if (!r["input_snapshot"].is_null()) {
             // Same fallback as Ledger::Document::from_row / AuditEntry: the
             // column is only ever written from nlohmann::json::dump(), so a
             // parse failure is corruption, not "absent".
             try {
-                v.input_snapshot = nlohmann::json::parse(r["input_snapshot"].as<std::string>());
+                v.input_snapshot = nlohmann::json::parse(r["input_snapshot"].template as<std::string>());
             } catch (...) {
                 v.input_snapshot = nlohmann::json::object();
             }
         }
         if (!r["created_by_user_id"].is_null())
-            v.created_by_user_id = r["created_by_user_id"].as<std::string>();
-        v.created_at = r["created_at"].as<std::string>();
-        v.updated_at = r["updated_at"].as<std::string>();
+            v.created_by_user_id = r["created_by_user_id"].template as<std::string>();
+        v.created_at = r["created_at"].template as<std::string>();
+        v.updated_at = r["updated_at"].template as<std::string>();
         return v;
     }
 };
