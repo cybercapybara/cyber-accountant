@@ -7,9 +7,14 @@
  *        sidecars, no XeLaTeX.
  */
 
+#include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -418,6 +423,345 @@ TEST(NormalizeInputTest, RenderTexOfRealInvoiceTemplateOmitsEmptyConditionalBloc
     EXPECT_EQ(out.find("ИИК"), std::string::npos);
     EXPECT_EQ(out.find("Основание"), std::string::npos);
     EXPECT_EQ(out.find("НДС"), std::string::npos);
+}
+
+// ── escaping vs. templating: WHEN a string leaf is escaped ───────────────
+// Regression bundle for the defect that shipped in v0.4.1: render_tex used
+// to escape EVERY string leaf before inja saw the tree, so a template's own
+// control flow was evaluated against escaped data. `{% if balance_kind ==
+// "to_pay" %}` tested `to\_pay`, never matched, and every ФНО 300.00 went
+// out without its closing line and amount in words; hr_order's
+// `business_trip` and `salary_change` orders went out with no body at all.
+//
+// The rule now: a string leaf is escaped UNLESS its schema node pins it to
+// an `enum` and the value IS one of those literals. Everything below pins
+// both halves of that rule — the branch works, and nothing else stopped
+// being escaped.
+
+/// The canonical hostile value: a counterparty name carrying every kind of
+/// LaTeX weapon at once. It must reach the PDF as literal text, always.
+const char* const kInjection = "ТОО \"Алма & Ко\" \\textbf{x} $x^2$ #read(\"/etc/passwd\")";
+/// The same string after escape_latex — what the `.tex` must contain.
+const char* const kInjectionEscaped =
+    "ТОО \"Алма \\& Ко\" \\textbackslash{}textbf\\{x\\} \\$x\\textasciicircum{}2\\$ \\#read(\"/etc/passwd\")";
+
+/// Does @p needle occur in @p haystack NOT preceded by a backslash? The
+/// escaped forms of the payload legitimately contain their own raw needle as
+/// a substring (`\#read(` contains `#read(`), so a plain find() would report
+/// a hit on correctly escaped output. What matters is an occurrence LaTeX
+/// would act on: one that is not preceded by the escaping backslash.
+/// @note Every needle passed below therefore STARTS with the special
+///       character being checked, and is long enough not to collide with the
+///       template's own LaTeX (`& Ко"` rather than `& Ко`, which would also
+///       match the table header `Показатель & Код строки`).
+bool contains_unescaped(const std::string& haystack, const std::string& needle) {
+    for (std::size_t pos = haystack.find(needle); pos != std::string::npos; pos = haystack.find(needle, pos + 1)) {
+        if (pos == 0 || haystack[pos - 1] != '\\')
+            return true;
+    }
+    return false;
+}
+
+/// Replace EVERY string leaf of @p node with @p value, in place.
+void overwrite_strings(json& node, const std::string& value) {
+    if (node.is_string()) {
+        node = value;
+    } else if (node.is_object()) {
+        for (auto& item : node.items())
+            overwrite_strings(item.value(), value);
+    } else if (node.is_array()) {
+        for (auto& element : node)
+            overwrite_strings(element, value);
+    }
+}
+
+/// Every dotted path a schema pins to an `enum` — the control values.
+/// Mirrors the schema walk in Renderer.hpp/TemplateRegistry.hpp: resolve
+/// `$ref`, recurse through `properties`.
+void collect_enum_paths(const json& root,
+                        const json& node_in,
+                        const std::string& prefix,
+                        std::vector<std::string>& out) {
+    const json& node = Docgen::TemplateRegistry::resolve_ref(root, node_in);
+    if (!node.is_object())
+        return;
+    if (node.contains("enum") && !prefix.empty()) {
+        out.push_back(prefix);
+        return;
+    }
+    if (!node.contains("properties") || !node.at("properties").is_object())
+        return;
+    for (const auto& prop : node.at("properties").items())
+        collect_enum_paths(root, prop.value(), prefix.empty() ? prop.key() : prefix + "." + prop.key(), out);
+}
+
+/// Every `{{ expression }}` in @p source, trimmed — the things a template
+/// PRINTS, as opposed to the things it branches on inside `{% %}`.
+std::vector<std::string> printed_expressions(const std::string& source) {
+    std::vector<std::string> out;
+    for (std::size_t pos = source.find("{{"); pos != std::string::npos; pos = source.find("{{", pos + 2)) {
+        const std::size_t end = source.find("}}", pos + 2);
+        if (end == std::string::npos)
+            break;
+        std::string expr = source.substr(pos + 2, end - pos - 2);
+        const std::size_t first = expr.find_first_not_of(" \t\r\n");
+        const std::size_t last = expr.find_last_not_of(" \t\r\n");
+        if (first != std::string::npos)
+            out.push_back(expr.substr(first, last - first + 1));
+    }
+    return out;
+}
+
+/// Skip guard shared by the tests that read the repo's real templates.
+bool repo_templates_reachable() {
+    return fs::exists("templates/latex/invoice/v1/template.tex");
+}
+
+// THE defect, in miniature: an enum-pinned control value whose literal
+// contains a LaTeX-special character. Escaping it first made the branch
+// unreachable; it must now reach the comparison intact.
+TEST_F(TemplateRegistryTest, RenderTexLeavesSchemaEnumControlValuesUnescaped) {
+    const json schema = json::parse(R"({
+        "type": "object",
+        "properties": {"balance_kind": {"type": "string", "enum": ["to_pay", "to_refund"]}}
+    })");
+    write_version("decl",
+                  "v1",
+                  R"({% if balance_kind == "to_pay" %}PAY{% endif %})"
+                  R"({% if balance_kind == "to_refund" %}REFUND{% endif %})",
+                  schema);
+    Docgen::TemplateRegistry registry(root_);
+    auto info = registry.latest("decl");
+    ASSERT_TRUE(info.has_value());
+
+    EXPECT_EQ(Docgen::render_tex(*info, json{{"balance_kind", "to_pay"}}), "PAY");
+    EXPECT_EQ(Docgen::render_tex(*info, json{{"balance_kind", "to_refund"}}), "REFUND");
+}
+
+// The exception is a MEMBERSHIP test on the value, not a property of the
+// field: a value that is not one of the schema's literals is escaped exactly
+// as before. So a caller who somehow gets a hostile string into an
+// enum-pinned field (past the controller allowlist and past
+// TemplateRegistry::validate) still cannot place a single raw LaTeX byte —
+// and still cannot take the branch.
+TEST_F(TemplateRegistryTest, RenderTexEscapesAnEnumFieldValueThatIsNotOneOfTheLiterals) {
+    const json schema = json::parse(R"({
+        "type": "object",
+        "properties": {"kind": {"type": "string", "enum": ["hire", "to_pay"]}}
+    })");
+    write_version("decl", "v1", R"([{% if kind == "to_pay" %}PAY{% endif %}][{{ kind }}])", schema);
+    Docgen::TemplateRegistry registry(root_);
+    auto info = registry.latest("decl");
+    ASSERT_TRUE(info.has_value());
+
+    // Shaped to close the comparison and open a command if it were ever
+    // interpolated raw.
+    const std::string hostile = R"(to_pay" %}\input{/etc/passwd}((#)";
+    const std::string out = Docgen::render_tex(*info, json{{"kind", hostile}});
+
+    EXPECT_EQ(out.find("PAY"), std::string::npos) << "a non-literal value must not take the branch";
+    EXPECT_EQ(out.find("\\input"), std::string::npos) << "raw \\input reached the .tex";
+    EXPECT_NE(out.find("\\textbackslash{}input\\{/etc/passwd\\}"), std::string::npos);
+    EXPECT_EQ(out, "[][to\\_pay\" \\%\\}\\textbackslash{}input\\{/etc/passwd\\}((\\#]");
+}
+
+// The schema walk must not lose escaping anywhere the old blanket walk
+// covered: nested objects, arrays of objects, and leaves the schema does not
+// describe at all (an unknown key, or an array whose schema declares no
+// `items`). Absent schema information means "escape" — the safe direction.
+TEST_F(TemplateRegistryTest, RenderTexEscapesNestedArrayAndSchemaLessLeaves) {
+    const json schema = json::parse(R"({
+        "type": "object",
+        "properties": {
+            "seller": {"$ref": "#/definitions/party"},
+            "items": {"type": "array", "items": {"type": "object",
+                      "properties": {"name": {"type": "string"}}}},
+            "loose": {"type": "array"}
+        },
+        "definitions": {
+            "party": {"type": "object", "properties": {"name": {"type": "string"}}}
+        }
+    })");
+    write_version("inv",
+                  "v1",
+                  "[{{ seller.name }}][{{ items.0.name }}][{{ items.0.note }}][{{ loose.0 }}][{{ undeclared }}]",
+                  schema);
+    Docgen::TemplateRegistry registry(root_);
+    auto info = registry.latest("inv");
+    ASSERT_TRUE(info.has_value());
+
+    const json input = {{"seller", {{"name", "A & B"}}},
+                        // `note` is not declared by items' schema; `loose`
+                        // declares no `items`; `undeclared` is not a
+                        // property at all. All three must still be escaped.
+                        {"items", json::array({json{{"name", "C & D"}, {"note", "E & F"}}})},
+                        {"loose", json::array({"G & H"})},
+                        {"undeclared", "I & J"}};
+
+    EXPECT_EQ(Docgen::render_tex(*info, input), "[A \\& B][C \\& D][E \\& F][G \\& H][I \\& J]");
+}
+
+// A non-string enum (a schema pinning an integer) must not make the leaf
+// skip escaping by accident, and must not disturb the numbers-pass-through
+// rule either.
+TEST_F(TemplateRegistryTest, RenderTexEscapesAStringLeafAgainstANonStringEnum) {
+    const json schema = json::parse(R"({
+        "type": "object",
+        "properties": {"n": {"enum": [1, 2]}, "s": {"enum": [1, 2]}}
+    })");
+    write_version("mix", "v1", "[{{ n }}][{{ s }}]", schema);
+    Docgen::TemplateRegistry registry(root_);
+    auto info = registry.latest("mix");
+    ASSERT_TRUE(info.has_value());
+
+    EXPECT_EQ(Docgen::render_tex(*info, json{{"n", 2}, {"s", "a_b"}}), "[2][a\\_b]");
+}
+
+// ── the shipped templates ────────────────────────────────────────────────
+
+// The blast-radius test the fix owes: a counterparty name carrying every
+// LaTeX weapon at once, substituted into EVERY string leaf of EVERY shipped
+// template's fixture, must come out as literal text in every one of them.
+// (Every leaf includes the enum-pinned ones — which is the point: the
+// payload is not one of the schema's literals, so it is escaped like any
+// other string and the control branches simply do not fire.)
+TEST(ShippedTemplatesTest, RenderTheInjectionPayloadAsLiteralTextInEveryTemplate) {
+    if (!repo_templates_reachable())
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+
+    Docgen::TemplateRegistry registry;  // default root: "templates/latex"
+    const auto templates = registry.list();
+    ASSERT_FALSE(templates.empty());
+
+    for (const auto& info : templates) {
+        const fs::path fixture_path = info.dir / "fixtures" / "basic.json";
+        ASSERT_TRUE(fs::exists(fixture_path)) << info.slug << " has no fixtures/basic.json";
+        json fixture;
+        std::ifstream(fixture_path) >> fixture;
+        overwrite_strings(fixture, kInjection);
+
+        std::string out;
+        const json normalized = Docgen::TemplateRegistry::normalize_input(info.schema, fixture);
+        ASSERT_NO_THROW(out = Docgen::render_tex(info, normalized)) << info.slug;
+
+        EXPECT_NE(out.find(kInjectionEscaped), std::string::npos)
+            << info.slug << ": the payload is not present in its escaped form";
+        // None of the raw forms may appear. `\textbf{#1}` occurs in these
+        // templates as a macro DEFINITION, so the needles below are the
+        // payload's own byte sequences, which no template source contains.
+        EXPECT_FALSE(contains_unescaped(out, "\\textbf{x}")) << info.slug << ": raw \\textbf{x} reached the .tex";
+        EXPECT_FALSE(contains_unescaped(out, "$x^2$")) << info.slug << ": raw math mode reached the .tex";
+        EXPECT_FALSE(contains_unescaped(out, "#read(")) << info.slug << ": raw macro parameter reached the .tex";
+        EXPECT_FALSE(contains_unescaped(out, "& Ко\"")) << info.slug << ": raw & reached the .tex";
+        EXPECT_FALSE(contains_unescaped(out, "^2")) << info.slug << ": raw superscript reached the .tex";
+    }
+}
+
+// The one rule the escaping exception costs template authors: an
+// `enum`-pinned field is a control value, so branch on it — never print it.
+// Raw `to_pay` typeset in text mode is a LaTeX error, and a control
+// identifier is not something a reader should ever see. Statically checked
+// against every shipped template so it cannot be forgotten.
+TEST(ShippedTemplatesTest, NeverPrintAnEnumPinnedField) {
+    if (!repo_templates_reachable())
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+
+    Docgen::TemplateRegistry registry;
+    const auto templates = registry.list();
+    ASSERT_FALSE(templates.empty());
+
+    std::size_t enum_fields = 0;
+    for (const auto& info : templates) {
+        std::vector<std::string> control_paths;
+        collect_enum_paths(info.schema, info.schema, "", control_paths);
+        enum_fields += control_paths.size();
+
+        std::ifstream tex(info.tex_path, std::ios::binary);
+        std::ostringstream buf;
+        buf << tex.rdbuf();
+        const auto printed = printed_expressions(buf.str());
+
+        for (const auto& path : control_paths) {
+            EXPECT_EQ(std::find(printed.begin(), printed.end(), path), printed.end())
+                << info.slug << "/" << info.version_str << " prints {{ " << path
+                << " }}, but its schema pins that field to an enum — enum fields are control "
+                   "values, reach the template unescaped, and must only be compared";
+        }
+    }
+    // Guard against the check passing because it found nothing to check.
+    EXPECT_GT(enum_fields, 0u);
+}
+
+// The production symptom, on the real template: BOTH closing blocks of ФНО
+// 300.00 must render, each with its sentence and balance_words. Before the
+// fix neither did, for any input.
+TEST(ShippedTemplatesTest, Fno300PrintsItsClosingLineForBothBalanceKinds) {
+    if (!repo_templates_reachable())
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+
+    Docgen::TemplateRegistry registry;
+    auto info = registry.latest("fno_300");
+    ASSERT_TRUE(info.has_value());
+
+    json input = {{"org", {{"bin", "104332181962"}, {"name", "Cyber Capybara ТОО"}}},
+                  {"period", {{"year", "2026"}, {"quarter", "2"}}},
+                  {"sales_tenge", "5 000 000,00"},
+                  {"vat_charged_tenge", "800 000,00"},
+                  {"vat_credited_tenge", "350 000,00"},
+                  {"balance_tenge", "450 000,00"},
+                  {"balance_kind", "to_pay"},
+                  {"balance_words", "Четыреста пятьдесят тысяч тенге 00 тиын"},
+                  {"signed_on", "14.08.2026"},
+                  {"director", "Ахметов Ерлан Серикович"},
+                  {"accountant", "Серикбаева Айгерим Кайратовна"}};
+
+    ASSERT_FALSE(Docgen::TemplateRegistry::validate(*info, input).has_value());
+    std::string out = Docgen::render_tex(*info, Docgen::TemplateRegistry::normalize_input(info->schema, input));
+    EXPECT_NE(out.find("подлежащая уплате в бюджет"), std::string::npos);
+    EXPECT_NE(out.find("Четыреста пятьдесят тысяч тенге 00 тиын"), std::string::npos);
+    EXPECT_EQ(out.find("подлежащая возврату из бюджета"), std::string::npos);
+
+    input["balance_kind"] = "to_refund";
+    ASSERT_FALSE(Docgen::TemplateRegistry::validate(*info, input).has_value());
+    out = Docgen::render_tex(*info, Docgen::TemplateRegistry::normalize_input(info->schema, input));
+    EXPECT_NE(out.find("подлежащая возврату из бюджета"), std::string::npos);
+    EXPECT_NE(out.find("Четыреста пятьдесят тысяч тенге 00 тиын"), std::string::npos);
+    EXPECT_EQ(out.find("подлежащая уплате в бюджет"), std::string::npos);
+}
+
+// The other production symptom: an hr_order of every kind must print a body.
+// `business_trip` and `salary_change` — the two kinds whose literal carries
+// an underscore — printed a header, signature lines and nothing in between.
+TEST(ShippedTemplatesTest, HrOrderPrintsABodyForEveryKind) {
+    if (!repo_templates_reachable())
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+
+    Docgen::TemplateRegistry registry;
+    auto info = registry.latest("hr_order");
+    ASSERT_TRUE(info.has_value());
+
+    // kind -> a phrase only that kind's block prints.
+    const std::vector<std::pair<std::string, std::string>> kinds = {{"hire", "на работу с"},
+                                                                    {"dismiss", "с должности"},
+                                                                    {"vacation", "отпуск с"},
+                                                                    {"business_trip", "в командировку с"},
+                                                                    {"salary_change", "Изменить должностной оклад"}};
+
+    for (const auto& [kind, phrase] : kinds) {
+        const json input = {
+            {"kind", kind},
+            {"number", "42"},
+            {"issued_on", "14.08.2026"},
+            {"employer", {{"name", "Cyber Capybara ТОО"}, {"bin", "104332181962"}}},
+            {"employee",
+             {{"full_name", "Серикбаева Айгерим Кайратовна"}, {"iin", "900112350487"}, {"position", "Бухгалтер"}}},
+            {"effective_from", "18.08.2026"},
+            {"director", "Ахметов Ерлан Серикович"}};
+        ASSERT_FALSE(Docgen::TemplateRegistry::validate(*info, input).has_value()) << kind;
+        const std::string out =
+            Docgen::render_tex(*info, Docgen::TemplateRegistry::normalize_input(info->schema, input));
+        EXPECT_NE(out.find(phrase), std::string::npos) << "hr_order kind '" << kind << "' rendered no body";
+    }
 }
 
 }  // namespace

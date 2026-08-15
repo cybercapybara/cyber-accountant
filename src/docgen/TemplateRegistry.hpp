@@ -209,34 +209,46 @@ public:
         return detail::fill_object(schema, schema, std::move(input));
     }
 
+    /**
+     * @brief Resolve a one-level `"$ref": "#/definitions/X"` schema node
+     *        against the root schema document @p root.
+     * @details Any other node (no `$ref`, or a `$ref` shape this codebase
+     *          does not produce) passes through unchanged, so this is safe
+     *          to call on every node of a schema walk.
+     * @note Public because TWO schema walks need it now: `normalize_input`
+     *       below and `Docgen::detail::escape_tree` (src/docgen/Renderer.hpp),
+     *       which decides per leaf whether a string is printed text (escape)
+     *       or a schema-pinned control literal (leave raw). Both must resolve
+     *       `$ref` identically or they would disagree about which node
+     *       describes a given value — hence one implementation, not two.
+     * @return A reference into @p root (or @p node itself); both must
+     *         outlive the returned reference.
+     */
+    static const json& resolve_ref(const json& root, const json& node) {
+        if (!node.is_object() || !node.contains("$ref"))
+            return node;
+        const std::string ref = node.at("$ref").get<std::string>();
+        static const std::string kPrefix = "#/definitions/";
+        if (ref.rfind(kPrefix, 0) != 0)
+            return node;
+        const std::string name = ref.substr(kPrefix.size());
+        if (root.contains("definitions") && root.at("definitions").contains(name))
+            return root.at("definitions").at(name);
+        return node;
+    }
+
 private:
     /// Implementation details for normalize_input() — kept out of the
     /// public surface since neither helper makes sense called on its own
     /// (both need the ROOT schema doc to resolve "$ref" against, not just
     /// whatever sub-schema node they're currently filling).
     struct detail {
-        /// Resolve a one-level `"$ref": "#/definitions/X"` schema node
-        /// against @p root. Any other node (no `$ref`, or a `$ref` shape
-        /// this codebase doesn't produce) passes through unchanged.
-        static const json& resolve_ref(const json& root, const json& node) {
-            if (!node.is_object() || !node.contains("$ref"))
-                return node;
-            const std::string ref = node.at("$ref").get<std::string>();
-            static const std::string kPrefix = "#/definitions/";
-            if (ref.rfind(kPrefix, 0) != 0)
-                return node;
-            const std::string name = ref.substr(kPrefix.size());
-            if (root.contains("definitions") && root.at("definitions").contains(name))
-                return root.at("definitions").at(name);
-            return node;
-        }
-
         /// Type-appropriate zero value for a schema node missing from the
         /// input entirely. `object` recurses so a wholly-absent optional
         /// object still gets every one of ITS declared properties filled
         /// in, at every depth.
         static json default_for(const json& root, const json& node_in) {
-            const json& node = resolve_ref(root, node_in);
+            const json& node = TemplateRegistry::resolve_ref(root, node_in);
             const std::string type = node.value("type", "");
             if (type == "object")
                 return fill_object(root, node, json::object());
@@ -260,7 +272,7 @@ private:
         /// objects get their own missing optional fields filled too.
         /// @p value must be a JSON object.
         static json fill_object(const json& root, const json& node_in, json value) {
-            const json& node = resolve_ref(root, node_in);
+            const json& node = TemplateRegistry::resolve_ref(root, node_in);
             if (!value.is_object() || !node.contains("properties") || !node.at("properties").is_object())
                 return value;
             for (const auto& prop : node.at("properties").items()) {

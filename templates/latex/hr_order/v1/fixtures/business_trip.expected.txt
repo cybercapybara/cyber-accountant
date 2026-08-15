@@ -1,0 +1,16 @@
+# kind == "business_trip". Added with the escaping-order fix: this branch and
+# salary_change below it were the two order kinds whose whole body silently
+# disappeared, because `business_trip` reached inja escaped as
+# `business\_trip` and `{% if kind == "business_trip" %}` could never match.
+# They had no fixture, so nothing rendered them — that is why the render gate
+# saw the defect only in fno_300. They have one now.
+Іссапарға жіберу туралы бұйрық / Приказ о направлении в командировку
+в командировку с
+по
+Мазмұны / Содержание:
+Негіздеме / Основание:
+
+# Only the hire and dismiss branches restate the employee's ЖСН/ИИН — a trip
+# order identifies them by name and position. Nothing about that is new; this
+# is simply the first fixture that renders a branch which does not print it.
+unprinted employee.iin

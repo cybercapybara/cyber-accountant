@@ -62,6 +62,31 @@ templates/latex/<slug>/v<N>/
   substitution — `\ { } $ & # ^ _ % ~ < >` all become their safe LaTeX
   form. Do **not** escape values yourself in `schema.json`/fixtures; numbers
   and booleans pass through unescaped.
+- **Branch on `enum` fields, and never print one.** There is exactly one
+  exception to the escaping above: a string leaf whose schema node pins it to
+  an `enum`, and whose value is one of those literals, reaches the template
+  **raw**. It has to — a value the template COMPARES is not text being
+  typeset, and escaping it first is what silently broke ФНО 300.00's closing
+  line and two whole `hr_order` kinds (`{% if balance_kind == "to_pay" %}`
+  was being evaluated against `to\_pay`). So:
+  - write control comparisons **only** against `enum`-constrained fields —
+    `{% if kind == "business_trip" %}` works because `hr_order`'s schema
+    pins `kind`; the same comparison against a free-text field would be
+    tested against the escaped value and is a bug;
+  - do **not** `{{ }}` an `enum` field into the document. `to_pay` typeset
+    raw is a LaTeX error (bare `_` in text mode), and a control identifier
+    is not something a reader should see — print a human label from the
+    branch instead. Declare each one `unprinted <path>` in `expected.txt`.
+    `ShippedTemplatesTest.NeverPrintAnEnumPinnedField`
+    (`tests/unit/test_template_registry.cpp`) fails if a template does.
+
+  Nothing else stops being escaped: every free-text field — a counterparty
+  name, a line item, a director's name — still goes through `escape_latex`,
+  because none of them is `enum`-pinned. See `src/docgen/Renderer.hpp`'s file
+  header for the full argument, including why this adds no injection surface
+  (the only bytes that now reach the `.tex` unescaped are byte-exact copies of
+  literals this repo wrote in its own `schema.json`; a caller can select among
+  them, never contribute to them).
 - `schema.json` is the contract: `RenderJob` (and `render-templates.sh`)
   reject any input that doesn't satisfy it — required fields, types, string
   patterns (e.g. a `date` field constrained to `DD.MM.YYYY`) all belong
