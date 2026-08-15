@@ -47,6 +47,7 @@
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalEntry.hpp"
 #include "ledger/JournalService.hpp"
+#include "money/AmountInWords.hpp"
 #include "repositories/RoleRepository.hpp"
 #include "repositories/UserRepository.hpp"
 #include "security/Auth.hpp"
@@ -544,10 +545,11 @@ protected:
 
     /// The free-text fields templates/latex/fno_910/v1/schema.json requires
     /// and the database cannot hold (see TaxController.hpp's header).
+    /// `tax_words` is NOT among them since P3: the amount in words is
+    /// derived from the calculation's own total_tiyn, and supplying it is a
+    /// 422 (FilingRejectsSuppliedAmountsInWordsAndDerivesThem).
     static json fno910_extra() {
-        return json{{"tax_words", "Двадцать тысяч тенге 00 тиын"},
-                    {"director", "Ахметов Ерлан Серикович"},
-                    {"accountant", "Серикбаева Айгерим Кайратовна"}};
+        return json{{"director", "Ахметов Ерлан Серикович"}, {"accountant", "Серикбаева Айгерим Кайратовна"}};
     }
 
     /// Same for fno_300. `sales_tenge` is deliberately NOT here: the
@@ -555,9 +557,7 @@ protected:
     /// `result_snapshot.income_tiyn`, and supplying it is a 422 (see
     /// FilingRejectsASuppliedSalesTurnoverAndDerivesItFromTheLedger).
     static json fno300_extra() {
-        return json{{"balance_words", "Ноль тенге 00 тиын"},
-                    {"director", "Ахметов Ерлан Серикович"},
-                    {"accountant", "Серикбаева Айгерим Кайратовна"}};
+        return json{{"director", "Ахметов Ерлан Серикович"}, {"accountant", "Серикбаева Айгерим Кайратовна"}};
     }
 
     /// POST /tax/filings through the controller, returning the new filing id
@@ -892,6 +892,102 @@ TEST_F(TaxFilingApiTest, FilingRefusesAVatCalculationWithoutTheTurnoverFigure) {
     EXPECT_NE(payload["errors"][0]["message"].get<std::string>().find("income_tiyn"), std::string::npos);
     Tax::TaxFilingRepository filings;
     EXPECT_EQ(filings.count_in_org(org.id), 0);
+}
+
+// P3: `tax_words`/`balance_words` used to be caller-supplied, which is the
+// same forgery surface as the balance itself — a PDF spelling out one sum
+// beside an XML stating another. Both are derived now, from the very
+// integers the XML is built from, so supplying either is a 422 and the
+// filed artifacts cannot disagree.
+TEST_F(TaxFilingApiTest, FilingRejectsSuppliedAmountsInWordsAndDerivesThem) {
+    auto org = seed_org("777180000020", "Filing Words Org LLP");
+    auto accountant = member("filing-acc20@example.com", org.id, "accountant");
+    auto user = seed_user("filing-journal20@example.com");
+    post_income(org.id, user.id, "2026-02-01", "500000.00");
+
+    Tax::TaxService svc;
+    auto calc = svc.calculate_snr(org.id, "2026-01-01", "2026-06-30");
+
+    const long before = queue_depth();
+    json malicious = fno910_extra();
+    malicious["tax_words"] = "Один тенге 00 тиын";
+    auto bad_req =
+        authed_json(accountant, json{{"kind", "910.00"}, {"calculation_id", calc.id}, {"document_input", malicious}});
+    HttpResponsePtr bad_resp;
+    ctrl.createFiling(bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; });
+    ASSERT_NE(bad_resp, nullptr);
+    ASSERT_EQ(bad_resp->statusCode(), k422UnprocessableEntity) << bad_resp->body();
+    EXPECT_EQ(body_of(bad_resp)["errors"][0]["field"].get<std::string>(), "tax_words");
+    EXPECT_EQ(body_of(bad_resp)["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    Tax::TaxFilingRepository filings;
+    EXPECT_EQ(filings.count_in_org(org.id), 0);
+    EXPECT_EQ(queue_depth(), before);
+
+    // Without it the filing succeeds and the words match the very integer
+    // the XML's tax figure comes from.
+    auto filing_id = create_filing(accountant, "910.00", calc.id, fno910_extra());
+    ASSERT_TRUE(filing_id.has_value());
+    auto filing = filings.find_in_org(*filing_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(filing);
+    ASSERT_TRUE(filing->document_id);
+    Ledger::DocumentRepository documents;
+    auto document = documents.find_in_org(*filing->document_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(document);
+    ASSERT_TRUE(document->input_snapshot);
+    EXPECT_EQ((*document->input_snapshot)["tax_words"].get<std::string>(), Money::to_words_ru(calc.total_tiyn));
+}
+
+// The ФНО 300.00 counterpart, including the case that would have crashed a
+// naive implementation: a VAT REFUND position stores a negative balance, and
+// Money::to_words_ru rejects negatives by contract. The sign belongs to
+// `balance_kind`; the words spell out the MAGNITUDE.
+TEST_F(TaxFilingApiTest, FilingSpellsOutAVatRefundBalanceAsItsMagnitude) {
+    auto org = seed_org("777180000021", "Filing Refund Org LLP");
+    auto accountant = member("filing-acc21@example.com", org.id, "accountant");
+    auto user = seed_user("filing-journal21@example.com");
+
+    // A purchase with input VAT and no sales at all: accrued 0, deductible
+    // 24.00 ₸, so the balance is -2400 tiyn — к возврату.
+    Ledger::JournalService journal_svc;
+    auto purchase = journal_svc.create_draft(
+        org.id,
+        user.id,
+        "2026-02-05",
+        "Inventory purchase with input VAT",
+        {line("1330", "debit", "224.00", std::string("24.00")), line("1030", "credit", "224.00")});
+    journal_svc.post(org.id, purchase.id);
+
+    Tax::TaxService svc;
+    auto calc = svc.calculate_vat(org.id, "2026-01-01", "2026-03-31");
+    ASSERT_LT(calc.total_tiyn, 0);
+
+    // A supplied balance_words is rejected here too.
+    json malicious = fno300_extra();
+    malicious["balance_words"] = "Ноль тенге 00 тиын";
+    auto bad_req =
+        authed_json(accountant, json{{"kind", "300.00"}, {"calculation_id", calc.id}, {"document_input", malicious}});
+    HttpResponsePtr bad_resp;
+    ctrl.createFiling(bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; });
+    ASSERT_NE(bad_resp, nullptr);
+    ASSERT_EQ(bad_resp->statusCode(), k422UnprocessableEntity) << bad_resp->body();
+    EXPECT_EQ(body_of(bad_resp)["errors"][0]["field"].get<std::string>(), "balance_words");
+    EXPECT_EQ(body_of(bad_resp)["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+
+    auto filing_id = create_filing(accountant, "300.00", calc.id, fno300_extra());
+    ASSERT_TRUE(filing_id.has_value());
+    Tax::TaxFilingRepository filings;
+    auto filing = filings.find_in_org(*filing_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(filing);
+    ASSERT_TRUE(filing->document_id);
+    Ledger::DocumentRepository documents;
+    auto document = documents.find_in_org(*filing->document_id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(document);
+    ASSERT_TRUE(document->input_snapshot);
+    const json& stored = *document->input_snapshot;
+    EXPECT_EQ(stored["balance_kind"].get<std::string>(), "to_refund");
+    // The magnitude, spelled out — no minus sign, and no uncaught throw.
+    EXPECT_EQ(stored["balance_words"].get<std::string>(), Money::to_words_ru(-calc.total_tiyn));
+    EXPECT_EQ(stored["balance_words"].get<std::string>().find('-'), std::string::npos);
 }
 
 TEST_F(TaxFilingApiTest, FilingViewerForbidden) {

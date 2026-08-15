@@ -515,8 +515,9 @@ TEST_F(HrApiTest, GenerateContractDocumentAcceptedAndEnqueues) {
     Hr::HrRepository repo;
     auto contract = repo.create_contract(org.id, employee.id, "17", "2026-01-10", "2026-01-15");
 
+    // `salary_words`/`salary_words_kk` are NOT here: after P3 both are
+    // derived from employees.salary_tiyn, and sending either is a 422.
     json extra = {{"employer", {{"director", "Ахметов Ерлан Серикович"}}},
-                  {"salary_words", "Триста тысяч тенге 00 тиын"},
                   {"work_schedule", "Пятидневная рабочая неделя"}};
     auto req = authed_json(accountant, extra);
     HttpResponsePtr resp;
@@ -538,6 +539,13 @@ TEST_F(HrApiTest, GenerateContractDocumentAcceptedAndEnqueues) {
     EXPECT_EQ((*doc->input_snapshot)["salary_tenge"].get<std::string>(), "300000.00");
     EXPECT_EQ((*doc->input_snapshot)["employer"]["director"].get<std::string>(), "Ахметов Ерлан Серикович");
     EXPECT_EQ((*doc->input_snapshot)["employer"]["name"].get<std::string>(), org.name);
+    // Both spellings come from the ONE integer salary_tenge was formatted
+    // from, so the digits and the two texts cannot disagree; the Kazakh one
+    // is a distinct string, not a copy of the Russian.
+    EXPECT_EQ((*doc->input_snapshot)["salary_words"].get<std::string>(), "Триста тысяч тенге 00 тиын");
+    EXPECT_FALSE((*doc->input_snapshot)["salary_words_kk"].get<std::string>().empty());
+    EXPECT_NE((*doc->input_snapshot)["salary_words_kk"].get<std::string>(),
+              (*doc->input_snapshot)["salary_words"].get<std::string>());
 
     ASSERT_EQ(queue_depth(), 1);
 }
@@ -585,7 +593,8 @@ TEST_F(HrApiTest, GenerateContractDocumentMissingRequiredFieldRejected) {
     Hr::HrRepository repo;
     auto contract = repo.create_contract(org.id, employee.id, "1", "2026-01-10", "2026-01-15");
 
-    // No body -> salary_words/work_schedule/employer.director all missing.
+    // No body -> work_schedule/employer.director missing (the two *_words
+    // fields the server now derives are already present).
     auto req = authed(accountant, Post);
     HttpResponsePtr resp;
     ctrl.generateContractDocument(
@@ -625,7 +634,6 @@ TEST_F(HrApiTest, GenerateContractDocumentOverrideSalaryRejectedAndValueUnchange
     auto contract = repo.create_contract(org.id, employee.id, "1", "2026-01-10", "2026-01-15");
 
     json malicious = {{"salary_tenge", "999999.00"},
-                      {"salary_words", "Триста тысяч тенге 00 тиын"},
                       {"work_schedule", "Пятидневная рабочая неделя"},
                       {"employer", {{"director", "Ахметов Ерлан Серикович"}}}};
     auto bad_req = authed_json(accountant, malicious);
@@ -639,8 +647,7 @@ TEST_F(HrApiTest, GenerateContractDocumentOverrideSalaryRejectedAndValueUnchange
     EXPECT_EQ(bad_body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
     EXPECT_EQ(queue_depth(), 0);
 
-    json legit = {{"salary_words", "Триста тысяч тенге 00 тиын"},
-                  {"work_schedule", "Пятидневная рабочая неделя"},
+    json legit = {{"work_schedule", "Пятидневная рабочая неделя"},
                   {"employer", {{"director", "Ахметов Ерлан Серикович"}}}};
     auto good_req = authed_json(accountant, legit);
     HttpResponsePtr good_resp;
@@ -656,6 +663,34 @@ TEST_F(HrApiTest, GenerateContractDocumentOverrideSalaryRejectedAndValueUnchange
     ASSERT_TRUE(doc.has_value());
     ASSERT_TRUE(doc->input_snapshot.has_value());
     EXPECT_EQ((*doc->input_snapshot)["salary_tenge"].get<std::string>(), "300000.00");
+}
+
+// P3: the amount spelled out in words used to be caller-supplied, so a
+// contract could print "300000.00" next to "Один тенге 00 тиын". Both
+// spellings are server-derived now, which makes either of them in the body a
+// 422 on the existing allowlist — no new mechanism, one fewer allowlisted
+// field.
+TEST_F(HrApiTest, GenerateContractDocumentRejectsClientSuppliedSalaryWords) {
+    auto org = seed_org("777150000039", "Contract Words Org LLP");
+    auto accountant = member("accountant30@example.com", org.id, "accountant");
+    auto employee = seed_employee(org.id, "156312191013");
+
+    Hr::HrRepository repo;
+    auto contract = repo.create_contract(org.id, employee.id, "2", "2026-01-10", "2026-01-15");
+
+    json body = {{"salary_words", "Один тенге 00 тиын"},
+                 {"work_schedule", "Пятидневная рабочая неделя"},
+                 {"employer", {{"director", "Ахметов Ерлан Серикович"}}}};
+    auto req = authed_json(accountant, body);
+    HttpResponsePtr resp;
+    ctrl.generateContractDocument(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, contract.id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto payload = json::parse(std::string(resp->body()));
+    EXPECT_EQ(payload["errors"][0]["field"].get<std::string>(), "salary_words");
+    EXPECT_EQ(payload["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    EXPECT_EQ(queue_depth(), 0);
 }
 
 TEST_F(HrApiTest, GenerateOrderDocumentMalformedIdRejected) {

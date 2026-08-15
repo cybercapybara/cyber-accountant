@@ -59,17 +59,17 @@
  *     thresholds still come exclusively from `tax_rates`/`tax_constants`.
  *
  * generate-document: same base-input + ALLOWLISTED-body-merge design
- * HrController documents at length — templates/latex/payslip/v1/schema.json
- * requires `net_words` (the net amount spelled out in Russian), and this
- * codebase has no money-to-words converter anywhere, so that field CANNOT be
- * derived. The handler builds every OTHER field the schema requires from the
- * payslip + employee + organization, validates an OPTIONAL request body
- * against payslip_allowed_extra_fields() — which holds exactly `net_words`,
- * the one field with no authoritative source — and only then deep-merges it
- * on top (RFC 7396 `merge_patch`) and validates against the template's JSON
- * Schema exactly like POST /documents/generate. A caller that omits
- * `net_words` gets the same `422 schema_validation_failed`, never a broken
- * PDF.
+ * HrController documents at length. templates/latex/payslip/v1/schema.json
+ * requires `net_words` (the net amount spelled out in Russian); until P3
+ * this codebase had no money-to-words converter, so that one field had to
+ * come from the caller. It no longer does — Money::to_words_ru
+ * (src/money/AmountInWords.hpp) derives it from `payslip.net`, the same
+ * integer `net` is formatted from, so the digits and the words on a payslip
+ * cannot disagree. payslip_allowed_extra_fields() is consequently EMPTY:
+ * the handler still validates an OPTIONAL request body against it (an
+ * empty/absent body is the only body that passes) and deep-merges it on top
+ * (RFC 7396 `merge_patch`) before validating against the template's JSON
+ * Schema exactly like POST /documents/generate.
  *
  * Final fix round (security): that allowlist is load-bearing, not cosmetic.
  * This handler used to merge_patch the raw request body with no allowlist at
@@ -118,6 +118,7 @@
 #include "jobs/Jobs.hpp"
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalService.hpp"
+#include "money/AmountInWords.hpp"
 #include "payroll/PayrollRepository.hpp"
 #include "payroll/PayrollService.hpp"
 #include "payroll/Payslip.hpp"
@@ -155,17 +156,12 @@ public:
     /// Docgen template slug for a payslip (templates/latex/payslip/v1/).
     static constexpr const char* kPayslipSlug = "payslip";
 
-    /// The ONLY field templates/latex/payslip/v1/schema.json requires that
-    /// this codebase cannot derive: the net amount spelled out in Russian
-    /// (there is no money-to-words converter anywhere here). Every other
-    /// field in that schema — period_label, employer.name/bin,
-    /// employee.full_name/iin/position, and all nine money figures — comes
-    /// from the payroll run, the employee record or the organization, so
-    /// none of them may be overridden by the caller: this IS the allowlist
-    /// Api::Validation::merge_allowed_extra() enforces, and anything else in
-    /// the body is a 422 `not_allowed_override` (see file header).
+    /// Пустой: после P3 у расчётного листка не осталось ни одного поля,
+    /// которое клиент вправе прислать — `net_words` выводится сервером из
+    /// payslip.net. Любой ключ в теле запроса теперь 422
+    /// not_allowed_override (Api::Validation::merge_allowed_extra).
     static const std::vector<std::string>& payslip_allowed_extra_fields() {
-        static const std::vector<std::string> kAllowed = {"net_words"};
+        static const std::vector<std::string> kAllowed = {};
         return kAllowed;
     }
 
@@ -379,7 +375,8 @@ public:
     // -------------------------------------------------------------------
     // POST /api/v1/payroll-runs/{id}/payslips/{employee_id}/generate-document
     // — accountant/owner only. See file header for the base-input +
-    // optional-body-merge design and why `net_words` must come from the body.
+    // optional-body-merge design and why, after P3, the caller may supply
+    // no key at all.
     // -------------------------------------------------------------------
     void generatePayslip(const HttpRequestPtr& req,
                          std::function<void(const HttpResponsePtr&)>&& callback,
@@ -456,12 +453,19 @@ public:
             {"so", Ledger::format_tiyn(payslip->so)},
             {"osms", Ledger::format_tiyn(payslip->osms)},
             {"social_tax", Ledger::format_tiyn(payslip->social_tax)},
+            // Cannot throw here: PayrollService::calculate_run refuses a
+            // gross above Payroll::kMaxGrossTiyn, which is the same bound
+            // as Money::kMaxTiyn, and `net` is never larger than gross nor
+            // negative — so the stored payslip is always inside
+            // to_words_ru's contract.
+            {"net_words", Money::to_words_ru(payslip->net)},
         };
-        // `net_words` is deliberately absent from the base — see file header
-        // — and is the only key the caller may supply. Everything above is
-        // authoritative (payslip/employee/organization columns), so an
-        // attempt to override any of it is rejected here with a 422 naming
-        // the field, BEFORE the merge mutates `input`.
+        // After P3 the caller may supply NO key at all: every field above,
+        // `net_words` included, is authoritative (payslip/employee/
+        // organization columns, or derived from them), so any key in the
+        // body is rejected here with a 422 naming the field, BEFORE the
+        // merge mutates `input`. The merge call stays because an
+        // empty/absent body must keep working.
         if (!Validation::merge_allowed_extra(input, extra, payslip_allowed_extra_fields(), callback))
             return;
 

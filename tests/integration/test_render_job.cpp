@@ -129,6 +129,12 @@ protected:
                                {"unit", "шт"},
                                {"price", "1000.00"},
                                {"amount", "1000.00"}}})},
+            // total_tiyn is REQUIRED by templates/latex/invoice/v1/schema.json
+            // since P3, and render_and_compile() runs
+            // TemplateRegistry::validate() strictly BEFORE normalize_input()
+            // — so a missing integer is a hard failure here, never a
+            // silently defaulted zero on a printed document.
+            {"total_tiyn", 100000},
             {"total", "1000.00"},
             {"total_words", "Одна тысяча тенге 00 тиын"},
         };

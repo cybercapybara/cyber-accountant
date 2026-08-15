@@ -38,6 +38,27 @@
  * on a bare say-so, so an unregistered or path-traversal-shaped slug can
  * never reach DocumentRepository::create() at all.
  *
+ * P3: that identity is only SAFE for the five primary-document slugs, and
+ * the templates on disk are not only those five. `payslip`, `fno_910`,
+ * `fno_300`, `hr_order` and `labor_contract` all resolve through the
+ * registry and used to pass straight through as a `doc_type` that
+ * `documents_doc_type_check` rejects — an INSERT-time constraint violation
+ * the caller saw as a 500 (the transaction rolls back, so no orphan row was
+ * ever left behind). `generate()` now gates the slug against
+ * Docgen::InputPolicy::generate_slugs() first and answers 422
+ * `unsupported_template`; each of those five templates is owned by the
+ * endpoint that has the authoritative data for it.
+ *
+ * P3, money: every printed money string on these documents is derived by
+ * the SERVER from an integer tiyn field (`total_tiyn` for invoice/avr/
+ * waybill, `totals.{amount,vat,with_vat}_tiyn` for tax_invoice) via
+ * Docgen::InputPolicy::apply_derived_amount(), and a client-supplied
+ * `total`/`total_words`/`totals.*` string is a 422 `not_allowed_override`.
+ * Honest scope: this makes the document's TOTAL line self-consistent (and,
+ * for a счёт-фактура, forces amount + vat == with_vat). The per-line
+ * `items[]` figures stay free-form and are NOT reconciled against that
+ * total — that is separate work, outside P3.
+ *
  * Cross-org reference decision (counterparty_id / link_entry_id, both
  * optional body fields): TREATED IDENTICALLY, both a 422 keyed to their own
  * field name, not a 404. Rationale: unlike a URL resource id (GET
@@ -94,6 +115,7 @@
 #include "api/HandlerSupport.hpp"
 #include "api/RequestUtils.hpp"
 #include "api/Validation.hpp"
+#include "docgen/InputPolicy.hpp"
 #include "docgen/TemplateRegistry.hpp"
 #include "jobs/Jobs.hpp"
 #include "ledger/CounterpartyRepository.hpp"
@@ -167,7 +189,7 @@ public:
         }
 
         const std::string template_slug = body["template_slug"].get<std::string>();
-        const json input = body.value("input", json::object());
+        const json client_input = body.value("input", json::object());
         const std::optional<std::string> counterparty_id =
             (body.contains("counterparty_id") && !body["counterparty_id"].is_null())
                 ? std::optional<std::string>(body["counterparty_id"].get<std::string>())
@@ -180,6 +202,24 @@ public:
         // Resolve + schema-validate the template BEFORE creating anything —
         // an unregistered/traversal-shaped slug and a schema mismatch both
         // surface as one 422 here, never reaching DocumentRepository.
+        //
+        // Слаг обязан быть из списка первички ДО обращения к реестру: он
+        // идёт в documents.doc_type дословно (см. шапку файла), а
+        // migrations/010_documents.sql разрешает там только эти пять
+        // значений. Без этой проверки существующий на диске, но не
+        // первичный шаблон (payslip, fno_910, fno_300, hr_order,
+        // labor_contract) проходил дальше и валился на
+        // documents_doc_type_check уже внутри INSERT — клиент получал 500
+        // вместо внятного 422 (дефект, найденный при релизе v0.3.1).
+        if (!Docgen::InputPolicy::input_is_caller_authored(template_slug)) {
+            callback(Validation::response_422("template_slug",
+                                              "unsupported_template",
+                                              "template '" + template_slug +
+                                                  "' is not generated through this endpoint — use the endpoint that "
+                                                  "owns it (tax filings, payroll payslips or HR documents)"));
+            return;
+        }
+
         Docgen::TemplateRegistry registry;
         auto info = registry.latest(template_slug);
         if (!info) {
@@ -187,6 +227,22 @@ public:
                 "template_slug", "unknown_template", "no template found for slug '" + template_slug + "'"));
             return;
         }
+
+        // Прописи и строковая сумма выводятся сервером из целого числа
+        // тиын и подставляются в `input` ДО schema-валидации: у этих
+        // шаблонов allowlist'а нет, весь объект приходит от клиента, и без
+        // деривации цифра и текст в одном документе могли разойтись.
+        // Гарантия ровно про ИТОГОВЫЕ строки — цифры позиций items[]
+        // остаются свободным текстом и с итогом не сверяются.
+        json input = client_input;
+        {
+            std::string bad_field, bad_code, bad_message;
+            if (!Docgen::InputPolicy::apply_derived_amount(template_slug, input, bad_field, bad_code, bad_message)) {
+                callback(Validation::response_422(bad_field, bad_code, bad_message));
+                return;
+            }
+        }
+
         if (auto err = Docgen::TemplateRegistry::validate(*info, input)) {
             callback(Validation::response_422("input", "schema_validation_failed", *err));
             return;
@@ -218,7 +274,10 @@ public:
 
         with_repo_errors(callback, "documents generate", [&] {
             Ledger::DocumentRepository documents;
-            // TODO(P2): map doc_type explicitly when a template slug diverges from documents.doc_type CHECK
+            // doc_type == slug is safe here because the slug gate above
+            // already restricted it to the five values documents_doc_type_check
+            // accepts (P3 — that check used to be the only thing catching a
+            // non-primary slug, and it did so as a 500).
             // input_snapshot is std::optional<nlohmann::json> — wrapped
             // explicitly (not passed as a bare `input`) because nlohmann::json's
             // own greedy converting-constructor template makes the implicit

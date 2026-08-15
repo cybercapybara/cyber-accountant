@@ -38,6 +38,7 @@
 #include "ledger/JournalEntry.hpp"
 #include "ledger/JournalRepository.hpp"
 #include "ledger/JournalService.hpp"
+#include "money/AmountInWords.hpp"
 #include "payroll/PayrollRepository.hpp"
 #include "payroll/PayrollService.hpp"
 #include "repositories/RoleRepository.hpp"
@@ -578,9 +579,10 @@ TEST_F(PayrollApiTest, GeneratePayslipDocumentQueuesRender) {
     auto run = seeded_run(org.id, 2026, 7, /*approve=*/false);
 
     const long before = queue_depth();
-    // net_words has no source in the database — it must come from the merge
-    // body or the template schema rejects the request (see the 422 test).
-    auto req = authed_json(accountant, json{{"net_words", "Сорок тысяч тенге 00 тиын"}});
+    // After P3 the caller supplies NOTHING: `net_words` is derived from the
+    // payslip's own net, and sending it is a 422 (see
+    // GeneratePayslipRejectsClientSuppliedNetWords).
+    auto req = authed_json(accountant, json::object());
     HttpResponsePtr resp;
     ctrl.generatePayslip(
         req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
@@ -592,13 +594,44 @@ TEST_F(PayrollApiTest, GeneratePayslipDocumentQueuesRender) {
     EXPECT_EQ(queue_depth(), before + 1);
 }
 
-TEST_F(PayrollApiTest, GeneratePayslipDocumentWithoutWordsUnprocessable) {
-    auto org = seed_org("777160000027", "Payroll Docgen 422 Org LLP");
+// P3 replaces the old "an empty body is a 422 because net_words is missing"
+// test: an empty body is now the ONLY valid body, and the words come from
+// the same integer `net` is formatted from, so a payslip whose digits and
+// words disagree is no longer expressible.
+TEST_F(PayrollApiTest, GeneratePayslipDerivesNetWordsFromTheStoredNet) {
+    auto org = seed_org("777160000027", "Payroll Docgen Words Org LLP");
     auto accountant = member("payroll-acc27@example.com", org.id, "accountant");
     auto employee = seed_employee(org.id, "156312191013");
     auto run = seeded_run(org.id, 2026, 8, /*approve=*/false);
 
+    Payroll::PayrollRepository payroll_repo;
+    auto payslips = payroll_repo.list_payslips(run, /*from_primary=*/true);
+    ASSERT_EQ(payslips.size(), 1U);
+    const std::string expected_words = Money::to_words_ru(payslips[0].net);
+
     auto req = authed_json(accountant, json::object());
+    HttpResponsePtr resp;
+    ctrl.generatePayslip(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k202Accepted) << resp->body();
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.find_in_org(body_of(resp)["document_id"].get<std::string>(), org.id, /*from_primary=*/true);
+    ASSERT_TRUE(doc.has_value());
+    ASSERT_TRUE(doc->input_snapshot.has_value());
+    EXPECT_EQ((*doc->input_snapshot)["net_words"].get<std::string>(), expected_words);
+    EXPECT_EQ((*doc->input_snapshot)["net"].get<std::string>(), Ledger::format_tiyn(payslips[0].net));
+}
+
+TEST_F(PayrollApiTest, GeneratePayslipRejectsClientSuppliedNetWords) {
+    auto org = seed_org("777160000031", "Payroll Docgen 422 Org LLP");
+    auto accountant = member("payroll-acc31@example.com", org.id, "accountant");
+    auto employee = seed_employee(org.id, "156312191013");
+    auto run = seeded_run(org.id, 2026, 12, /*approve=*/false);
+
+    const long before = queue_depth();
+    auto req = authed_json(accountant, json{{"net_words", "Один тенге 00 тиын"}});
     HttpResponsePtr resp;
     ctrl.generatePayslip(
         req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
@@ -607,7 +640,9 @@ TEST_F(PayrollApiTest, GeneratePayslipDocumentWithoutWordsUnprocessable) {
     auto errors = body_of(resp)["errors"];
     ASSERT_TRUE(errors.is_array());
     ASSERT_FALSE(errors.empty());
-    EXPECT_EQ(errors[0]["code"].get<std::string>(), "schema_validation_failed");
+    EXPECT_EQ(errors[0]["field"].get<std::string>(), "net_words");
+    EXPECT_EQ(errors[0]["code"].get<std::string>(), "not_allowed_override");
+    EXPECT_EQ(queue_depth(), before);
 }
 
 // Final fix round (security): the body merged onto a payslip's auto-derived
@@ -634,7 +669,7 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsAuthoritativeOverrideAndKeepsTheTru
     ASSERT_NE(true_net, "1.00");
 
     const long before = queue_depth();
-    json malicious = {{"net_words", "Один тенге 00 тиын"}, {"net", "1.00"}};
+    json malicious = {{"net", "1.00"}};
     auto bad_req = authed_json(accountant, malicious);
     HttpResponsePtr bad_resp;
     ctrl.generatePayslip(
@@ -649,7 +684,7 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsAuthoritativeOverrideAndKeepsTheTru
 
     // A nested authoritative field is caught at its own leaf, not waved
     // through because its parent object is not itself an allowlisted key.
-    json malicious_iin = {{"net_words", "x"}, {"employee", {{"iin", "999999999999"}}}};
+    json malicious_iin = {{"employee", {{"iin", "999999999999"}}}};
     auto iin_req = authed_json(accountant, malicious_iin);
     HttpResponsePtr iin_resp;
     ctrl.generatePayslip(
@@ -659,10 +694,10 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsAuthoritativeOverrideAndKeepsTheTru
     EXPECT_EQ(body_of(iin_resp)["errors"][0]["field"].get<std::string>(), "employee.iin");
     EXPECT_EQ(queue_depth(), before);
 
-    // The allowlisted free-text field alone still works, and the document
-    // that lands carries the figures the payroll run actually computed.
-    json legit = {{"net_words", "Сорок тысяч тенге 00 тиын"}};
-    auto good_req = authed_json(accountant, legit);
+    // An empty body — the only body the P3 allowlist accepts — still works,
+    // and the document that lands carries the figures the payroll run
+    // actually computed.
+    auto good_req = authed_json(accountant, json::object());
     HttpResponsePtr good_resp;
     ctrl.generatePayslip(
         good_req, [&](const HttpResponsePtr& r) { good_resp = r; }, run.id, employee.id);
@@ -678,7 +713,7 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsAuthoritativeOverrideAndKeepsTheTru
     EXPECT_EQ(stored["net"].get<std::string>(), true_net);
     EXPECT_EQ(stored["gross_tenge"].get<std::string>(), true_gross);
     EXPECT_EQ(stored["employee"]["iin"].get<std::string>(), "156312191013");
-    EXPECT_EQ(stored["net_words"].get<std::string>(), "Сорок тысяч тенге 00 тиын");
+    EXPECT_EQ(stored["net_words"].get<std::string>(), Money::to_words_ru(payslips[0].net));
 }
 
 TEST_F(PayrollApiTest, GeneratePayslipDocumentViewerForbidden) {
@@ -687,7 +722,7 @@ TEST_F(PayrollApiTest, GeneratePayslipDocumentViewerForbidden) {
     auto employee = seed_employee(org.id, "156312191013");
     auto run = seeded_run(org.id, 2026, 9, /*approve=*/false);
 
-    auto req = authed_json(viewer, json{{"net_words", "x"}});
+    auto req = authed_json(viewer, json::object());
     HttpResponsePtr resp;
     ctrl.generatePayslip(
         req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
@@ -704,7 +739,7 @@ TEST_F(PayrollApiTest, GeneratePayslipDocumentForeignEmployeeNotFound) {
     auto run = seeded_run(org.id, 2026, 10, /*approve=*/false);
     auto latecomer = seed_employee(org.id, "988916681773");
 
-    auto req = authed_json(accountant, json{{"net_words", "x"}});
+    auto req = authed_json(accountant, json::object());
     HttpResponsePtr resp;
     ctrl.generatePayslip(
         req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, latecomer.id);

@@ -108,13 +108,19 @@
  * The printable form goes through the SAME base-input + ALLOWLISTED-body-
  * merge design HrController documents: templates/latex/fno_910/v1/schema.json
  * and fno_300/v1/schema.json both require free-text fields this codebase has
- * no column for — `director`, `accountant`, and the amount spelled out in
- * words (`tax_words`/`balance_words`; there is no money-to-words converter
- * anywhere here). Those — and ONLY those, per
+ * no column for — `director` and `accountant`. Those — and ONLY those, per
  * fno_910_allowed_extra_fields()/fno_300_allowed_extra_fields() — must
  * arrive in `document_input`, which is deep-merged (RFC 7396 `merge_patch`)
  * over the derived base before the schema check; omitting one yields the
  * same `422 schema_validation_failed` DocgenController already produces.
+ *
+ * P3: the amount spelled out in words (`tax_words` on 910.00,
+ * `balance_words` on 300.00) used to be on those allowlists, on the premise
+ * that no money-to-words converter existed here. One does now
+ * (src/money/AmountInWords.hpp), so both are DERIVED in build_form_input()
+ * from the very integers the XML filing is built from, and a caller that
+ * supplies either gets a 422 `not_allowed_override`. A declaration whose PDF
+ * spells out one sum while its XML states another is no longer expressible.
  *
  * fno_300's `sales_tenge` (the revenue TURNOVER behind the VAT) is NOT one
  * of them, though an earlier round of this fix wrongly treated it as one:
@@ -168,6 +174,7 @@
 #include "ledger/Document.hpp"
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalService.hpp"
+#include "money/AmountInWords.hpp"
 #include "storage/Storage.hpp"
 #include "tax/Fno300.hpp"
 #include "tax/Fno910.hpp"
@@ -229,15 +236,18 @@ public:
 
     /// The free-text fields templates/latex/fno_910/v1/schema.json requires
     /// that NOTHING in this database can supply: the two signatory names
-    /// (Tenancy::Organization has no director/accountant column) and the tax
-    /// amount spelled out in Russian (no money-to-words converter exists
-    /// here). This IS the allowlist for `document_input` — the org's bin/
-    /// name, the period, `income_tenge`, `rate_percent` and `tax_tenge` all
-    /// come from the calculation and the organization row, so a caller may
-    /// never overwrite them in a document that sits next to the XML filing
-    /// of the same figures (see file header).
+    /// (Tenancy::Organization has no director/accountant column). This IS
+    /// the allowlist for `document_input` — the org's bin/name, the period,
+    /// `income_tenge`, `rate_percent`, `tax_tenge` and (since P3)
+    /// `tax_words` all come from the calculation and the organization row,
+    /// so a caller may never overwrite them in a document that sits next to
+    /// the XML filing of the same figures (see file header).
     static const std::vector<std::string>& fno_910_allowed_extra_fields() {
-        static const std::vector<std::string> kAllowed = {"tax_words", "director", "accountant"};
+        // `tax_words` убран (P3 §3.5): сумма прописью однозначно выводится
+        // из calc.total_tiyn, поэтому она серверная, а присланная клиентом
+        // теперь получает 422 not_allowed_override — тем же механизмом,
+        // которым здесь уже защищены income_tenge/rate_percent/tax_tenge.
+        static const std::vector<std::string> kAllowed = {"director", "accountant"};
         return kAllowed;
     }
 
@@ -255,7 +265,10 @@ public:
     /// server-derived like every other amount on this form and a caller
     /// declaring their own revenue turnover on a legal tax filing is a 422.
     static const std::vector<std::string>& fno_300_allowed_extra_fields() {
-        static const std::vector<std::string> kAllowed = {"balance_words", "director", "accountant"};
+        // `balance_words` убран (P3 §3.5) по той же причине, что и
+        // `tax_words` у 910.00: пропись выводится из balance_tiyn, а не
+        // объявляется декларантом.
+        static const std::vector<std::string> kAllowed = {"director", "accountant"};
         return kAllowed;
     }
 
@@ -941,62 +954,84 @@ private:
         return true;
     }
 
-    /// Everything the ФНО print template can be derived from. Fields the
-    /// database genuinely does not hold (director/accountant/*_words, and
-    /// fno_300's sales_tenge) are deliberately ABSENT so the template's own
-    /// JSON Schema demands them from `document_input` — see file header.
+    /// Everything the ФНО print template can be derived from. The only
+    /// fields the database genuinely does not hold — `director` and
+    /// `accountant` — are deliberately ABSENT so the template's own JSON
+    /// Schema demands them from `document_input` (see file header). The
+    /// amount in words is NO LONGER one of them: `tax_words`/`balance_words`
+    /// are derived here from the same integers the XML filing uses, so the
+    /// printed declaration and the filed XML can no longer disagree.
     ///
     /// @return nullopt, with @p missing_key naming the offending
     ///         `result_snapshot` key, when the stored calculation cannot
     ///         supply a figure this form requires (see snapshot_int()).
+    ///         `missing_key` is `amount_out_of_range` when a stored amount is
+    ///         outside Money::kMaxTiyn: Money::to_words_ru throws on that,
+    ///         and this function runs BEFORE the try/catch around
+    ///         build_form_xml, so an escaping throw would reach the client as
+    ///         a 500 instead of the 422 `incomplete_calculation` a
+    ///         non-renderable stored calculation deserves.
     static std::optional<json> build_form_input(const std::string& filing_kind,
                                                 const Tax::Calculation& calc,
                                                 const Tenancy::Organization& org,
                                                 std::string& missing_key) {
-        const std::string year = calc.period_from.substr(0, 4);
-        json input = {
-            {"org", {{"bin", org.bin}, {"name", org.name}}},
-            {"signed_on", iso_to_ddmmyyyy(today_iso())},
-        };
-        if (filing_kind == Tax::FilingKind::kFno910) {
+        try {
+            const std::string year = calc.period_from.substr(0, 4);
+            json input = {
+                {"org", {{"bin", org.bin}, {"name", org.name}}},
+                {"signed_on", iso_to_ddmmyyyy(today_iso())},
+            };
+            if (filing_kind == Tax::FilingKind::kFno910) {
+                long long income_tiyn = 0;
+                long long rate_bp = 0;
+                if (!snapshot_int(calc, "income_tiyn", income_tiyn, missing_key) ||
+                    !snapshot_int(calc, "rate_bp", rate_bp, missing_key))
+                    return std::nullopt;
+                input["period"] = {{"year", year}, {"half", std::to_string(half_of(calc.period_from))}};
+                input["income_tenge"] = Ledger::format_tiyn(income_tiyn);
+                input["rate_percent"] = format_bp_percent(rate_bp);
+                input["tax_tenge"] = Ledger::format_tiyn(calc.total_tiyn);
+                input["tax_words"] = Money::to_words_ru(calc.total_tiyn);
+                // Direct-initialized, never `return input;`: copy-initializing a
+                // std::optional<nlohmann::json> from a json is ambiguous (the
+                // optional's converting constructor and json's own conversion
+                // operator are both user-defined conversions).
+                return std::optional<json>(std::move(input));
+            }
+            long long accrued_tiyn = 0;
+            long long deductible_tiyn = 0;
+            long long balance_tiyn = 0;
+            // `income_tiyn` is the revenue turnover behind the VAT, snapshotted
+            // by calculate_vat — read through the same required-key helper as
+            // every other figure, so a snapshot without it is a 422 naming the
+            // key, never a silently-filed 0 ₸ turnover.
             long long income_tiyn = 0;
-            long long rate_bp = 0;
-            if (!snapshot_int(calc, "income_tiyn", income_tiyn, missing_key) ||
-                !snapshot_int(calc, "rate_bp", rate_bp, missing_key))
+            if (!snapshot_int(calc, "accrued_tiyn", accrued_tiyn, missing_key) ||
+                !snapshot_int(calc, "deductible_tiyn", deductible_tiyn, missing_key) ||
+                !snapshot_int(calc, "balance_tiyn", balance_tiyn, missing_key) ||
+                !snapshot_int(calc, "income_tiyn", income_tiyn, missing_key))
                 return std::nullopt;
-            input["period"] = {{"year", year}, {"half", std::to_string(half_of(calc.period_from))}};
-            input["income_tenge"] = Ledger::format_tiyn(income_tiyn);
-            input["rate_percent"] = format_bp_percent(rate_bp);
-            input["tax_tenge"] = Ledger::format_tiyn(calc.total_tiyn);
-            // Direct-initialized, never `return input;`: copy-initializing a
-            // std::optional<nlohmann::json> from a json is ambiguous (the
-            // optional's converting constructor and json's own conversion
-            // operator are both user-defined conversions).
+            input["period"] = {{"year", year}, {"quarter", std::to_string(quarter_of(calc.period_from))}};
+            input["sales_tenge"] = Ledger::format_tiyn(income_tiyn);
+            input["vat_charged_tenge"] = Ledger::format_tiyn(accrued_tiyn);
+            input["vat_credited_tenge"] = Ledger::format_tiyn(deductible_tiyn);
+            // format_tiyn rejects negatives by contract, and a negative balance is
+            // a normal refund position — the magnitude goes in the amount, the
+            // direction in balance_kind (the template's own enum).
+            input["balance_tenge"] = Ledger::format_tiyn(balance_tiyn < 0 ? -balance_tiyn : balance_tiyn);
+            input["balance_kind"] = balance_tiyn < 0 ? "to_refund" : "to_pay";
+            // Модуль, как и balance_tenge строкой выше: знак несёт balance_kind,
+            // а to_words_ru принимает только неотрицательное. Без этого первая
+            // же декларация с НДС к возврату уронила бы рендер-джобу
+            // необработанным std::invalid_argument.
+            input["balance_words"] = Money::to_words_ru(balance_tiyn < 0 ? -balance_tiyn : balance_tiyn);
             return std::optional<json>(std::move(input));
-        }
-        long long accrued_tiyn = 0;
-        long long deductible_tiyn = 0;
-        long long balance_tiyn = 0;
-        // `income_tiyn` is the revenue turnover behind the VAT, snapshotted
-        // by calculate_vat — read through the same required-key helper as
-        // every other figure, so a snapshot without it is a 422 naming the
-        // key, never a silently-filed 0 ₸ turnover.
-        long long income_tiyn = 0;
-        if (!snapshot_int(calc, "accrued_tiyn", accrued_tiyn, missing_key) ||
-            !snapshot_int(calc, "deductible_tiyn", deductible_tiyn, missing_key) ||
-            !snapshot_int(calc, "balance_tiyn", balance_tiyn, missing_key) ||
-            !snapshot_int(calc, "income_tiyn", income_tiyn, missing_key))
+        } catch (const std::exception& e) {
+            spdlog::error(
+                "tax filings: calculation {} cannot be rendered as form {}: {}", calc.id, filing_kind, e.what());
+            missing_key = "amount_out_of_range";
             return std::nullopt;
-        input["period"] = {{"year", year}, {"quarter", std::to_string(quarter_of(calc.period_from))}};
-        input["sales_tenge"] = Ledger::format_tiyn(income_tiyn);
-        input["vat_charged_tenge"] = Ledger::format_tiyn(accrued_tiyn);
-        input["vat_credited_tenge"] = Ledger::format_tiyn(deductible_tiyn);
-        // format_tiyn rejects negatives by contract, and a negative balance is
-        // a normal refund position — the magnitude goes in the amount, the
-        // direction in balance_kind (the template's own enum).
-        input["balance_tenge"] = Ledger::format_tiyn(balance_tiyn < 0 ? -balance_tiyn : balance_tiyn);
-        input["balance_kind"] = balance_tiyn < 0 ? "to_refund" : "to_pay";
-        return std::optional<json>(std::move(input));
+        }
     }
 
     /// Basis points -> a percent string with no trailing noise: 400 -> "4",

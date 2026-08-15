@@ -46,11 +46,13 @@
  * templates' schemas (templates/latex/hr_order/v1/schema.json,
  * .../labor_contract/v1/schema.json) require several free-text fields this
  * codebase has no column for at all — `director`, `reason`, `details`,
- * `employer.address`, `employee.address`, `salary_words`, `work_schedule`,
+ * `employer.address`, `employee.address`, `work_schedule`,
  * `probation_months`. There is no organization "director" field
- * (Tenancy::Organization) and no money-to-words converter anywhere in this
- * codebase, so those cannot be auto-derived. Each generate-document handler
- * therefore: (1) builds a BASE input object from what IS on file (the
+ * (Tenancy::Organization), so those cannot be auto-derived. The two amounts
+ * in words (`salary_words`, `salary_words_kk`) USED to be in that list; P3
+ * derives both from employees.salary_tiyn instead, so the contract's digits
+ * and its two spelled-out amounts cannot disagree. Each generate-document
+ * handler therefore: (1) builds a BASE input object from what IS on file (the
  * order/contract row, the referenced employee, the organization's
  * name/bin), (2) validates an OPTIONAL request body against an explicit
  * ALLOWLIST of exactly those free-text field names
@@ -120,6 +122,7 @@
 #include "jobs/Jobs.hpp"
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalService.hpp"
+#include "money/AmountInWords.hpp"
 #include "tenancy/OrgContext.hpp"
 #include "tenancy/Organization.hpp"
 #include "tenancy/OrganizationRepository.hpp"
@@ -482,6 +485,27 @@ public:
         if (found_contract->ends_on)
             input["ends_on"] = iso_to_ddmmyyyy(*found_contract->ends_on);
 
+        // Обе прописи выводятся из ОДНОГО целого employees.salary_tiyn —
+        // того же, из которого выше собран salary_tenge, — так что цифра и
+        // два текста в договоре не могут разойтись. `salary_words_kk` —
+        // обязательное поле схемы labor_contract (P3), без него
+        // TemplateRegistry::validate отдал бы 422 на каждом договоре.
+        //
+        // try/catch не украшение: Ledger::parse_tiyn принимает до 16 цифр
+        // целой части, то есть оклад МОЖЕТ быть сохранён выше
+        // Money::kMaxTiyn, и тогда to_words_ru бросает std::out_of_range.
+        // Без перехвата это был бы 500 на корректном по форме запросе.
+        try {
+            input["salary_words"] = Money::to_words_ru(resolved->employee.salary_tiyn);
+            input["salary_words_kk"] = Money::to_words_kk(resolved->employee.salary_tiyn);
+        } catch (const std::exception& e) {
+            callback(Validation::response_422(
+                "salary_tiyn",
+                "amount_out_of_range",
+                "the employee's stored salary cannot be spelled out: " + std::string(e.what())));
+            return;
+        }
+
         if (!Validation::merge_allowed_extra(input, extra, labor_contract_allowed_extra_fields(), callback))
             return;
 
@@ -662,13 +686,14 @@ private:
     /// dot-separated for fields nested under employer/employee — e.g.
     /// "employer.director" allows overriding ONLY that leaf, never the
     /// authoritative employer.name/employer.bin siblings.
+    ///
+    /// `salary_words` left this list in P3: it and `salary_words_kk` are
+    /// both derived from employees.salary_tiyn (see
+    /// generateContractDocument), so a caller supplying either now gets a
+    /// 422 not_allowed_override.
     static const std::vector<std::string>& labor_contract_allowed_extra_fields() {
-        static const std::vector<std::string> kAllowed = {"salary_words",
-                                                          "work_schedule",
-                                                          "probation_months",
-                                                          "employer.director",
-                                                          "employer.address",
-                                                          "employee.address"};
+        static const std::vector<std::string> kAllowed = {
+            "work_schedule", "probation_months", "employer.director", "employer.address", "employee.address"};
         return kAllowed;
     }
 
