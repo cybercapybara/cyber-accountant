@@ -32,13 +32,20 @@
  * method's comment for the exact mechanism.
  *
  * P3 task 11: удаление и аннулирование — remove() и void_document(). Что
- * из двух допустимо, решает НЕ статус, а has_posted_entry_link(): документ,
- * висящий на проведённой (или сторнированной) проводке, физически удалить
- * нельзя никогда — журнал append-only и правится только сторно. Аннулирование
- * живёт в колонках voided_at/voided_by_user_id/void_reason
+ * из двух допустимо, решает НЕ статус, а связь с проведённой (или
+ * сторнированной) проводкой: такой документ физически удалить нельзя
+ * никогда — журнал append-only и правится только сторно. Внутри remove()
+ * этот вопрос задаётся ПОД БЛОКИРОВКАМИ
+ * (linked_posted_entry_exists_locked() — там же разобрано, почему одной
+ * транзакции на READ COMMITTED мало и почему фильтр по статусу не может
+ * жить в блокирующем запросе); публичный has_posted_entry_link() — это
+ * снимок без блокировок для тех, кто ничего не удаляет.
+ * Аннулирование живёт в колонках voided_at/voided_by_user_id/void_reason
  * (migrations/019_document_voiding.sql), а не в значении `status`, чтобы не
- * стирать, был документ 'final' или 'sent'. Объекты в S3 ни один из двух путей
- * не удаляет — политика хранения записана в заголовке той миграции.
+ * стирать, был документ 'final' или 'sent'; аннулированный документ не
+ * удаляется вовсе (kVoided) — это запись аудита. Объекты в S3 ни один из
+ * двух путей не удаляет: у аннулирования это дизайн, у удаления — известная
+ * утечка с тикетом (issues/11).
  *
  * `status` values are NOT validated here — migrations/010_documents.sql's
  * CHECK constraint is the source of truth for the allowed set (spanning both
@@ -85,6 +92,7 @@ enum class DeleteOutcome {
     kNotFound,  ///< документа нет в этой организации
     kHasPostedEntries,  ///< есть связь с проведённой/сторнированной проводкой — только аннулирование
     kReferenced,  ///< на документ ссылается приказ или налоговая форма — только аннулирование
+    kVoided,  ///< документ уже аннулирован — удалять запись аудита нельзя
 };
 
 class DocumentRepository : public Tenancy::OrgCrudBase<DocumentRepository, Document, std::string> {
@@ -695,7 +703,10 @@ public:
      *          document_entries.document_id — ON DELETE CASCADE, черновик
      *          останется без основания, и это принято (факт удаления
      *          пишется в аудит вызывающим). Связь с ПРОВЕДЁННОЙ проводкой
-     *          проверяется в той же транзакции и даёт kHasPostedEntries.
+     *          даёт kHasPostedEntries, и проверка эта не просто «в той же
+     *          транзакции», а ПОД БЛОКИРОВКАМИ — одной транзакции на READ
+     *          COMMITTED недостаточно, см. linked_posted_entry_exists_locked().
+     *          Уже аннулированный документ не удаляется вовсе (kVoided).
      *
      *          hr_orders.document_id и tax_filings.document_id — NO ACTION
      *          (migrations/012_hr.sql, migrations/016_tax_filings.sql), и
@@ -708,21 +719,39 @@ public:
      *          из-за отложенного FK: он падает на COMMIT, то есть уже за
      *          пределами лямбды.
      *
-     *          Объекты в S3 этот метод не трогает — принятая политика
-     *          хранения, см. заголовок migrations/019_document_voiding.sql.
+     *          Объекты в S3 этот метод не трогает: удаляются только
+     *          метаданные, и объект остаётся в хранилище навсегда. Это
+     *          известная утечка с заведённым тикетом, а не забытый край —
+     *          https://github.com/cybercapybara/cyber-accountant/issues/11
+     *          (и заголовок migrations/019_document_voiding.sql).
      */
     DeleteOutcome remove(const std::string& org_id, const std::string& document_id) {
         try {
             return Database::get().execute_write([&](auto& txn) -> DeleteOutcome {
-                // Проверка живёт В ТОЙ ЖЕ транзакции, что и DELETE, а не в
-                // отдельном чтении перед ней. Иначе между «связи нет» и
-                // удалением успевает вклиниться проведение проводки, а
-                // document_entries.document_id — ON DELETE CASCADE, то есть
-                // связь исчезла бы МОЛЧА и проведённая проводка осталась бы
-                // без основания. Публичный has_posted_entry_link() выше
-                // отвечает на тот же вопрос вызывающим, которым не нужно
-                // удаление.
-                if (posted_link_exists(txn, org_id, document_id))
+                // (1) Запереть САМУ строку документа. Это не формальность:
+                //     FK-проверка вставки в document_entries берёт на
+                //     родительской строке KEY SHARE, а FOR UPDATE с ним
+                //     конфликтует — значит, пока мы держим эту блокировку,
+                //     новую связь (в том числе с уже проведённой проводкой)
+                //     под нами создать нельзя. Заодно строка даёт
+                //     существование и признак аннулирования, так что
+                //     отдельного чтения не нужно.
+                auto locked = txn.exec_params(
+                    "SELECT (voided_at IS NOT NULL) AS voided FROM documents "
+                    " WHERE id = $1 AND org_id = $2 FOR UPDATE",
+                    document_id,
+                    org_id);
+                if (locked.empty())
+                    return DeleteOutcome::kNotFound;
+                // Аннулированный документ не удаляется НИКОГДА: три колонки
+                // аннулирования — это запись аудита о сознательном решении
+                // человека, и позволить стереть её позже значит обессмыслить
+                // само аннулирование.
+                if (locked[0]["voided"].template as<bool>())
+                    return DeleteOutcome::kVoided;
+                // (2) Запереть все УЖЕ связанные проводки и только потом
+                //     смотреть на их статус.
+                if (linked_posted_entry_exists_locked(txn, org_id, document_id))
                     return DeleteOutcome::kHasPostedEntries;
                 auto r = txn.exec_params(
                     "DELETE FROM documents WHERE id = $1 AND org_id = $2 RETURNING id", document_id, org_id);
@@ -758,9 +787,10 @@ public:
     }
 
 private:
-    /// Единственная формулировка предиката «документ висит на проведённой
-    /// (или сторнированной) проводке» — вызывается и из чтения, и изнутри
-    /// транзакции удаления, чтобы две копии одного условия не разъехались.
+    /// Тот же предикат БЕЗ блокировок — снимок «на сейчас» для вызывающих,
+    /// которые ничего не удаляют (has_posted_entry_link()). Для решения
+    /// «удалять или нет» он НЕПРИГОДЕН: между ним и DELETE состояние меняется
+    /// — см. linked_posted_entry_exists_locked() ниже.
     /// Шаблон по типу транзакции: libpqxx отдаёт разные типы для work и
     /// read_transaction, и оба приходят сюда завёрнутыми в TracingTxn.
     template <typename Txn>
@@ -773,6 +803,57 @@ private:
             document_id,
             org_id);
         return r.at(0).at(0).template as<bool>();
+    }
+
+    /**
+     * @brief Тот же вопрос, но пригодный для решения об удалении: СНАЧАЛА
+     *        заблокировать все связанные проводки, ПОТОМ смотреть на статус.
+     *
+     * @details Почему статус НЕ фильтруется в SQL. execute_write работает на
+     *          READ COMMITTED (Database.hpp: SET TRANSACTION ISOLATION LEVEL
+     *          выдаётся только для уровня, отличного от ReadCommitted), и
+     *          очевидная форма
+     *
+     *              SELECT EXISTS (... WHERE je.status IN ('posted','reversed')
+     *                                 FOR SHARE OF je)
+     *
+     *          НЕ работает: планировщик опускает фильтр по статусу ниже узла
+     *          LockRows (проверено EXPLAIN на PostgreSQL 16 — `Filter:
+     *          (status = ANY ...)` сидит на Index Scan под LockRows), поэтому
+     *          ЧЕРНОВАЯ строка отсеивается до блокировки и не блокируется
+     *          вовсе. Ровно её и переводят в 'posted' между проверкой и
+     *          DELETE. Воспроизведено вживую: проверка вернула false,
+     *          конкурентная сессия провела проводку и закоммитилась, DELETE
+     *          прошёл — и проводка осталась без основания.
+     *
+     *          Поэтому предикат по статусу уезжает в C++: SQL блокирует ВСЕ
+     *          связанные проводки, какими бы они ни были, и конкурентный
+     *          UPDATE ... SET status='posted' ждёт нашего коммита. После
+     *          фикса та же сессия ждала 1.5 с вместо 4 мс — блокировка
+     *          действительно берётся.
+     *
+     *          Порядок блокировок здесь всегда «сначала documents, потом
+     *          journal_entries»; обратного порядка в дереве нет (проведение
+     *          трогает только journal_entries, а вставка связи берёт лишь
+     *          слабый KEY SHARE, который с нашим FOR SHARE не конфликтует).
+     *          Если взаимная блокировка всё же случится, PostgreSQL отдаст
+     *          40P01, а Retry::is_transient_pqxx_write её ретраит.
+     */
+    template <typename Txn>
+    static bool linked_posted_entry_exists_locked(Txn& txn, const std::string& org_id, const std::string& document_id) {
+        auto r = txn.exec_params(
+            "SELECT je.status FROM document_entries de "
+            "  JOIN journal_entries je ON je.id = de.entry_id "
+            " WHERE de.document_id = $1 AND de.org_id = $2 "
+            " FOR SHARE OF je",
+            document_id,
+            org_id);
+        for (const auto& row : r) {
+            const std::string status = row["status"].template as<std::string>();
+            if (status == "posted" || status == "reversed")
+                return true;
+        }
+        return false;
     }
 };
 

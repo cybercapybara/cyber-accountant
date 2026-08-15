@@ -2433,10 +2433,16 @@ export interface paths {
          *     `document_referenced`, not a 500: those foreign keys are NO ACTION, and
          *     the resulting SQLSTATE 23503 is translated into that conflict.
          *
+         *     An already-VOIDED document cannot be deleted either — 409
+         *     `document_voided`. Voiding is a deliberate audit act with an author and
+         *     a reason; letting a later delete erase it would defeat the purpose of
+         *     the three columns.
+         *
          *     Object-storage retention policy: the stored objects in S3 are NOT
-         *     removed — only the metadata is deleted. There is no reaper job in P3;
-         *     this is a stated policy (see the header of
-         *     `migrations/019_document_voiding.sql`), not an oversight.
+         *     removed — only the metadata is deleted. There is no reaper job in P3,
+         *     so a deleted document's object is orphaned permanently. This is a
+         *     known, tracked leak (cybercapybara/cyber-accountant#11), not an
+         *     oversight.
          *
          *     Write-gated per document (`hr_docs` for `doc_type=hr`, `documents`
          *     otherwise), checked after the row is located so another organization's
@@ -2481,7 +2487,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description document_has_posted_entries (linked to a posted/reversed journal entry) or document_referenced (an HR order or a tax filing points at it) — void it instead */
+                /** @description document_has_posted_entries (linked to a posted/reversed journal entry), document_referenced (an HR order or a tax filing points at it) — void it instead — or document_voided (an already-voided document is an audit record and is never deletable) */
                 409: {
                     headers: {
                         [name: string]: unknown;
@@ -2577,7 +2583,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description `reason` is blank after trimming */
+                /** @description `reason` is blank after trimming, or longer than 1000 characters */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -5901,7 +5907,7 @@ export interface components {
             render_queued: boolean;
         };
         VoidDocumentRequest: {
-            /** @description Why the document is being voided. Mandatory and non-blank after trimming: voiding without a reason is not a state, it is a lost audit record. Stored in documents.void_reason alongside voided_at and voided_by_user_id. */
+            /** @description Why the document is being voided. Mandatory and non-blank after trimming: voiding without a reason is not a state, it is a lost audit record. Stored TRIMMED in documents.void_reason alongside voided_at and voided_by_user_id. */
             reason: string;
         };
         JournalLine: {

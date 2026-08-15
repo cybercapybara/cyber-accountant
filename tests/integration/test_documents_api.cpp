@@ -54,6 +54,8 @@
 #include "repositories/UserRepository.hpp"
 #include "security/Auth.hpp"
 #include "storage/Storage.hpp"
+#include "tax/TaxCalculationRepository.hpp"
+#include "tax/TaxFilingRepository.hpp"
 #include "tenancy/OrgMemberRepository.hpp"
 #include "tenancy/OrganizationRepository.hpp"
 #include "test_helpers.hpp"
@@ -416,6 +418,40 @@ protected:
                         /*effective_to=*/std::nullopt,
                         /*payload=*/std::nullopt,
                         /*document_id=*/doc.id);
+        return doc.id;
+    }
+
+    /// A document referenced by a TAX FILING. Unlike hr_orders', that FK is
+    /// `DEFERRABLE INITIALLY DEFERRED` (migrations/016_tax_filings.sql), so
+    /// the DELETE SUCCEEDS at statement time and the 23503 is raised by
+    /// COMMIT — verified against PostgreSQL 16, where the statement reports
+    /// `DELETE 1` and the error appears only after `COMMIT`. This is the case
+    /// that actually justifies wrapping the whole `execute_write` in the
+    /// try/catch, and the only one that proves libpqxx surfaces a failed
+    /// commit() as pqxx::sql_error with a readable sqlstate().
+    std::string seed_document_referenced_by_a_tax_filing(const std::string& org_id) {
+        Ledger::DocumentRepository docs;
+        auto doc = docs.create(org_id, "fno", "generated", "final");
+
+        Tax::TaxCalculationRepository calcs;
+        auto calc = calcs.upsert(org_id,
+                                 "snr_simplified",
+                                 "2026-01-01",
+                                 "2026-06-30",
+                                 json::object(),
+                                 json::object(),
+                                 /*total_tiyn=*/3000000);
+
+        Tax::TaxFilingRepository filings;
+        filings.create(org_id,
+                       "910.00",
+                       "2026-01-01",
+                       "2026-06-30",
+                       "generated",
+                       calc.id,
+                       /*xml_s3_key=*/std::nullopt,
+                       /*document_id=*/doc.id,
+                       /*schema_validated=*/true);
         return doc.id;
     }
 
@@ -1558,8 +1594,11 @@ TEST_F(LedgerDocumentsApiTest, RefusesToDeleteADocumentOnAPostedEntry) {
 }
 
 // No journal link at all, and still not destroyable: an HR order points at it.
-// hr_orders.document_id is NO ACTION, so without the 23503 -> kReferenced
-// translation this would be a 500.
+// hr_orders.document_id is NO ACTION but NOT deferrable (verified against the
+// live schema: pg_constraint.condeferrable = false), so this 23503 is raised
+// by the DELETE STATEMENT. It proves the translation to 409, and deliberately
+// NOT the placement of the try/catch — see the tax-filing test below for the
+// deferred case, which is the one that constrains where the catch may sit.
 TEST_F(LedgerDocumentsApiTest, HrDocumentReferencedByAnOrderIsFourZeroNineNotFiveHundred) {
     auto org = seed_org("444240000048", "HR Referenced Org LLP");
     auto p = member("del4@example.com", org.id, "accountant");
@@ -1584,6 +1623,32 @@ TEST_F(LedgerDocumentsApiTest, HrDocumentReferencedByAnOrderIsFourZeroNineNotFiv
     EXPECT_EQ(voided->statusCode(), k200OK);
 }
 
+// THE deferred case. tax_filings.document_id is DEFERRABLE INITIALLY
+// DEFERRED, so the DELETE reports success and PostgreSQL only raises 23503
+// when the transaction COMMITS — i.e. after DocumentRepository::remove()'s
+// lambda has already returned kDeleted. A try/catch placed around the DELETE
+// statement instead of around the whole execute_write would let that error
+// escape as a 500. This test is the one that fails if the catch is moved.
+TEST_F(LedgerDocumentsApiTest, DocumentReferencedByATaxFilingIsAConflictRaisedAtCommit) {
+    auto org = seed_org("444240000053", "Tax Filing Ref Org LLP");
+    auto p = member("del7@example.com", org.id, "accountant");
+    const std::string doc_id = seed_document_referenced_by_a_tax_filing(org.id);
+
+    Ledger::DocumentRepository repo;
+    ASSERT_FALSE(repo.has_posted_entry_link(org.id, doc_id));  // не проводка держит документ
+
+    HttpResponsePtr resp;
+    ctrl.remove(
+        authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
+    ASSERT_NE(resp, nullptr);
+    // Не 500 — значит, отложенный 23503 действительно был пойман снаружи
+    // execute_write и переведён в доменный исход.
+    EXPECT_EQ(resp->statusCode(), k409Conflict);
+    EXPECT_EQ(json::parse(std::string(resp->body()))["error"].get<std::string>(), "document_referenced");
+    // И откат отложенного FK не оставил документ полуудалённым.
+    EXPECT_TRUE(repo.find_in_org(doc_id, org.id, /*from_primary=*/true).has_value());
+}
+
 // The reason is not decoration: it is the whole audit value of the three
 // columns. Missing field -> 400 (shape), blank -> 422 (value), repeat -> 409
 // (state) — the file's usual three-way split.
@@ -1605,6 +1670,16 @@ TEST_F(LedgerDocumentsApiTest, VoidRequiresAReasonAndIsIdempotentlyRejected) {
     ASSERT_NE(blank, nullptr);
     EXPECT_EQ(blank->statusCode(), k422UnprocessableEntity);
 
+    // Верхняя граница есть, как у всякого свободного текста здесь.
+    HttpResponsePtr too_long;
+    ctrl.voidDocument(
+        authed_json(p, json{{"reason", std::string(1001, 'x')}}),
+        [&](const HttpResponsePtr& r) { too_long = r; },
+        doc.id);
+    ASSERT_NE(too_long, nullptr);
+    EXPECT_EQ(too_long->statusCode(), k422UnprocessableEntity);
+    EXPECT_EQ(json::parse(std::string(too_long->body()))["errors"][0]["code"].get<std::string>(), "too_long");
+
     HttpResponsePtr first;
     ctrl.voidDocument(
         authed_json(p, json{{"reason", "дубль"}}), [&](const HttpResponsePtr& r) { first = r; }, doc.id);
@@ -1621,6 +1696,37 @@ TEST_F(LedgerDocumentsApiTest, VoidRequiresAReasonAndIsIdempotentlyRejected) {
     auto stored = repo.find_in_org(doc.id, org.id, /*from_primary=*/true);
     ASSERT_TRUE(stored.has_value());
     EXPECT_EQ(stored->void_reason.value_or(""), "дубль");
+}
+
+// Voiding is a one-way door. Once the three audit columns are filled in,
+// deletion is refused even though nothing else holds this document — no
+// posted link, no HR order, no filing. Otherwise "void then delete" would be
+// a two-step way to erase the very record voiding exists to create.
+TEST_F(LedgerDocumentsApiTest, AVoidedDocumentCannotBeDeleted) {
+    auto org = seed_org("444240000054", "Void Then Delete Org LLP");
+    auto p = member("del8@example.com", org.id, "accountant");
+    Ledger::DocumentRepository repo;
+    auto doc = repo.create(org.id, "incoming", "uploaded", "inbox");
+    // Ничем не занят: без аннулирования этот документ удалился бы (ровно это
+    // проверяет DeletesADocumentWithNoPostedLink на такой же строке).
+    ASSERT_FALSE(repo.has_posted_entry_link(org.id, doc.id));
+
+    HttpResponsePtr voided;
+    ctrl.voidDocument(
+        authed_json(p, json{{"reason", "загружен по ошибке"}}), [&](const HttpResponsePtr& r) { voided = r; }, doc.id);
+    ASSERT_NE(voided, nullptr);
+    ASSERT_EQ(voided->statusCode(), k200OK);
+
+    HttpResponsePtr del;
+    ctrl.remove(
+        authed(p, Delete), [&](const HttpResponsePtr& r) { del = r; }, doc.id);
+    ASSERT_NE(del, nullptr);
+    EXPECT_EQ(del->statusCode(), k409Conflict);
+    EXPECT_EQ(json::parse(std::string(del->body()))["error"].get<std::string>(), "document_voided");
+    // Запись аудита на месте вместе с причиной.
+    auto still = repo.find_in_org(doc.id, org.id, /*from_primary=*/true);
+    ASSERT_TRUE(still.has_value());
+    EXPECT_EQ(still->void_reason.value_or(""), "загружен по ошибке");
 }
 
 // A voided document is not editable: a new version would be rendered and would

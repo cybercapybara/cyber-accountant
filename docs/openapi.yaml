@@ -569,11 +569,12 @@ components:
         reason:
           type: string
           minLength: 1
+          maxLength: 1000
           description: >-
             Why the document is being voided. Mandatory and non-blank after
             trimming: voiding without a reason is not a state, it is a lost
-            audit record. Stored in documents.void_reason alongside voided_at
-            and voided_by_user_id.
+            audit record. Stored TRIMMED in documents.void_reason alongside
+            voided_at and voided_by_user_id.
 
     # Mirrors Ledger::to_json(JournalLine) in src/ledger/JournalEntry.hpp.
     JournalLine:
@@ -2077,10 +2078,16 @@ paths:
         `document_referenced`, not a 500: those foreign keys are NO ACTION, and
         the resulting SQLSTATE 23503 is translated into that conflict.
 
+        An already-VOIDED document cannot be deleted either — 409
+        `document_voided`. Voiding is a deliberate audit act with an author and
+        a reason; letting a later delete erase it would defeat the purpose of
+        the three columns.
+
         Object-storage retention policy: the stored objects in S3 are NOT
-        removed — only the metadata is deleted. There is no reaper job in P3;
-        this is a stated policy (see the header of
-        `migrations/019_document_voiding.sql`), not an oversight.
+        removed — only the metadata is deleted. There is no reaper job in P3,
+        so a deleted document's object is orphaned permanently. This is a
+        known, tracked leak (cybercapybara/cyber-accountant#11), not an
+        oversight.
 
         Write-gated per document (`hr_docs` for `doc_type=hr`, `documents`
         otherwise), checked after the row is located so another organization's
@@ -2092,7 +2099,7 @@ paths:
         '400': { description: Malformed id }
         '403': { description: 'No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied)' }
         '404': { description: Not found (including a document belonging to another organization) }
-        '409': { description: 'document_has_posted_entries (linked to a posted/reversed journal entry) or document_referenced (an HR order or a tax filing points at it) — void it instead' }
+        '409': { description: 'document_has_posted_entries (linked to a posted/reversed journal entry), document_referenced (an HR order or a tax filing points at it) — void it instead — or document_voided (an already-voided document is an audit record and is never deletable)' }
 
   /api/v1/documents/{id}/void:
     parameters:
@@ -2133,7 +2140,7 @@ paths:
         '403': { description: 'No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied)' }
         '404': { description: Not found (including a document belonging to another organization) }
         '409': { description: 'already_voided — this document was already voided' }
-        '422': { description: '`reason` is blank after trimming' }
+        '422': { description: '`reason` is blank after trimming, or longer than 1000 characters' }
 
   /api/v1/documents/{id}/download-url:
     parameters:

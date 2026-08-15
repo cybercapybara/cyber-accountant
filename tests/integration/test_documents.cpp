@@ -14,10 +14,13 @@
  *        CURRENT version, and none of it is reachable from another tenant.
  */
 
+#include <atomic>
+#include <chrono>
 #include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -368,6 +371,67 @@ TEST_F(DocumentsRepoTest, MigrationBackfilledExistingDocuments) {
         return r.at(0).at(0).template as<long>();
     });
     EXPECT_EQ(orphans, 0);
+}
+
+// ── P3 task 11: remove() must LOCK, not merely look ──────────────────────────
+//
+// Being inside one transaction is not enough. execute_write runs at READ
+// COMMITTED, so an unlocked "is anything posted?" look is stale the instant it
+// returns: a concurrent session can post a linked draft entry and commit
+// between that look and the DELETE, and because document_entries cascades, the
+// link then vanishes silently — leaving a POSTED entry with no basis, which is
+// precisely the corruption this task exists to prevent. Reproduced on
+// PostgreSQL 16 before the fix: the check returned false, the other session
+// posted and committed, the DELETE succeeded.
+//
+// This test pins the fix without needing to hit that microsecond window. It
+// takes the conflicting lock FROM THE OUTSIDE — an exclusive FOR UPDATE on the
+// linked journal entry — and asserts that remove() WAITS for it. An
+// implementation that only reads (no FOR SHARE) never blocks on a row lock
+// under MVCC and returns in single-digit milliseconds, so this fails loudly if
+// the locking is dropped or if the status predicate is "simplified" back into
+// the locking query, where the planner pushes it below LockRows and the draft
+// row ends up never locked at all.
+TEST_F(DocumentsRepoTest, RemoveWaitsForALockOnTheLinkedEntryBeforeDeciding) {
+    Ledger::DocumentRepository repo;
+    auto org_id = make_org("111270000014");
+    auto user_id = seed_user("lockrace@example.com");
+    auto entry_id = make_draft_entry(org_id, user_id);
+    auto doc = repo.create(org_id, "incoming", "uploaded", "inbox");
+    ASSERT_TRUE(repo.link_entry(org_id, doc.id, entry_id));
+
+    constexpr int kHoldMs = 600;
+    std::atomic<bool> holding{false};
+    std::thread holder([&] {
+        Database::get().execute_write([&](auto& txn) {
+            // Exactly the lock a concurrent JournalService::post() would take
+            // on this row before flipping its status.
+            txn.exec_params(
+                "SELECT id FROM journal_entries WHERE id = $1 AND org_id = $2 FOR UPDATE", entry_id, org_id);
+            holding = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(kHoldMs));
+            return 0;
+        });
+    });
+    while (!holding)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+    const auto started = std::chrono::steady_clock::now();
+    const auto outcome = repo.remove(org_id, doc.id);
+    const auto waited_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+    holder.join();
+
+    // Generous threshold (the holder keeps the lock for 600 ms): the point is
+    // the difference between "waited" and "did not wait at all", which was
+    // measured live at 1.5 s versus 4 ms.
+    EXPECT_GE(waited_ms, 250) << "remove() returned in " << waited_ms
+                              << " ms while another session held FOR UPDATE on the linked journal entry — it is not "
+                                 "locking, so a concurrent post can still slip between its check and its DELETE";
+    // Once the holder let go, the entry was still a draft, so the delete is
+    // the correct outcome — the lock delays the decision, it does not change it.
+    EXPECT_EQ(outcome, Ledger::DeleteOutcome::kDeleted);
+    EXPECT_FALSE(repo.find_in_org(doc.id, org_id, /*from_primary=*/true).has_value());
 }
 
 }  // namespace

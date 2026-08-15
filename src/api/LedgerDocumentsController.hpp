@@ -47,10 +47,13 @@
  * posted against but which an HR order or a tax filing points at
  * (hr_orders.document_id / tax_filings.document_id, both NO ACTION) is a 409
  * `document_referenced`, translated from SQLSTATE 23503 in
- * DocumentRepository::remove() — never a 500. Versions are never deletable
- * individually; both routes act on the document as a whole. Objects in S3 are
- * removed by NEITHER path — a stated retention policy, see the header of
- * migrations/019_document_voiding.sql.
+ * DocumentRepository::remove() — never a 500. An ALREADY-VOIDED document is
+ * never deletable either (409 `document_voided`): voiding is a deliberate
+ * audit act with an author and a reason, and a later delete would erase
+ * exactly the record it created. Versions are never deletable individually;
+ * both routes act on the document as a whole. Objects in S3 are removed by
+ * NEITHER path — for voiding that is the design, for deletion it is a known,
+ * tracked leak (cybercapybara/cyber-accountant#11).
  *
  * Editing (P3 task 9) — why the body is `{input}` and not a snapshot.
  * An accounting document is evidence: overwriting one in place silently
@@ -168,6 +171,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <regex>
@@ -196,6 +200,7 @@
 #include "tenancy/OrgContext.hpp"
 #include "tenancy/OrgPermissions.hpp"
 #include "utils/ErrorResponse.hpp"
+#include "utils/Strings.hpp"
 
 namespace Api {
 
@@ -228,6 +233,11 @@ public:
     /// TTL of every presigned GET this controller mints — the document's
     /// current file and any one historical version alike.
     static constexpr int kDownloadTtlSec = 300;
+
+    /// Верхняя граница `reason` у POST /documents/{id}/void. Свободный текст
+    /// для человека, читающего аудит, — не место для вложения целого
+    /// документа.
+    static constexpr std::size_t kVoidReasonMaxLen = 1000;
 
     /// The same job type DocgenController::generate enqueues (that file's
     /// header explains why the string is duplicated rather than pulled in
@@ -670,7 +680,14 @@ public:
 
         with_repo_errors(callback, "documents createVersion", [&] {
             Ledger::DocumentRepository repo;
-            auto found = repo.find_in_org(id, ctx.org_id);
+            // from_primary: правка — это ЗАПИСЬ, и решает она в том числе по
+            // voided_at. С отставшей реплики только что аннулированный
+            // документ выглядел бы живым, и правка добавила бы ему версию.
+            // Само аннулирование от этого не рассыпается (version_render_state
+            // читает первичную базу, файла версия не получит), но строка
+            // версии — уже мусор в истории документа, объявленного
+            // недействительным.
+            auto found = repo.find_in_org(id, ctx.org_id, /*from_primary=*/true);
             if (!found) {
                 callback(ErrorResponse::not_found("document"));
                 return;
@@ -833,9 +850,10 @@ public:
     // удалению не подлежит вовсе — журнал append-only, правится сторно, а
     // документ аннулируется (POST .../void ниже).
     //
-    // Объекты в S3 при удалении НЕ трогаются — принятая политика хранения,
-    // записанная в заголовке migrations/019_document_voiding.sql: удаляются
-    // только метаданные, сборщика объектов в P3 нет.
+    // Объекты в S3 при удалении НЕ трогаются: удаляются только метаданные,
+    // сборщика объектов в P3 нет, и объект остаётся в хранилище навсегда.
+    // Утечка отслеживается тикетом, а не только комментарием —
+    // https://github.com/cybercapybara/cyber-accountant/issues/11
     // -------------------------------------------------------------------
     void remove(const HttpRequestPtr& req,
                 std::function<void(const HttpResponsePtr&)>&& callback,
@@ -893,6 +911,14 @@ public:
                         "document_referenced",
                         "This document is referenced by an HR order or a tax filing — void it instead of deleting it"));
                     return;
+                case Ledger::DeleteOutcome::kVoided:
+                    // Аннулирование — сознательный акт с автором и причиной;
+                    // разрешить стереть его позже значило бы обессмыслить сами
+                    // три колонки. Удаление аннулированного документа
+                    // запрещено, даже если больше его ничто не держит.
+                    callback(ErrorResponse::conflict("document_voided",
+                                                     "A voided document is an audit record and cannot be deleted"));
+                    return;
             }
         });
     }
@@ -931,7 +957,16 @@ public:
         // Фаза 2 — значение: 422. Причина из одних пробелов — это НЕ
         // причина: аннулирование без объяснения превращает запись аудита в
         // пустую строку, а именно она и есть весь смысл этих колонок.
-        const std::string reason = trimmed(body["reason"].get<std::string>());
+        // Верхняя граница — как у всякого свободного текста в этом дереве
+        // (void_reason в БД TEXT, то есть без своего предела): причина
+        // объясняет решение человеку, а не хранит документ целиком.
+        Validation::Errors semantic_errs;
+        Validation::string_length(semantic_errs, body, "reason", 1, kVoidReasonMaxLen);
+        if (semantic_errs.any()) {
+            callback(Validation::response_422(semantic_errs));
+            return;
+        }
+        const std::string reason = Utils::Strings::trim(body["reason"].get<std::string>());
         if (reason.empty()) {
             callback(Validation::response_422("reason", "blank", "must not be blank"));
             return;
@@ -970,18 +1005,6 @@ public:
     }
 
 private:
-    /// Обрезать ASCII-пробелы по краям. Тела запросов здесь бывают на
-    /// кириллице, поэтому режутся ТОЛЬКО пробельные ASCII-байты — они не
-    /// могут оказаться продолжением многобайтового символа UTF-8 (у тех
-    /// старший бит всегда выставлен).
-    static std::string trimmed(const std::string& s) {
-        const std::string::size_type a = s.find_first_not_of(" \t\r\n");
-        if (a == std::string::npos)
-            return {};
-        const std::string::size_type b = s.find_last_not_of(" \t\r\n");
-        return s.substr(a, b - a + 1);
-    }
-
     /// Parse the `{version_no}` path segment. Digits only, no sign, no
     /// whitespace, at most 9 of them (so std::stoi below cannot throw or
     /// overflow), and strictly positive — version numbers start at 1
