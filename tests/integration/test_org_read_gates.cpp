@@ -19,6 +19,15 @@
  * поиска строки, — 404. Исключение — маршруты над ОДНИМ документом, где
  * решение зависит от doc_type прочитанной строки; они разобраны отдельным
  * тестом на реально засеянных документах.
+ *
+ * Отдельный блок — расчётный листок (doc_type='payroll',
+ * migrations/023_payroll_doc_type.sql). Дефект приёмки v0.4.0: листок
+ * создавался как doc_type='hr', попадал в ресурс hr_docs и потому читался
+ * кадровиком, хотя ресурс payroll ему невидим. Тесты там проверяют ЗАПРЕТ
+ * (чтение, download-url и запись — все три через ensure_document_access),
+ * исключение листков из реестра И из его total, и два контрольных
+ * разрешения: настоящий кадровый документ кадровику по-прежнему открыт, а
+ * бухгалтеру открыто и то и другое.
  */
 
 #include <cstddef>
@@ -182,6 +191,18 @@ protected:
             authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, id);
         return resp;
     }
+
+    /// POST /documents/{id}/void — маршрут ЗАПИСИ, ходит через тот же
+    /// ensure_document_access(..., kWrite). Нужен, чтобы доказать: у
+    /// расчётного листка закрыто не только чтение.
+    HttpResponsePtr documents_void(const Principal& p, const std::string& id) {
+        HttpResponsePtr resp;
+        documents_.voidDocument(
+            TestHelpers::authed_json(p, json{{"reason", "тест гейта"}}, Post),
+            [&](const HttpResponsePtr& r) { resp = r; },
+            id);
+        return resp;
+    }
 };
 
 // ── чтения, закрытые для кадровика ──────────────────────────────────────────
@@ -335,6 +356,95 @@ TEST_F(OrgReadGatesTest, HrIsDeniedReadOnAnIndividualPrimaryDocument) {
     Ledger::DocumentRepository repo;
     const std::string foreign_hr_doc = repo.create(other.id, "hr", "generated", "draft").id;
     EXPECT_EQ(documents_get(hr, foreign_hr_doc)->statusCode(), k404NotFound);
+}
+
+// ── расчётный листок: payroll, а не hr_docs ─────────────────────────────────
+
+TEST_F(OrgReadGatesTest, HrIsDeniedEveryAccessToAPayslipDocument) {
+    // Дефект приёмки v0.4.0: расчётный листок создавался с doc_type='hr' и
+    // потому попадал в ресурс hr_docs — кадровик читал его и видел ВЕСЬ
+    // расчёт (gross, ОПВ, ВОСМС, ИПН, СО, ОСМС, ОПВР, соцналог, net), хотя
+    // §5.3 говорит «Оклад видит, расчёты — нет». Теперь такой документ —
+    // doc_type='payroll' (migrations/023), то есть ресурс payroll, который
+    // кадровику невидим целиком: ни чтения, ни записи.
+    auto hr = member("hr6@example.com", org_.id, "hr");
+    const std::string payslip_id = seed_document("payroll", "generated");
+    const std::string hr_order_id = seed_document("hr", "generated");
+
+    // ЗАПРЕТ — чтение, выдача ссылки на файл и запись, все три через один
+    // и тот же ensure_document_access().
+    auto read = documents_get(hr, payslip_id);
+    ASSERT_NE(read, nullptr);
+    EXPECT_EQ(read->statusCode(), k403Forbidden) << "GET /documents/{id} (payslip)";
+    EXPECT_EQ(body_of(read)["error"].get<std::string>(), "org_role_denied") << "GET /documents/{id} (payslip)";
+
+    auto url = documents_download_url(hr, payslip_id);
+    ASSERT_NE(url, nullptr);
+    EXPECT_EQ(url->statusCode(), k403Forbidden) << "POST /documents/{id}/download-url (payslip)";
+    EXPECT_EQ(body_of(url)["error"].get<std::string>(), "org_role_denied")
+        << "POST /documents/{id}/download-url (payslip)";
+
+    auto voided = documents_void(hr, payslip_id);
+    ASSERT_NE(voided, nullptr);
+    EXPECT_EQ(voided->statusCode(), k403Forbidden) << "POST /documents/{id}/void (payslip)";
+    EXPECT_EQ(body_of(voided)["error"].get<std::string>(), "org_role_denied") << "POST /documents/{id}/void (payslip)";
+
+    // РАЗРЕШЕНИЕ — контрольный случай: настоящий кадровый документ той же
+    // роли по-прежнему и читается, и правится. Иначе «починка» свелась бы
+    // к тому, что кадровику закрыли всё подряд.
+    EXPECT_EQ(documents_get(hr, hr_order_id)->statusCode(), k200OK) << "GET /documents/{id} (hr order)";
+    EXPECT_EQ(documents_void(hr, hr_order_id)->statusCode(), k200OK) << "POST /documents/{id}/void (hr order)";
+}
+
+TEST_F(OrgReadGatesTest, AccountantStillReadsPayslipAndHrDocumentsAlike) {
+    // Вторая половина того же утверждения: ресурс payroll закрыт КАДРОВИКУ,
+    // а не всем — бухгалтер читает и расчётный листок, и кадровый приказ.
+    auto acc = member("acc6@example.com", org_.id, "accountant");
+    const std::string payslip_id = seed_document("payroll", "generated");
+    const std::string hr_order_id = seed_document("hr", "generated");
+
+    EXPECT_EQ(documents_get(acc, payslip_id)->statusCode(), k200OK) << "GET /documents/{id} (payslip)";
+    EXPECT_EQ(documents_get(acc, hr_order_id)->statusCode(), k200OK) << "GET /documents/{id} (hr order)";
+    // download-url доходит до хранилища и без MinIO отвечает 409 no_file /
+    // 503 — важно лишь, что это НЕ 403: гейт роль пропустил.
+    auto url = documents_download_url(acc, payslip_id);
+    ASSERT_NE(url, nullptr);
+    EXPECT_NE(url->statusCode(), k403Forbidden) << "POST /documents/{id}/download-url (payslip, accountant)";
+}
+
+TEST_F(OrgReadGatesTest, PayslipsAreExcludedFromTheHrRegistryAndItsTotal) {
+    // Сужение GET /documents живёт на том же doc_type, что и resource_for,
+    // поэтому расчётные листки обязаны выпасть И из строк, И из total —
+    // именно total выдал бы кадровику количество расчётов, не показав их.
+    seed_document("payroll", "generated");
+    seed_document("payroll", "generated");
+    seed_document("hr", "generated");
+    seed_document("invoice", "generated");
+    auto hr = member("hr7@example.com", org_.id, "hr");
+
+    auto unfiltered = documents_list(hr, /*type=*/"");
+    ASSERT_NE(unfiltered, nullptr);
+    ASSERT_EQ(unfiltered->statusCode(), k200OK);
+    auto body = body_of(unfiltered);
+    ASSERT_EQ(body["data"].size(), 1U) << "виден только кадровый документ";
+    EXPECT_EQ(body["data"][0]["doc_type"].get<std::string>(), "hr");
+    EXPECT_EQ(body["total"].get<long>(), 1) << "total обязан считать ту же суженную выборку";
+
+    // Явный ?type=payroll не обходит сужение — оно перезаписывается.
+    auto asked = documents_list(hr, /*type=*/"payroll");
+    ASSERT_NE(asked, nullptr);
+    ASSERT_EQ(asked->statusCode(), k200OK);
+    auto asked_body = body_of(asked);
+    for (const auto& d : asked_body["data"])
+        EXPECT_EQ(d["doc_type"].get<std::string>(), "hr");
+    EXPECT_EQ(asked_body["total"].get<long>(), 1);
+
+    // Бухгалтер видит все четыре — сужение принадлежит роли, а не реестру.
+    auto acc = member("acc7@example.com", org_.id, "accountant");
+    auto all = documents_list(acc, /*type=*/"");
+    ASSERT_NE(all, nullptr);
+    ASSERT_EQ(all->statusCode(), k200OK);
+    EXPECT_EQ(body_of(all)["total"].get<long>(), 4);
 }
 
 // ── чтения, ОТКРЫТЫЕ для кадровика ──────────────────────────────────────────

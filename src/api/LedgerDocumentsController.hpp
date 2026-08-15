@@ -88,14 +88,18 @@
  * out the document's bytes, which makes it a READ, and it is gated as one.
  *
  * The read side cannot use API_REQUIRE_ORG_PERM with a fixed resource,
- * because ONE table holds two §5.3 resources: кадровые documents
- * (doc_type='hr') are `hr_docs`, which the `hr` role may read, while all
- * other primary documents are `documents`, which it may not. Hence the two
- * private helpers below — resource_for(doc) and ensure_document_access() —
- * which every route that has already loaded a row must go through, and
+ * because ONE table holds THREE §5.3 resources, keyed off `doc_type`:
+ * `payroll` rows (расчётный листок) are the `payroll` resource, `hr` rows
+ * (приказы, трудовые договоры, кадровые сканы) are `hr_docs`, and every
+ * other primary document is `documents`. The `hr` role may read the middle
+ * one and neither of the others — §5.3 gives it the employee's SALARY but
+ * not the payroll CALCULATION, and a payslip is the calculation. Hence the
+ * two private helpers below — resource_for(doc) and ensure_document_access()
+ * — which every route that has already loaded a row must go through, and
  * `list`'s unconditional narrowing: a caller holding only `hr_docs`/read
  * gets doc_type='hr' forced onto BOTH the listing query and its count,
- * regardless of what ?type it did or did not send. That helper carries the
+ * regardless of what ?type it did or did not send, which is also what keeps
+ * payslips out of that caller's `total`. That helper carries the
  * WRITE gate too, not just reads: `createVersion` is a mutation, but WHICH
  * resource it mutates still depends on the row it just loaded, so it calls
  * ensure_document_access(..., kWrite) rather than API_REQUIRE_ORG_PERM with
@@ -244,10 +248,12 @@ public:
     /// from the worker-side docgen/RenderJob.hpp).
     static constexpr const char* kRenderJobType = "docgen.render";
 
-    /// doc_type allowlist — mirrors migrations/010_documents.sql's CHECK
-    /// constraint byte-for-byte. DocumentRepository does not validate this
-    /// itself (see that file's header: it trusts its caller on CHECK-shaped
-    /// values), so this controller is the one place it's enforced.
+    /// doc_type allowlist — mirrors the `documents_doc_type_check` CHECK
+    /// byte-for-byte (migrations/010_documents.sql, widened with 'payroll'
+    /// by migrations/023_payroll_doc_type.sql). DocumentRepository does not
+    /// validate this itself (see that file's header: it trusts its caller on
+    /// CHECK-shaped values), so this controller is the one place it's
+    /// enforced.
     static const std::vector<std::string>& allowed_doc_types() {
         static const std::vector<std::string> v = {"invoice",
                                                    "avr",
@@ -258,6 +264,7 @@ public:
                                                    "incoming",
                                                    "bank_statement",
                                                    "hr",
+                                                   "payroll",
                                                    "fno",
                                                    "other"};
         return v;
@@ -327,8 +334,15 @@ public:
         // type_filter goes into list_filtered AND count_filtered below: a
         // narrowing applied to only one of the pair would still tell the
         // кадровик how many primary documents exist without showing them.
+        //
+        // kHrDocType, а не литерал: это ТА ЖЕ константа, которую
+        // resource_for() отображает в hr_docs, то есть сужение реестра и
+        // проверка одной строки опираются на один и тот же факт. Именно
+        // поэтому расчётные листки (doc_type='payroll', ресурс payroll)
+        // выпадают отсюда сами — и из строк, и из total, который иначе
+        // выдал бы их количество, не показывая их самих.
         if (!may_read_all)
-            type_filter = std::string("hr");
+            type_filter = std::string(kHrDocType);
 
         const auto page = parse_page_params(req, /*default_limit=*/50, /*max_limit=*/200);
         with_repo_errors(callback, "documents list", [&] {
@@ -1025,12 +1039,37 @@ private:
         return true;
     }
 
-    /// Ресурс матрицы §5.3 для КОНКРЕТНОГО документа: кадровые документы —
-    /// hr_docs (кадровик их видит), вся остальная первичка — documents (не
-    /// видит). Обе живут в одной таблице, поэтому ресурс определяется
-    /// строкой, а не маршрутом.
+    /// doc_type, чей ресурс — hr_docs. Вынесен в константу, потому что на
+    /// него ссылаются ДВА места: resource_for() ниже и сужение выборки в
+    /// list(). Это одно правило, записанное по разные стороны — «что
+    /// кадровику видно» для одной строки и для реестра, — и разъехаться им
+    /// нельзя.
+    static constexpr const char* kHrDocType = "hr";
+
+    /// doc_type зарплатных документов (расчётный листок). Отдельный тип, а
+    /// не 'hr' с разбором по template_slug: см. migrations/023_payroll_doc_type.sql.
+    static constexpr const char* kPayrollDocType = "payroll";
+
+    /// Ресурс матрицы §5.3 для КОНКРЕТНОГО документа. В одной таблице
+    /// лежат ТРИ ресурса, поэтому он определяется строкой, а не маршрутом:
+    ///   - 'payroll' (расчётный листок) — ресурс payroll. Кадровику он
+    ///     невидим: спека §5.3 говорит «Оклад видит, расчёты — нет», а
+    ///     расчётный листок и ЕСТЬ расчёт (gross, ОПВ, ВОСМС, ИПН, СО,
+    ///     ОСМС, ОПВР, соцналог, net). До migrations/023 такой документ
+    ///     создавался с doc_type='hr' и утекал кадровику мимо матрицы —
+    ///     дефект приёмки v0.4.0.
+    ///   - 'hr' (приказы, трудовые договоры, кадровые сканы) — hr_docs,
+    ///     кадровик их видит и правит.
+    ///   - всё остальное (первичка, ФНО) — documents, кадровику невидимо.
+    /// Порядок веток здесь не важен, типы взаимоисключающие; важно, что
+    /// решение ОДНО и живёт только тут — им пользуются все семь маршрутов
+    /// над одним документом через ensure_document_access().
     static const char* resource_for(const Ledger::Document& doc) {
-        return doc.doc_type == "hr" ? Tenancy::OrgPerm::Resource::kHrDocs : Tenancy::OrgPerm::Resource::kDocuments;
+        if (doc.doc_type == kPayrollDocType)
+            return Tenancy::OrgPerm::Resource::kPayroll;
+        if (doc.doc_type == kHrDocType)
+            return Tenancy::OrgPerm::Resource::kHrDocs;
+        return Tenancy::OrgPerm::Resource::kDocuments;
     }
 
     /// Проверить право @p action на @p doc; при отказе ответить 403 и

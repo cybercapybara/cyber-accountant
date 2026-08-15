@@ -217,9 +217,11 @@ TEST_F(DocumentsRepoTest, ListByType) {
     Ledger::DocumentRepository repo;
     auto org_id = make_org("111270000007");
 
-    // Every value migrations/010_documents.sql's doc_type CHECK allows —
-    // this test doubles as a contract check that create() can insert each
-    // one, not just an arbitrarily-chosen sample.
+    // Every value the doc_type CHECK allows (migrations/010_documents.sql,
+    // widened with 'payroll' by migrations/023_payroll_doc_type.sql) — this
+    // test doubles as a contract check that create() can insert each one,
+    // not just an arbitrarily-chosen sample, and so it is what proves the
+    // widened constraint actually reached the database.
     static const std::vector<std::string> kAllDocTypes = {"invoice",
                                                           "avr",
                                                           "waybill",
@@ -229,6 +231,7 @@ TEST_F(DocumentsRepoTest, ListByType) {
                                                           "incoming",
                                                           "bank_statement",
                                                           "hr",
+                                                          "payroll",
                                                           "fno",
                                                           "other"};
 

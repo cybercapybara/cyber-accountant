@@ -92,6 +92,7 @@ const DOC_TYPES = [
   'incoming',
   'bank_statement',
   'hr',
+  'payroll',
   'fno',
   'other',
 ] as const;
@@ -117,6 +118,7 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   incoming: 'Входящий документ',
   bank_statement: 'Банковская выписка',
   hr: 'Кадровый документ',
+  payroll: 'Зарплатный документ',
   fno: 'ФНО',
   other: 'Другое',
 };

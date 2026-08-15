@@ -141,7 +141,7 @@ redis:
 cyber-accountant:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant
-    tag: "0.3.1"  # amounts-column docgen hotfix — NOT "v0.3.1" (release.yml strips the `v` prefix); confirmed present via /v2/.../tags/list before use
+    tag: "0.4.0"  # P3: amounts in words, document versions, hr role — NOT "v0.4.0" (release.yml strips the `v` prefix); confirmed present via /v2/.../tags/list before use
   imagePullSecrets:
     - name: ghcr-pull
   externalKafka:
@@ -334,7 +334,7 @@ cyber-accountant:
 cyber-accountant-worker:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-worker
-    tag: "0.3.1"  # see note above — unprefixed tag, amounts-column docgen hotfix
+    tag: "0.4.0"  # see note above — unprefixed tag, P3 release
   imagePullSecrets:
     - name: ghcr-pull
   tracing:
@@ -407,6 +407,6 @@ cyber-accountant-worker:
 cpp-frontend:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-frontend
-    tag: "0.3.1"  # see note above — unprefixed tag, amounts-column docgen hotfix
+    tag: "0.4.0"  # see note above — unprefixed tag, P3 release
   imagePullSecrets:
     - name: ghcr-pull

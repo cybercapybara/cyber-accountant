@@ -619,6 +619,12 @@ TEST_F(PayrollApiTest, GeneratePayslipDerivesNetWordsFromTheStoredNet) {
     Ledger::DocumentRepository documents;
     auto doc = documents.find_in_org(body_of(resp)["document_id"].get<std::string>(), org.id, /*from_primary=*/true);
     ASSERT_TRUE(doc.has_value());
+    // doc_type is the §5.3 RESOURCE of this document, and a payslip is a
+    // payroll calculation, not a кадровый документ. While this was "hr" the
+    // hr role could read the whole calculation through GET /documents/{id}
+    // (v0.4.0 acceptance defect); LedgerDocumentsController::resource_for
+    // keys off exactly this column, so pin it here at the producer.
+    EXPECT_EQ(doc->doc_type, "payroll");
     // input_snapshot lives on the document's VERSION now
     // (migrations/018_document_versions.sql); the render that would publish
     // version 1 was only enqueued, so it is read off the version itself.
@@ -727,6 +733,7 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsAuthoritativeOverrideAndKeepsTheTru
     Ledger::DocumentRepository documents;
     auto doc = documents.find_in_org(document_id, org.id, /*from_primary=*/true);
     ASSERT_TRUE(doc.has_value());
+    EXPECT_EQ(doc->doc_type, "payroll");  // see the doc_type note above
     // Snapshot on version 1 — nothing published it (migration 018).
     auto version = documents.latest_version(org.id, doc->id);
     ASSERT_TRUE(version.has_value());
