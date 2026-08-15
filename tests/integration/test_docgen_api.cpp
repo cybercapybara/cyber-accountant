@@ -260,8 +260,31 @@ TEST_F(DocgenApiTest, GenerateInvalidInputRejected) {
     auto org = seed_org("444260000003", "Generate Invalid Org LLP");
     auto accountant = member("accountant2@example.com", org.id, "accountant");
 
-    // Missing every required field.
+    // Missing every required field. P3 changed WHICH error comes out, and the
+    // order cannot be reversed: the invoice schema requires `total` and
+    // `total_words`, which the SERVER writes, so validating before deriving
+    // would reject every legitimate request. Derivation therefore runs first
+    // and reports the one thing the caller actually owes — the integer.
     auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", json::object()}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input.total_tiyn");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "missing");
+
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+// The schema check still bites for everything the derivation does not cover:
+// a request carrying the required integer but nothing else fails on the
+// template's own JSON Schema, with the original field/code.
+TEST_F(DocgenApiTest, GenerateStillReportsSchemaFailuresAfterDerivation) {
+    auto org = seed_org("444260000015", "Generate Schema Org LLP");
+    auto accountant = member("schema@example.com", org.id, "accountant");
+
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", {{"total_tiyn", 100000}}}});
     HttpResponsePtr resp;
     ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
     ASSERT_NE(resp, nullptr);

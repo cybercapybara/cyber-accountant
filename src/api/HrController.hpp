@@ -100,6 +100,7 @@
 #include <algorithm>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -495,14 +496,21 @@ public:
         // целой части, то есть оклад МОЖЕТ быть сохранён выше
         // Money::kMaxTiyn, и тогда to_words_ru бросает std::out_of_range.
         // Без перехвата это был бы 500 на корректном по форме запросе.
+        //
+        // Ошибка БЕЗ поля (ErrorResponse::unprocessable, не
+        // Validation::response_422): проблема в СОХРАНЁННОМ окладе
+        // сотрудника, а в этом запросе нет ни одного поля, которое каллер
+        // прислал бы и мог бы исправить, — назвать здесь `salary_tiyn`
+        // значило бы указать на поле, которого в теле запроса нет. Форма
+        // ответа та же самая, общая.
         try {
             input["salary_words"] = Money::to_words_ru(resolved->employee.salary_tiyn);
             input["salary_words_kk"] = Money::to_words_kk(resolved->employee.salary_tiyn);
-        } catch (const std::exception& e) {
-            callback(Validation::response_422(
-                "salary_tiyn",
+        } catch (const std::out_of_range&) {
+            callback(ErrorResponse::unprocessable(
                 "amount_out_of_range",
-                "the employee's stored salary cannot be spelled out: " + std::string(e.what())));
+                "the employee's stored salary cannot be spelled out in words: it exceeds the maximum supported " +
+                    std::to_string(Money::kMaxTiyn) + " tiyn"));
             return;
         }
 

@@ -45,9 +45,16 @@
  * `documents_doc_type_check` rejects — an INSERT-time constraint violation
  * the caller saw as a 500 (the transaction rolls back, so no orphan row was
  * ever left behind). `generate()` now gates the slug against
- * Docgen::InputPolicy::generate_slugs() first and answers 422
- * `unsupported_template`; each of those five templates is owned by the
- * endpoint that has the authoritative data for it.
+ * Docgen::InputPolicy::generate_slugs() and answers 422
+ * `unsupported_template`, naming the endpoint that owns that template.
+ *
+ * That gate runs AFTER the registry lookup, deliberately: `unknown_template`
+ * ("no such slug anywhere") and `unsupported_template` ("real template, wrong
+ * endpoint") are different answers to the caller — a typo versus a wrong
+ * address — and collapsing them into one code would make diagnosis worse.
+ * The ordering is not a security property: the 500 came from the doc_type
+ * CHECK at INSERT time, not from the registry, and nothing between the two
+ * checks touches the database.
  *
  * P3, money: every printed money string on these documents is derived by
  * the SERVER from an integer tiyn field (`total_tiyn` for invoice/avr/
@@ -203,28 +210,40 @@ public:
         // an unregistered/traversal-shaped slug and a schema mismatch both
         // surface as one 422 here, never reaching DocumentRepository.
         //
-        // Слаг обязан быть из списка первички ДО обращения к реестру: он
-        // идёт в documents.doc_type дословно (см. шапку файла), а
-        // migrations/010_documents.sql разрешает там только эти пять
-        // значений. Без этой проверки существующий на диске, но не
-        // первичный шаблон (payslip, fno_910, fno_300, hr_order,
-        // labor_contract) проходил дальше и валился на
-        // documents_doc_type_check уже внутри INSERT — клиент получал 500
-        // вместо внятного 422 (дефект, найденный при релизе v0.3.1).
-        if (!Docgen::InputPolicy::input_is_caller_authored(template_slug)) {
-            callback(Validation::response_422("template_slug",
-                                              "unsupported_template",
-                                              "template '" + template_slug +
-                                                  "' is not generated through this endpoint — use the endpoint that "
-                                                  "owns it (tax filings, payroll payslips or HR documents)"));
-            return;
-        }
-
+        // Порядок двух проверок значащий и НЕ переставляется: сначала
+        // «существует ли такой шаблон вообще», потом «порождается ли он
+        // этим эндпоинтом». Это два разных ответа каллеру — опечатка в
+        // слаге и обращение не по адресу, — и слив их в один код сделал бы
+        // диагностику хуже. Дыры это не открывает: 500 приходил не из
+        // реестра, а из documents_doc_type_check на INSERT (см. ниже).
         Docgen::TemplateRegistry registry;
         auto info = registry.latest(template_slug);
         if (!info) {
             callback(Validation::response_422(
                 "template_slug", "unknown_template", "no template found for slug '" + template_slug + "'"));
+            return;
+        }
+
+        // Шаблон существует, но первичкой не является: слаг идёт в
+        // documents.doc_type дословно (см. шапку файла), а
+        // migrations/010_documents.sql разрешает там только пять значений.
+        // Без этой проверки payslip/fno_910/fno_300/hr_order/labor_contract
+        // проходили дальше и валились на documents_doc_type_check уже внутри
+        // INSERT — клиент получал 500 вместо внятного 422 (дефект, найденный
+        // при релизе v0.3.1). У каждого из них есть свой эндпоинт-владелец,
+        // и сообщение называет именно его, а не «какой-то другой».
+        if (!Docgen::InputPolicy::input_is_caller_authored(template_slug)) {
+            // Пустая строка возможна только у шаблона, который положили на
+            // диск, но ни к какому эндпоинту не приписали, — тогда честнее
+            // сказать «владельца нет», чем назвать пустой маршрут.
+            const std::string owner = Docgen::InputPolicy::owning_endpoint(template_slug);
+            const std::string where = owner.empty()
+                                          ? std::string("no endpoint generates it")
+                                          : std::string("use ") + owner + ", which holds the authoritative data for it";
+            callback(Validation::response_422(
+                "template_slug",
+                "unsupported_template",
+                "template '" + template_slug + "' is not generated through this endpoint — " + where));
             return;
         }
 

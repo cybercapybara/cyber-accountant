@@ -548,8 +548,23 @@ public:
         // 0 ₸ line in a tax filing — build_form_input() reports the missing
         // key instead of defaulting it (see that function).
         std::string missing_key;
-        auto base_input = build_form_input(kind, *calc, *org, missing_key);
+        bool amount_out_of_range = false;
+        auto base_input = build_form_input(kind, *calc, *org, missing_key, amount_out_of_range);
         if (!base_input) {
+            // Two distinct reasons, two distinct codes — an amount too large
+            // to spell out is NOT a missing snapshot key, and reporting it as
+            // one used to make the API name a key that does not exist
+            // ("result_snapshot has no 'amount_out_of_range' key") and send
+            // the reader hunting for a data problem that is not there.
+            if (amount_out_of_range) {
+                callback(Validation::response_422(
+                    "calculation_id",
+                    "amount_out_of_range",
+                    "the stored calculation's amount cannot be spelled out in words: it exceeds the maximum "
+                    "supported " +
+                        std::to_string(Money::kMaxTiyn) + " tiyn"));
+                return;
+            }
             callback(Validation::response_422("calculation_id",
                                               "incomplete_calculation",
                                               "the stored calculation's result_snapshot has no '" + missing_key +
@@ -962,74 +977,100 @@ private:
     /// are derived here from the same integers the XML filing uses, so the
     /// printed declaration and the filed XML can no longer disagree.
     ///
-    /// @return nullopt, with @p missing_key naming the offending
-    ///         `result_snapshot` key, when the stored calculation cannot
-    ///         supply a figure this form requires (see snapshot_int()).
-    ///         `missing_key` is `amount_out_of_range` when a stored amount is
-    ///         outside Money::kMaxTiyn: Money::to_words_ru throws on that,
-    ///         and this function runs BEFORE the try/catch around
-    ///         build_form_xml, so an escaping throw would reach the client as
-    ///         a 500 instead of the 422 `incomplete_calculation` a
-    ///         non-renderable stored calculation deserves.
+    /// @return nullopt when the stored calculation cannot supply a figure
+    ///         this form requires — either @p missing_key names the absent
+    ///         `result_snapshot` key (see snapshot_int()), or
+    ///         @p amount_out_of_range is set. The two are mutually exclusive
+    ///         and the caller renders them as two different 422 codes.
+    /// @param amount_out_of_range set when a STORED amount is outside
+    ///        Money::kMaxTiyn and therefore cannot be spelled out. This
+    ///        function runs BEFORE the try/catch around build_form_xml, so
+    ///        letting to_words_ru's std::out_of_range escape would reach the
+    ///        client as a 500.
     static std::optional<json> build_form_input(const std::string& filing_kind,
                                                 const Tax::Calculation& calc,
                                                 const Tenancy::Organization& org,
-                                                std::string& missing_key) {
-        try {
-            const std::string year = calc.period_from.substr(0, 4);
-            json input = {
-                {"org", {{"bin", org.bin}, {"name", org.name}}},
-                {"signed_on", iso_to_ddmmyyyy(today_iso())},
-            };
-            if (filing_kind == Tax::FilingKind::kFno910) {
-                long long income_tiyn = 0;
-                long long rate_bp = 0;
-                if (!snapshot_int(calc, "income_tiyn", income_tiyn, missing_key) ||
-                    !snapshot_int(calc, "rate_bp", rate_bp, missing_key))
-                    return std::nullopt;
-                input["period"] = {{"year", year}, {"half", std::to_string(half_of(calc.period_from))}};
-                input["income_tenge"] = Ledger::format_tiyn(income_tiyn);
-                input["rate_percent"] = format_bp_percent(rate_bp);
-                input["tax_tenge"] = Ledger::format_tiyn(calc.total_tiyn);
-                input["tax_words"] = Money::to_words_ru(calc.total_tiyn);
-                // Direct-initialized, never `return input;`: copy-initializing a
-                // std::optional<nlohmann::json> from a json is ambiguous (the
-                // optional's converting constructor and json's own conversion
-                // operator are both user-defined conversions).
-                return std::optional<json>(std::move(input));
-            }
-            long long accrued_tiyn = 0;
-            long long deductible_tiyn = 0;
-            long long balance_tiyn = 0;
-            // `income_tiyn` is the revenue turnover behind the VAT, snapshotted
-            // by calculate_vat — read through the same required-key helper as
-            // every other figure, so a snapshot without it is a 422 naming the
-            // key, never a silently-filed 0 ₸ turnover.
+                                                std::string& missing_key,
+                                                bool& amount_out_of_range) {
+        const std::string year = calc.period_from.substr(0, 4);
+        json input = {
+            {"org", {{"bin", org.bin}, {"name", org.name}}},
+            {"signed_on", iso_to_ddmmyyyy(today_iso())},
+        };
+        if (filing_kind == Tax::FilingKind::kFno910) {
             long long income_tiyn = 0;
-            if (!snapshot_int(calc, "accrued_tiyn", accrued_tiyn, missing_key) ||
-                !snapshot_int(calc, "deductible_tiyn", deductible_tiyn, missing_key) ||
-                !snapshot_int(calc, "balance_tiyn", balance_tiyn, missing_key) ||
-                !snapshot_int(calc, "income_tiyn", income_tiyn, missing_key))
+            long long rate_bp = 0;
+            if (!snapshot_int(calc, "income_tiyn", income_tiyn, missing_key) ||
+                !snapshot_int(calc, "rate_bp", rate_bp, missing_key))
                 return std::nullopt;
-            input["period"] = {{"year", year}, {"quarter", std::to_string(quarter_of(calc.period_from))}};
-            input["sales_tenge"] = Ledger::format_tiyn(income_tiyn);
-            input["vat_charged_tenge"] = Ledger::format_tiyn(accrued_tiyn);
-            input["vat_credited_tenge"] = Ledger::format_tiyn(deductible_tiyn);
-            // format_tiyn rejects negatives by contract, and a negative balance is
-            // a normal refund position — the magnitude goes in the amount, the
-            // direction in balance_kind (the template's own enum).
-            input["balance_tenge"] = Ledger::format_tiyn(balance_tiyn < 0 ? -balance_tiyn : balance_tiyn);
-            input["balance_kind"] = balance_tiyn < 0 ? "to_refund" : "to_pay";
-            // Модуль, как и balance_tenge строкой выше: знак несёт balance_kind,
-            // а to_words_ru принимает только неотрицательное. Без этого первая
-            // же декларация с НДС к возврату уронила бы рендер-джобу
-            // необработанным std::invalid_argument.
-            input["balance_words"] = Money::to_words_ru(balance_tiyn < 0 ? -balance_tiyn : balance_tiyn);
+            input["period"] = {{"year", year}, {"half", std::to_string(half_of(calc.period_from))}};
+            input["income_tenge"] = Ledger::format_tiyn(income_tiyn);
+            input["rate_percent"] = format_bp_percent(rate_bp);
+            input["tax_tenge"] = Ledger::format_tiyn(calc.total_tiyn);
+            auto tax_words = spell_out_tiyn(calc.id, calc.total_tiyn, amount_out_of_range);
+            if (!tax_words)
+                return std::nullopt;
+            input["tax_words"] = *tax_words;
+            // Direct-initialized, never `return input;`: copy-initializing a
+            // std::optional<nlohmann::json> from a json is ambiguous (the
+            // optional's converting constructor and json's own conversion
+            // operator are both user-defined conversions).
             return std::optional<json>(std::move(input));
-        } catch (const std::exception& e) {
+        }
+        long long accrued_tiyn = 0;
+        long long deductible_tiyn = 0;
+        long long balance_tiyn = 0;
+        // `income_tiyn` is the revenue turnover behind the VAT, snapshotted
+        // by calculate_vat — read through the same required-key helper as
+        // every other figure, so a snapshot without it is a 422 naming the
+        // key, never a silently-filed 0 ₸ turnover.
+        long long income_tiyn = 0;
+        if (!snapshot_int(calc, "accrued_tiyn", accrued_tiyn, missing_key) ||
+            !snapshot_int(calc, "deductible_tiyn", deductible_tiyn, missing_key) ||
+            !snapshot_int(calc, "balance_tiyn", balance_tiyn, missing_key) ||
+            !snapshot_int(calc, "income_tiyn", income_tiyn, missing_key))
+            return std::nullopt;
+        input["period"] = {{"year", year}, {"quarter", std::to_string(quarter_of(calc.period_from))}};
+        input["sales_tenge"] = Ledger::format_tiyn(income_tiyn);
+        input["vat_charged_tenge"] = Ledger::format_tiyn(accrued_tiyn);
+        input["vat_credited_tenge"] = Ledger::format_tiyn(deductible_tiyn);
+        // format_tiyn rejects negatives by contract, and a negative balance is
+        // a normal refund position — the magnitude goes in the amount, the
+        // direction in balance_kind (the template's own enum).
+        input["balance_tenge"] = Ledger::format_tiyn(balance_tiyn < 0 ? -balance_tiyn : balance_tiyn);
+        input["balance_kind"] = balance_tiyn < 0 ? "to_refund" : "to_pay";
+        // Модуль, как и balance_tenge строкой выше: знак несёт balance_kind,
+        // а to_words_ru принимает только неотрицательное. Без этого первая
+        // же декларация с НДС к возврату уронила бы рендер-джобу
+        // необработанным std::invalid_argument.
+        auto balance_words =
+            spell_out_tiyn(calc.id, balance_tiyn < 0 ? -balance_tiyn : balance_tiyn, amount_out_of_range);
+        if (!balance_words)
+            return std::nullopt;
+        input["balance_words"] = *balance_words;
+        return std::optional<json>(std::move(input));
+    }
+
+    /// Money::to_words_ru with its ONE expected failure turned into a flag.
+    /// The try is this narrow on purpose: wrapping the whole of
+    /// build_form_input would report an unrelated failure (a malformed
+    /// period_from, a format_tiyn contract violation) as
+    /// `amount_out_of_range` and log it as such — a wrong diagnosis in a log
+    /// costs more than no diagnosis. @p magnitude must already be
+    /// non-negative; the sign lives in the form's own balance_kind field.
+    /// Only std::out_of_range is caught, not to_words_ru's other throw
+    /// (std::invalid_argument on a negative): every call site formats the
+    /// same figure with Ledger::format_tiyn one line earlier, and THAT
+    /// rejects negatives first, so a negative can never reach here.
+    static std::optional<std::string> spell_out_tiyn(const std::string& calculation_id,
+                                                     long long magnitude,
+                                                     bool& amount_out_of_range) {
+        try {
+            return std::optional<std::string>(Money::to_words_ru(magnitude));
+        } catch (const std::out_of_range& e) {
             spdlog::error(
-                "tax filings: calculation {} cannot be rendered as form {}: {}", calc.id, filing_kind, e.what());
-            missing_key = "amount_out_of_range";
+                "tax filings: calculation {} has an amount that cannot be spelled out: {}", calculation_id, e.what());
+            amount_out_of_range = true;
             return std::nullopt;
         }
     }

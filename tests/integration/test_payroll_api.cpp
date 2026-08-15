@@ -643,6 +643,20 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsClientSuppliedNetWords) {
     EXPECT_EQ(errors[0]["field"].get<std::string>(), "net_words");
     EXPECT_EQ(errors[0]["code"].get<std::string>(), "not_allowed_override");
     EXPECT_EQ(queue_depth(), before);
+
+    // An EMPTY object has no leaves, so a recursing allowlist used to walk
+    // straight past it — while RFC 7396 merge_patch happily REPLACES the
+    // derived string with {}. It is checked at its own path now, so the
+    // "any key outside the allowlist is a 422" promise is literally true.
+    auto empty_obj_req = authed_json(accountant, json{{"net_words", json::object()}});
+    HttpResponsePtr empty_obj_resp;
+    ctrl.generatePayslip(
+        empty_obj_req, [&](const HttpResponsePtr& r) { empty_obj_resp = r; }, run.id, employee.id);
+    ASSERT_NE(empty_obj_resp, nullptr);
+    EXPECT_EQ(empty_obj_resp->statusCode(), k422UnprocessableEntity);
+    EXPECT_EQ(body_of(empty_obj_resp)["errors"][0]["field"].get<std::string>(), "net_words");
+    EXPECT_EQ(body_of(empty_obj_resp)["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    EXPECT_EQ(queue_depth(), before);
 }
 
 // Final fix round (security): the body merged onto a payslip's auto-derived

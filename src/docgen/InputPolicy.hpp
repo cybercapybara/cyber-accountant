@@ -53,6 +53,23 @@ inline bool input_is_caller_authored(const std::string& slug) {
     return std::find(s.begin(), s.end(), slug) != s.end();
 }
 
+/// Эндпоинт, который владеет шаблоном @p slug — тот, у которого есть
+/// авторитетные данные для этой формы. Пустая строка, если такого нет
+/// (первичка: её порождает сам POST /documents/generate; неизвестный слаг:
+/// его не порождает никто). Нужен, чтобы 422 unsupported_template называл
+/// каллеру конкретный маршрут, а не отправлял его гадать.
+inline const char* owning_endpoint(const std::string& slug) {
+    if (slug == "payslip")
+        return "POST /api/v1/payroll-runs/{id}/payslips/{employee_id}/generate-document";
+    if (slug == "fno_910" || slug == "fno_300")
+        return "POST /api/v1/tax/filings";
+    if (slug == "hr_order")
+        return "POST /api/v1/hr-orders/{id}/generate-document";
+    if (slug == "labor_contract")
+        return "POST /api/v1/labor-contracts/{id}/generate-document";
+    return "";
+}
+
 /// Денежные поля, которые сервер форматирует сам из целых чисел тиын. Пути
 /// точечные и не глубже одного уровня вложенности.
 struct DerivedAmount {
