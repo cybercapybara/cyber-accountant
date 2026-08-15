@@ -1114,6 +1114,68 @@ TEST_F(LedgerDocumentsApiTest, EditRejectsServerDerivedMoneyStrings) {
     EXPECT_EQ(repo.list_versions(org.id, doc_id).size(), 1U);
 }
 
+// Fix round 1: a body that is present but is not a JSON object used to be a
+// 500, not a 400. `contains()` is false on a non-object json, so the `input`
+// type guard was skipped and `body.value("input", …)` threw
+// nlohmann type_error.306 — one line before with_repo_errors, so nothing
+// mapped it. A malformed request SHAPE is a 400, always.
+TEST_F(LedgerDocumentsApiTest, EditWithANonObjectBodyIsABadRequest) {
+    auto org = seed_org("444240000045", "Edit Bad Body Org LLP");
+    auto p = member("edit10@example.com", org.id, "accountant");
+    const std::string doc_id = seed_rendered_invoice(org.id, /*total_tiyn=*/1234567, "seed-bytes");
+
+    for (const json& bad : {json(nullptr), json::array(), json("x"), json(5)}) {
+        HttpResponsePtr resp;
+        ctrl.createVersion(
+            authed_json(p, bad), [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
+        ASSERT_NE(resp, nullptr) << bad.dump();
+        EXPECT_EQ(resp->statusCode(), k400BadRequest) << bad.dump();
+        auto body = json::parse(std::string(resp->body()));
+        EXPECT_EQ(body["error"].get<std::string>(), "invalid_json") << bad.dump();
+    }
+    // `input` present but of the wrong type stays the field-level 400 it was.
+    HttpResponsePtr typed;
+    ctrl.createVersion(
+        authed_json(p, json{{"input", 5}}), [&](const HttpResponsePtr& r) { typed = r; }, doc_id);
+    ASSERT_NE(typed, nullptr);
+    EXPECT_EQ(typed->statusCode(), k400BadRequest);
+    auto typed_body = json::parse(std::string(typed->body()));
+    EXPECT_EQ(typed_body["errors"][0]["field"].get<std::string>(), "input");
+    EXPECT_EQ(typed_body["errors"][0]["code"].get<std::string>(), "not_object");
+
+    Ledger::DocumentRepository repo;
+    EXPECT_EQ(repo.list_versions(org.id, doc_id).size(), 1U);
+}
+
+// The other half of parse_optional_body's contract, and what makes
+// `requestBody: required: false` in docs/openapi.yaml true: NO body at all is
+// a legitimate edit — it edits nothing and re-renders the stored input
+// faithfully.
+TEST_F(LedgerDocumentsApiTest, EditWithNoBodyRerendersTheStoredInputUnchanged) {
+    if (!templates_available())
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    auto org = seed_org("444240000046", "Edit Empty Body Org LLP");
+    auto p = member("edit11@example.com", org.id, "accountant");
+    const std::string filing_doc = seed_fno910_document(org.id);
+
+    Ledger::DocumentRepository repo;
+    const auto v1 = repo.find_version(org.id, filing_doc, 1);
+    ASSERT_TRUE(v1.has_value());
+    ASSERT_TRUE(v1->input_snapshot.has_value());
+
+    HttpResponsePtr resp;
+    ctrl.createVersion(
+        authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, filing_doc);
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k202Accepted) << std::string(resp->body());
+    EXPECT_EQ(json::parse(std::string(resp->body()))["version_no"].get<int>(), 2);
+
+    const auto v2 = repo.find_version(org.id, filing_doc, 2);
+    ASSERT_TRUE(v2.has_value());
+    ASSERT_TRUE(v2->input_snapshot.has_value());
+    EXPECT_EQ(*v2->input_snapshot, *v1->input_snapshot);
+}
+
 TEST_F(LedgerDocumentsApiTest, EditOfAServerBuiltFormCarriesDerivedFiguresForward) {
     if (!templates_available())
         GTEST_SKIP() << "repo templates not reachable from this working directory";

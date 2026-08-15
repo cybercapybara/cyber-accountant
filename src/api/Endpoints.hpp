@@ -79,7 +79,13 @@ inline const std::vector<EndpointInfo>& get_endpoints() {
         {"POST", "/api/v1/documents/{id}/confirm-upload", "Verify an uploaded object and finalize the document"},
         {"GET", "/api/v1/documents/{id}/versions", "List a document's versions (oldest first)"},
         {"POST", "/api/v1/documents/{id}/versions", "Edit a document: create a new version and queue its render"},
-        {"POST", "/api/v1/documents/{id}/versions/{version_no}/download-url", "Presigned URL for one version"},
+        // Formatting suppressed for this one row: it is over the column limit,
+        // and both check-routes-registered.sh and check-openapi-drift.sh scan
+        // this registry LINE BY LINE — a wrapped entry is invisible to the
+        // triple-sync gate, so the route would ship undocumented.
+        // clang-format off
+        {"POST", "/api/v1/documents/{id}/versions/{version_no}/download-url", "Mint a presigned download URL for one version (GET, TTL 300s)"},
+        // clang-format on
         {"GET", "/api/v1/journal-entries", "List journal entries (paginated, optional from/to entry_date filters)"},
         {"POST", "/api/v1/journal-entries", "Create a draft journal entry (accountant/owner)"},
         {"GET", "/api/v1/journal-entries/{id}", "Get a journal entry with its lines"},

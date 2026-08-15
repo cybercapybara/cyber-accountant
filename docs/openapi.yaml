@@ -2109,9 +2109,16 @@ paths:
         construction and are a 409 `not_editable`. Write-gated per document
         (`hr_docs` for `doc_type=hr`, `documents` otherwise), checked after
         the row is located.
+
+        The body is optional: sending none (or `{}`) edits nothing and queues
+        a faithful re-render of the version's stored input. A body that is
+        present but is not a JSON object (`null`, `[]`, `"x"`, `5`) is a 400
+        `invalid_json`.
       tags: [documents]
       security: [{ BearerAuth: [] }]
       requestBody:
+        # Optional, and truly so — Api::Validation::parse_optional_body reads
+        # an absent body as {}. See the 400 above for the non-object case.
         required: false
         content:
           application/json:
@@ -2122,9 +2129,12 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CreateDocumentVersionResponse' }
-        '400': { description: 'Malformed id, malformed JSON, or `input` is not an object' }
+        '400': { description: 'Malformed id, a body that is not a JSON object (invalid_json), or `input` present and not an object' }
         '403': { description: 'No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied)' }
         '404': { description: Not found (including a document belonging to another organization) }
+        # Task 11 adds `document_voided` here together with the voided_at
+        # branch in createVersion — deliberately NOT listed yet: the column
+        # does not exist, so the server cannot return it.
         '409': { description: 'not_editable (source is uploaded/email, or the document has no template_slug)' }
         '422': { description: 'not_allowed_override (a field outside the creation allowlist, including a server-derived money string), or schema_validation_failed' }
         '503': { description: 'jobs_disabled — the job queue is not enabled, so nothing would render the new version' }

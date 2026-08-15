@@ -620,8 +620,18 @@ public:
             callback(ErrorResponse::bad_request("invalid_id", "Malformed document id"));
             return;
         }
+        // parse_optional_body, NOT parse_body (fix round 1): `contains()` is
+        // false on a non-object json, so `{}`-guard-then-`body.value(...)`
+        // sailed past the 400 below and threw nlohmann type_error.306 for a
+        // body of `null`, `[]`, `"x"` or `5` — one line BEFORE
+        // with_repo_errors, so nothing mapped it and the caller got a 500 for
+        // a malformed request. This helper answers 400 `invalid_json` for a
+        // present-but-non-object body and treats an ABSENT body as `{}`,
+        // which is the honest reading here: "edit nothing" is a legitimate
+        // request (a faithful re-render of the stored input), the same
+        // posture the .../generate-document endpoints take.
         json body;
-        if (!Validation::parse_body(req, body, callback))
+        if (!Validation::parse_optional_body(req, body, callback))
             return;
         if (body.contains("input") && !body["input"].is_object()) {
             Validation::Errors errs;

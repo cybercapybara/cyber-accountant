@@ -295,7 +295,20 @@ inline json process_job(const json& payload) {
     // unfinished" keeps the pointer on N; a lost race (N+2 appeared while we
     // rendered) is not an error, the next job publishes its own version.
     if (!documents.set_current_version(org_id, document_id, version_id)) {
-        spdlog::info("docgen: version {} of document {} was superseded before publication", version_id, document_id);
+        // set_current_version() returns false for the whole family of "this
+        // (document, version) pair is not publishable right now": the version
+        // is no longer the document's newest (the expected race, and why this
+        // is an info, not an error), or the document/version pair does not
+        // exist in this org at all (the org predicate task 9 added). The
+        // former is the only one reachable from here — version_render_state()
+        // just confirmed the pair — so the skip code stays "superseded", but
+        // the message no longer claims to know which.
+        spdlog::info(
+            "docgen: not publishing version {} of document {}: it is no longer the document's newest "
+            "version, or the (document, version) pair no longer exists in org {}",
+            version_id,
+            document_id,
+            org_id);
         return json{{"document_id", document_id}, {"version_id", version_id}, {"skipped", "superseded"}};
     }
     // Status moves only for a still-draft document: 'sent' and the inbound

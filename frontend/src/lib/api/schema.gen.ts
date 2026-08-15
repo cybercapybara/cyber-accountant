@@ -2583,6 +2583,11 @@ export interface paths {
          *     construction and are a 409 `not_editable`. Write-gated per document
          *     (`hr_docs` for `doc_type=hr`, `documents` otherwise), checked after
          *     the row is located.
+         *
+         *     The body is optional: sending none (or `{}`) edits nothing and queues
+         *     a faithful re-render of the version's stored input. A body that is
+         *     present but is not a JSON object (`null`, `[]`, `"x"`, `5`) is a 400
+         *     `invalid_json`.
          */
         post: {
             parameters: {
@@ -2608,7 +2613,7 @@ export interface paths {
                         "application/json": components["schemas"]["CreateDocumentVersionResponse"];
                     };
                 };
-                /** @description Malformed id, malformed JSON, or `input` is not an object */
+                /** @description Malformed id, a body that is not a JSON object (invalid_json), or `input` present and not an object */
                 400: {
                     headers: {
                         [name: string]: unknown;
