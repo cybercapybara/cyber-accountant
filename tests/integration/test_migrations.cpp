@@ -7,6 +7,18 @@
  * concurrent boot relies on this), and the read-only list_pending tracker.
  * Uses a private temp migrations dir + a private tracking table-free schema
  * so it doesn't collide with the real 001_users_and_roles migration.
+ *
+ * CAVEAT, deliberately left as-is for now: the DROP TABLE schema_migrations
+ * below hits the SHARED test database, i.e. it erases the application's real
+ * migration ledger. Every fixture that boots after this suite therefore
+ * replays migrations 000..NNN over an already-migrated schema. That is how
+ * 146 downstream tests died on `column "s3_key" does not exist` — 018's
+ * backfill read a column 018 itself drops. 018 now guards that block, so the
+ * replay is a clean no-op, but the ledger-wipe is the underlying hazard and
+ * this suite does NOT need it: it could point its pool at a private schema
+ * (`?options=-csearch_path%3Dmig_test_schema`, verified to work) or its own
+ * throwaway database and never name schema_migrations unqualified. Doing that
+ * is a harness change, held back deliberately this close to a release.
  */
 
 #include <filesystem>

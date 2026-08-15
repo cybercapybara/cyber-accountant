@@ -47,12 +47,36 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS current_version_id UUID;
 -- Бэкфилл: каждому существующему документу — версия 1 с его нынешними
 -- метаданными, указатель ставится только если файл реально есть (иначе
 -- документ и был без файла).
-INSERT INTO document_versions (org_id, document_id, version_no, s3_key, checksum_sha256, mime, size_bytes,
-                               template_version, input_snapshot, created_at, updated_at)
-SELECT org_id, id, 1, s3_key, checksum_sha256, mime, size_bytes, template_version, input_snapshot,
-       created_at, updated_at
-  FROM documents
- WHERE NOT EXISTS (SELECT 1 FROM document_versions v WHERE v.document_id = documents.id);
+--
+-- ГВАРД НА ПОВТОРНОЕ ПРИМЕНЕНИЕ. Обычно мигратор применяет файл ровно один
+-- раз, но если журнал schema_migrations пропадает, весь набор 000..NNN
+-- проигрывается заново поверх УЖЕ мигрированной схемы. Тогда 010
+-- (CREATE TABLE IF NOT EXISTS documents) не делает ничего, а этот SELECT
+-- читает documents.s3_key — колонку, которую ЭТОТ ЖЕ файл дропает ниже, —
+-- и весь прогон падает на `column "s3_key" does not exist`. Ровно так
+-- падал build-and-test: tests/integration/test_migrations.cpp роняет
+-- schema_migrations на общей тестовой базе, и каждый следующий фикстур
+-- умирал в Application initialization.
+--
+-- Тело DO разбирается ПРИ ВЫПОЛНЕНИИ, поэтому невзятая ветка не
+-- обращается к несуществующей колонке даже на этапе планирования. На
+-- чистой базе колонка есть, ветка берётся, поведение прежнее.
+DO $backfill_document_versions$
+BEGIN
+    IF EXISTS (SELECT 1
+                 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'documents'
+                  AND column_name = 's3_key') THEN
+        INSERT INTO document_versions (org_id, document_id, version_no, s3_key, checksum_sha256, mime, size_bytes,
+                                       template_version, input_snapshot, created_at, updated_at)
+        SELECT org_id, id, 1, s3_key, checksum_sha256, mime, size_bytes, template_version, input_snapshot,
+               created_at, updated_at
+          FROM documents
+         WHERE NOT EXISTS (SELECT 1 FROM document_versions v WHERE v.document_id = documents.id);
+    END IF;
+END
+$backfill_document_versions$;
 
 -- trg_documents_touch выключается ровно на время бэкфилла: перестановка
 -- указателя — это переезд схемы, а не правка документа, и она не имеет
