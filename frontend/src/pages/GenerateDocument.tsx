@@ -396,6 +396,13 @@ function normalizeRatePercent(rate: string): string {
  * `not_allowed_override`. That is the P2 forgery fix — a printed amount can
  * no longer disagree with the figure it was printed from — so nothing here
  * may format a total again, and no form may ask a user to type one.
+ *
+ * The VAT line goes the same way: `vat_tiyn`, not a formatted `vat_amount`.
+ * The invoice and АВР templates print the VAT line directly ABOVE the
+ * derived total, so a client-formatted string there could contradict the
+ * total on the very next line of the same PDF; the server formats it and
+ * additionally refuses a VAT larger than the total (422 `exceeds_total`).
+ * `vat_rate` stays a client value — it is a rate, not an amount.
  */
 export function buildInvoiceInput(
   values: InvoiceFormValues,
@@ -416,7 +423,7 @@ export function buildInvoiceInput(
   if (values.contract.trim()) input.contract = values.contract.trim();
   if (hasVat) {
     input.vat_rate = normalizeRatePercent(values.vat_rate);
-    input.vat_amount = formatTiynRu(vatTiyn);
+    input.vat_tiyn = vatTiyn;
   }
   return input;
 }

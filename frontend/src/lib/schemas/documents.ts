@@ -48,11 +48,27 @@ const dateDmySchema = z
   .trim()
   .regex(/^\d{2}\.\d{2}\.\d{4}$/, 'Формат: ДД.ММ.ГГГГ');
 
-/** VAT rate as entered, e.g. "16" or "16%" — parsed by parseVatRatePercent below. */
+/**
+ * VAT rate as entered, e.g. "16" or "16%" — parsed by parseVatRatePercent
+ * below. The shape mirrors the `vat_rate` pattern in
+ * templates/latex/{invoice,avr}/v1/schema.json exactly, so a rate this form
+ * accepts is never one the server answers with a 422: at most two digits, an
+ * optional one-or-two-place decimal part, an optional percent sign, and
+ * NOTHING else. The narrowness is a security property, not tidiness — the
+ * rate is printed inside the VAT line's parentheses, right beside the
+ * server-derived amount, and a rate free to contain ')', ':' or '₸' could
+ * close the label and print a fabricated figure of its own.
+ */
 const vatRateSchema = z
   .string()
   .trim()
-  .regex(/^\d+(\.\d+)?%?$/, 'например 16 или 16%');
+  .regex(/^\d{1,2}([.,]\d{1,2})?%?$/, 'например 16 или 16%');
+
+/** The same rate, but blank is valid and means "this document has no VAT". */
+const optionalVatRateSchema = z
+  .string()
+  .trim()
+  .refine((v) => v === '' || /^\d{1,2}([.,]\d{1,2})?%?$/.test(v), 'например 16 или 16%');
 
 /**
  * Generic docgen `party` (definitions.party in every template schema).
@@ -105,7 +121,7 @@ export const invoiceFormSchema = z.object({
   buyerCounterpartyId: z.string().trim().min(1, 'Выберите контрагента'),
   contract: z.string().trim().default(''),
   items: z.array(lineItemSchema).min(1, 'Добавьте хотя бы одну строку'),
-  vat_rate: z.string().trim().default(''),
+  vat_rate: optionalVatRateSchema.default(''),
 });
 export type InvoiceFormValues = z.infer<typeof invoiceFormSchema>;
 

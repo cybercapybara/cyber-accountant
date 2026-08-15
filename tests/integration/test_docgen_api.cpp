@@ -552,13 +552,76 @@ TEST_F(DocgenApiTest, GenerateFormatsInvoiceVatAndTotalFromIntegers) {
     auto doc = documents.find_in_org(
         json::parse(std::string(resp->body()))["document_id"].get<std::string>(), org.id, /*from_primary=*/true);
     ASSERT_TRUE(doc.has_value());
-    ASSERT_TRUE(doc->input_snapshot.has_value());
-    const json& stored = *doc->input_snapshot;
+    // Read through the VERSION, like every other assertion in this suite: a
+    // freshly generated document has no current version until its render job
+    // succeeds, so the document row's own input_snapshot is deliberately null
+    // here (migrations/018_document_versions.sql).
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    const json& stored = *version->input_snapshot;
     EXPECT_EQ(stored["vat_amount"].get<std::string>(), "120,00");
     EXPECT_EQ(stored["total"].get<std::string>(), "1 120,00");
     EXPECT_EQ(stored["total_words"].get<std::string>(), "Одна тысяча сто двадцать тенге 00 тиын");
     // vat_rate is a RATE, not an amount — it stays the caller's own text.
     EXPECT_EQ(stored["vat_rate"].get<std::string>(), "12%");
+}
+
+// Third instance of the same forgery class this phase, and the subtlest: the
+// LABEL, not the amount. `vat_rate` is caller text printed inside the VAT
+// line's parentheses — «НДС ({{ vat_rate }}): {{ vat_amount }} ₸» — and
+// escape_latex deliberately passes '(', ')', ':', digits, spaces and '₸'
+// through untouched (only LaTeX-special bytes are rewritten). So a rate of
+// "16%): 9 999 999,00 ₸ (" closed the parenthesis, printed a fabricated
+// amount, and reopened it — a forged figure standing directly above the
+// server-derived total. The schema pattern is what stops it: the rate may now
+// contain only digits, one optional decimal separator and a percent sign, so
+// it cannot express a parenthesis, a colon, a space or a currency sign at all.
+TEST_F(DocgenApiTest, GenerateRejectsAVatRateThatEscapesItsLabel) {
+    auto org = seed_org("444260000019", "Invoice Rate Org LLP");
+    auto accountant = member("invoice-rate@example.com", org.id, "accountant");
+
+    for (const auto* slug : {"invoice", "avr"}) {
+        json input = valid_invoice_input();
+        input["total_tiyn"] = 112000;
+        input["vat_tiyn"] = 12000;
+        input["vat_rate"] = "16%): 9 999 999,00 ₸ (";
+        if (std::string(slug) == "avr")
+            input["act_period"] = "август 2026";
+        auto req = authed_json(accountant, {{"template_slug", slug}, {"input", input}});
+        HttpResponsePtr resp;
+        ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+        ASSERT_NE(resp, nullptr) << slug;
+        EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity) << slug;
+        auto body = json::parse(std::string(resp->body()));
+        EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input") << slug;
+        EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "schema_validation_failed") << slug;
+    }
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+// The schemas' `dependencies` block couples vat_rate and vat_amount both
+// ways. Without it, a caller could send `vat_tiyn` and no rate: the server
+// would write vat_amount, and the invoice template — whose guard is only
+// `{% if vat_amount != "" %}` — would print «НДС (): 120,00 ₸» with an empty
+// label. This proves the dependency actually fires rather than being inert
+// JSON nobody exercises.
+TEST_F(DocgenApiTest, GenerateRejectsAVatAmountWithNoRateToLabelIt) {
+    auto org = seed_org("444260000020", "Invoice Rate Dep Org LLP");
+    auto accountant = member("invoice-rate-dep@example.com", org.id, "accountant");
+
+    json input = valid_invoice_input();
+    input["total_tiyn"] = 112000;
+    input["vat_tiyn"] = 12000;  // no vat_rate alongside it
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "schema_validation_failed");
+    EXPECT_EQ(queue_depth(), 0);
 }
 
 // Release defect v0.3.1: these five templates exist on disk and resolved

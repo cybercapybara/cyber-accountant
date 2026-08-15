@@ -82,11 +82,25 @@ describe('buildInvoiceInput', () => {
     expect(input).not.toHaveProperty('total_words');
   });
 
-  it('adds the VAT to the integer total instead of formatting a new one', () => {
+  it('adds the VAT to the integer total and sends the VAT as an integer too', () => {
     const input = buildInvoiceInput({ ...invoiceValues, vat_rate: '16%' }, buyer);
     // 300110 + round(300110 × 16 / 100) = 300110 + 48018
     expect(input.total_tiyn).toBe(348128);
-    expect(input.vat_amount).toBe('480,18');
+    // The VAT line is printed directly above the derived total, so its
+    // string is the server's too — sending `vat_amount` is a 422
+    // not_allowed_override, and a VAT above the total is a 422 exceeds_total.
+    expect(input.vat_tiyn).toBe(48018);
+    expect(Number.isInteger(input.vat_tiyn)).toBe(true);
+    expect(input).not.toHaveProperty('vat_amount');
+    expect(input.vat_tiyn as number).toBeLessThanOrEqual(input.total_tiyn as number);
+    // The RATE is not an amount and stays a client value.
+    expect(input.vat_rate).toBe('16%');
+  });
+
+  it('sends no VAT integer at all when the form has no rate', () => {
+    const input = buildInvoiceInput(invoiceValues, buyer);
+    expect(input).not.toHaveProperty('vat_tiyn');
+    expect(input).not.toHaveProperty('vat_rate');
   });
 
   it('emits no *_words key anywhere in the input', () => {

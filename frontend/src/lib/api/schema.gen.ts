@@ -3507,7 +3507,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description unsupported_template (a real template, but not one this endpoint generates) / unknown_template / not_allowed_override / missing / not_integer / out_of_range / inconsistent_total (tax_invoice: amount_tiyn + vat_tiyn must equal with_vat_tiyn) / schema_validation_failed, or counterparty_id/link_entry_id does not belong to this organization */
+                /** @description unsupported_template (a real template, but not one this endpoint generates) / unknown_template / not_allowed_override / missing / not_integer / out_of_range / exceeds_total (invoice, avr: vat_tiyn may not exceed total_tiyn) / inconsistent_total (tax_invoice: amount_tiyn + vat_tiyn must equal with_vat_tiyn) / schema_validation_failed, or counterparty_id/link_entry_id does not belong to this organization */
                 422: {
                     headers: {
                         [name: string]: unknown;
@@ -5988,7 +5988,7 @@ export interface components {
              * @enum {string}
              */
             template_slug: "invoice" | "avr" | "waybill" | "tax_invoice" | "reconciliation";
-            /** @description Validated against the template's JSON Schema. Money is supplied as INTEGER tiyn — total_tiyn for invoice/avr/waybill; totals.amount_tiyn + totals.vat_tiyn + totals.with_vat_tiyn for tax_invoice, and they must sum exactly. The server formats every money STRING and derives the amount in words, so total/total_words/totals.amount/totals.vat/totals.with_vat in the request are a 422 not_allowed_override. Scope: the document TOTAL only — per-line items[] figures stay free-form and are not reconciled against it */
+            /** @description Validated against the template's JSON Schema. Money is supplied as INTEGER tiyn — total_tiyn for invoice/avr/waybill, plus an OPTIONAL vat_tiyn for invoice/avr which must not exceed total_tiyn (422 exceeds_total); totals.amount_tiyn + totals.vat_tiyn + totals.with_vat_tiyn for tax_invoice, and those must sum exactly (422 inconsistent_total). The server formats every money STRING and derives the amount in words, so total/total_words/vat_amount/totals.amount/totals.vat/totals.with_vat in the request are a 422 not_allowed_override. vat_rate is a RATE, not an amount, and stays caller-authored free text. Scope: the document TOTAL lines only — per-line items[] figures stay free-form and are not reconciled against them */
             input?: {
                 [key: string]: unknown;
             };
