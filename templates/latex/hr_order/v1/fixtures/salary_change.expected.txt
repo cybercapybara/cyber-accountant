@@ -1,0 +1,12 @@
+# kind == "salary_change". The second of the two order kinds the escaping
+# order used to drop entirely — see fixtures/business_trip.expected.txt.
+# No effective_to: a salary change has a start date and no end date, and
+# neither branch of this kind prints one.
+Лауазымдық жалақыны өзгерту туралы бұйрық / Приказ об изменении должностного оклада
+Изменить должностной оклад
+Мазмұны / Содержание:
+Негіздеме / Основание:
+
+# As in fixtures/business_trip.expected.txt: this branch identifies the
+# employee by name and position, not by ЖСН/ИИН.
+unprinted employee.iin

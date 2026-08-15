@@ -3,10 +3,13 @@
  * @brief Escape an arbitrary UTF-8 string for safe interpolation into LaTeX
  *        source.
  *
- * `Docgen::render_tex` (Renderer.hpp) runs every string leaf of a template's
+ * `Docgen::render_tex` (Renderer.hpp) runs the string leaves of a template's
  * input tree through this before handing the tree to inja, so a counterparty
  * name containing `&`, a contract number containing `#`, or a line item
  * containing `\` never breaks — or, worse, injects — the compiled `.tex`.
+ * "The string leaves" is every one of them except a schema `enum` literal,
+ * which the template compares rather than typesets — see Renderer.hpp's file
+ * header for why that exception exists and why it adds no injection surface.
  * Only the fixed ASCII set of LaTeX-special characters is rewritten; every
  * other byte (including every multi-byte UTF-8 sequence — Cyrillic, Kazakh
  * letters, etc.) is copied through unchanged, since none of those bytes can
