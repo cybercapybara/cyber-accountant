@@ -25,8 +25,9 @@ templates/latex/<slug>/v<N>/
   `template_version` snapshot (`Ledger::Document::template_version`).
 - `fixtures/*.json` are sample inputs used ONLY by
   `scripts/render-templates.sh` (the `template-render` CI job) to smoke-test
-  that the template still compiles under a real XeLaTeX — they are not read
-  by the render job itself.
+  that the template still compiles under a real XeLaTeX **and that nothing
+  overhangs the page** (see "Tables start their own paragraph") — they are not
+  read by the render job itself.
 
 `templates/latex/invoice/v1/` is the reference implementation.
 
@@ -71,6 +72,40 @@ templates/latex/<slug>/v<N>/
   another font actually installed in the worker image) rather than assuming
   a font is present.
 
+### Tables start their own paragraph
+
+A `\textwidth`-wide `tabularx`/`tabular` is a single unbreakable box. If the
+block of text above it has not ended its paragraph, LaTeX typesets that box
+**inline**, continuing the last line — and the box then hangs off the right
+edge of the page. XeLaTeX reports this only as `Overfull \hbox (...pt too
+wide)`, a *warning*: the compile still exits 0 and a PDF is still produced,
+just with the right-hand columns pushed off the paper. This shipped in v0.3.0
+(ФНО 910.00 printed `10 000` where the amount was `10 000 000,00`; the payslip
+lost its entire amounts column *and* the column's static header).
+
+So, above every full-width table:
+
+- Terminate the block with an **unconditional `\par`**, written immediately
+  before the table's own `\vspace`. Never put the terminator inside an
+  `{% if %}` — an optional field that is absent then takes the paragraph break
+  with it, which is exactly how `invoice`/`tax_invoice` acquired the same bug.
+- In a block whose **last** line is optional, end *every* line with `\par`
+  rather than `\\`. `\par` is idempotent, so the extra one contributed by a
+  skipped `{% if %}` line (a skipped block still leaves its newline behind, and
+  two newlines are a paragraph break) is a harmless no-op. `\\` is not
+  idempotent in either direction: a trailing `\\` immediately before a `\par`
+  emits a spurious blank line, and a leading `\\` right after one is the hard
+  error `There's no line here to end`.
+- Each `\par`-terminated line needs its own `\noindent`, since it is now a
+  paragraph rather than a `\\`-continuation.
+- Long Kazakh prose has no hyphenation patterns under polyglossia's `russian`
+  setup and can overhang by a few points on its own; `\emergencystretch=2em`
+  in the preamble (see `labor_contract`) lets TeX loosen the line instead.
+
+`scripts/render-templates.sh` fails the `template-render` CI job on any
+overfull `\hbox` over `OVERFULL_MAX_PT` (default 1.0pt), so a regression here
+is caught before release rather than on a printed declaration.
+
 ## Testing a template
 
 - Unit tests (`tests/unit/test_template_registry.cpp`,
@@ -84,3 +119,6 @@ templates/latex/<slug>/v<N>/
   `template-render` CI job on the worker image. Add a fixture for every new
   template (and every new required/optional field combination worth
   covering) so a broken template fails there instead of in production.
+  That script gates on the XeLaTeX *transcript*, not just the exit code: any
+  `Overfull \hbox` over `OVERFULL_MAX_PT` (default 1.0pt) fails the job,
+  because a document that overhangs the page still compiles happily.

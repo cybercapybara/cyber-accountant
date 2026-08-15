@@ -9,15 +9,16 @@
 \begin{document}
 \begin{center}\Large\bfseries Счёт-фактура № {{ number }} от {{ date }}\end{center}
 \vspace{4mm}
-\noindent\field{Поставщик:} {{ seller.name }}, БИН/ИИН {{ seller.identifier }}\\
-{% if seller.address != "" %}\hphantom{\field{Поставщик:} }{{ seller.address }}\\{% endif %}
-{% if seller.iik != "" %}ИИК {{ seller.iik }}{% if seller.bank != "" %}, {{ seller.bank }}{% endif %}{% if seller.bik != "" %}, БИК {{ seller.bik }}{% endif %}{% if seller.kbe != "" %}, КБе {{ seller.kbe }}{% endif %}\\{% endif %}
-{% if seller.vat_certificate != "" %}Свидетельство плательщика НДС: {{ seller.vat_certificate }}\\{% endif %}
+\noindent\field{Поставщик:} {{ seller.name }}, БИН/ИИН {{ seller.identifier }}\par
+{% if seller.address != "" %}\noindent\hphantom{\field{Поставщик:} }{{ seller.address }}\par{% endif %}
+{% if seller.iik != "" %}\noindent ИИК {{ seller.iik }}{% if seller.bank != "" %}, {{ seller.bank }}{% endif %}{% if seller.bik != "" %}, БИК {{ seller.bik }}{% endif %}{% if seller.kbe != "" %}, КБе {{ seller.kbe }}{% endif %}\par{% endif %}
+{% if seller.vat_certificate != "" %}\noindent Свидетельство плательщика НДС: {{ seller.vat_certificate }}\par{% endif %}
 \vspace{2mm}
-\noindent\field{Покупатель:} {{ buyer.name }}, БИН/ИИН {{ buyer.identifier }}\\
-{% if buyer.address != "" %}\hphantom{\field{Покупатель:} }{{ buyer.address }}\\{% endif %}
-{% if buyer.vat_certificate != "" %}Свидетельство плательщика НДС: {{ buyer.vat_certificate }}\\{% endif %}
-\vspace{4mm}
+\noindent\field{Покупатель:} {{ buyer.name }}, БИН/ИИН {{ buyer.identifier }}\par
+{% if buyer.address != "" %}\noindent\hphantom{\field{Покупатель:} }{{ buyer.address }}\par{% endif %}
+{% if buyer.vat_certificate != "" %}\noindent Свидетельство плательщика НДС: {{ buyer.vat_certificate }}\par{% endif %}
+((# \par is unconditional by design -- the full-width table below has to start its
+    own paragraph. See templates/latex/README.md, "Tables start their own paragraph". #))\par\vspace{4mm}
 \noindent\begin{tabularx}{\textwidth}{@{}c X r r r r r r r@{}}
 \toprule
 № & Наименование & Ед. & Кол-во & Цена, ₸ & Стоимость без НДС, ₸ & Ставка НДС & Сумма НДС, ₸ & Всего с НДС, ₸ \\

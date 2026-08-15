@@ -5,6 +5,10 @@
 \usepackage{polyglossia}\setmainlanguage{russian}
 \usepackage{tabularx,booktabs,array}
 \newcommand{\field}[1]{\textbf{#1}}
+((# Long Kazakh prose has no hyphenation patterns under polyglossia's russian
+    setup, so a line of it can end up 6-7pt past the right margin. A little
+    emergency stretch lets TeX loosen the line instead of overhanging. #))
+\emergencystretch=2em
 \pagestyle{empty}
 \begin{document}
 \begin{center}\Large\bfseries Еңбек шарты № {{ number }} / Трудовой договор № {{ number }}\\
@@ -38,8 +42,9 @@
 \noindent\field{5. Тараптардың құқықтары мен міндеттері / Права и обязанности сторон}\\
 Тараптар Қазақстан Республикасының Еңбек кодексіне сәйкес құқықтарды пайдаланады және міндеттерді орындайды. / Стороны пользуются правами и несут обязанности в соответствии с Трудовым кодексом Республики Казахстан.
 \vspace{6mm}
-\noindent\field{6. Тараптардың деректемелері мен қолдары / Реквизиты и подписи сторон}\\
-\begin{tabular}{@{}p{0.45\textwidth}p{0.45\textwidth}@{}}
+\noindent\field{6. Тараптардың деректемелері мен қолдары / Реквизиты и подписи сторон}
+((# \par is unconditional by design -- the full-width table below has to start its
+    own paragraph. See templates/latex/README.md, "Tables start their own paragraph". #))\par\begin{tabular}{@{}p{0.45\textwidth}p{0.45\textwidth}@{}}
 Жұмыс беруші / Работодатель: & Қызметкер / Работник: \\[2mm]
 {{ employer.name }} & {{ employee.full_name }} \\
 БСН/БИН {{ employer.bin }} & ЖСН/ИИН {{ employee.iin }} \\[8mm]

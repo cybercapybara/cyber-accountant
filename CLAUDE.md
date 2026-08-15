@@ -56,7 +56,9 @@ gates by construction. Hand-rolled versions usually don't.
 CI additionally runs clang-tidy, ASan+UBSan (+TSAN), gitleaks, Trivy,
 helm-render and the OpenAPI-drift gate. `template-render` smoke-renders every
 LaTeX template on the worker image; it triggers on changes under
-`templates/**`, `src/docgen/**`, or `docker/Dockerfile`.
+`templates/**`, `src/docgen/**`, or `docker/Dockerfile`. It fails on an
+overfull `\hbox` over `OVERFULL_MAX_PT` (1.0pt) as well as on a nonzero
+XeLaTeX exit — a template whose table overhangs the page still "compiles".
 
 ## Don'ts
 

@@ -13,7 +13,8 @@
 \noindent\field{Жұмыс беруші / Работодатель:} {{ employer.name }}, БСН/БИН {{ employer.bin }}\\
 \noindent\field{Қызметкер / Работник:} {{ employee.full_name }}, ЖСН/ИИН {{ employee.iin }}\\
 \noindent\field{Лауазымы / Должность:} {{ employee.position }}
-\vspace{4mm}
+((# \par is unconditional by design -- the full-width table below has to start its
+    own paragraph. See templates/latex/README.md, "Tables start their own paragraph". #))\par\vspace{4mm}
 \noindent\begin{tabularx}{\textwidth}{@{}X r@{}}
 \toprule
 Көрсеткіш / Показатель & Сомасы, ₸ / Сумма, ₸ \\

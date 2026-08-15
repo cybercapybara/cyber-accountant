@@ -9,16 +9,17 @@
 \begin{document}
 \begin{center}\Large\bfseries Акт выполненных работ (оказанных услуг) № {{ number }} от {{ date }}\end{center}
 \vspace{4mm}
-\noindent За период: {{ act_period }}\\
+\noindent За период: {{ act_period }}\par
 \vspace{2mm}
-\noindent\field{Исполнитель:} {{ seller.name }}, БИН/ИИН {{ seller.identifier }}\\
-{% if seller.address != "" %}\hphantom{\field{Исполнитель:} }{{ seller.address }}\\{% endif %}
-{% if seller.iik != "" %}ИИК {{ seller.iik }}{% if seller.bank != "" %}, {{ seller.bank }}{% endif %}{% if seller.bik != "" %}, БИК {{ seller.bik }}{% endif %}{% if seller.kbe != "" %}, КБе {{ seller.kbe }}{% endif %}\\{% endif %}
+\noindent\field{Исполнитель:} {{ seller.name }}, БИН/ИИН {{ seller.identifier }}\par
+{% if seller.address != "" %}\noindent\hphantom{\field{Исполнитель:} }{{ seller.address }}\par{% endif %}
+{% if seller.iik != "" %}\noindent ИИК {{ seller.iik }}{% if seller.bank != "" %}, {{ seller.bank }}{% endif %}{% if seller.bik != "" %}, БИК {{ seller.bik }}{% endif %}{% if seller.kbe != "" %}, КБе {{ seller.kbe }}{% endif %}\par{% endif %}
 \vspace{2mm}
-\noindent\field{Заказчик:} {{ buyer.name }}, БИН/ИИН {{ buyer.identifier }}\\
-{% if buyer.address != "" %}\hphantom{\field{Заказчик:} }{{ buyer.address }}\\{% endif %}
-{% if contract != "" %}\noindent\field{Основание:} {{ contract }}\\{% endif %}
-\vspace{4mm}
+\noindent\field{Заказчик:} {{ buyer.name }}, БИН/ИИН {{ buyer.identifier }}\par
+{% if buyer.address != "" %}\noindent\hphantom{\field{Заказчик:} }{{ buyer.address }}\par{% endif %}
+{% if contract != "" %}\noindent\field{Основание:} {{ contract }}\par{% endif %}
+((# \par is unconditional by design -- the full-width table below has to start its
+    own paragraph. See templates/latex/README.md, "Tables start their own paragraph". #))\par\vspace{4mm}
 \noindent\begin{tabularx}{\textwidth}{@{}c X r r r r@{}}
 \toprule
 № & Наименование работ (услуг) & Кол-во & Ед. & Цена, ₸ & Сумма, ₸ \\
@@ -34,9 +35,9 @@
 ({{ total_words }})
 \vspace{6mm}
 \noindent Вышеперечисленные работы (услуги) выполнены полностью и в срок. Заказчик претензий по объёму, качеству и срокам не имеет.
-\vspace{12mm}
-\noindent
-\begin{tabular}{@{}p{0.45\textwidth}p{0.45\textwidth}@{}}
+((# \par is unconditional by design -- the full-width table below has to start its
+    own paragraph. See templates/latex/README.md, "Tables start their own paragraph". #))\par\vspace{12mm}
+\noindent\begin{tabular}{@{}p{0.45\textwidth}p{0.45\textwidth}@{}}
 Исполнитель: \hrulefill & Заказчик: \hrulefill \\[2mm]
 {{ seller.name }} & {{ buyer.name }} \\
 \end{tabular}

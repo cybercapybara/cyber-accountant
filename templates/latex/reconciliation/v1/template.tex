@@ -9,12 +9,13 @@
 \begin{document}
 \begin{center}\Large\bfseries Акт сверки взаиморасчётов за период с {{ period_from }} по {{ period_to }}\end{center}
 \vspace{4mm}
-\noindent\field{Сторона А:} {{ party_a.name }}, БИН/ИИН {{ party_a.identifier }}\\
-{% if party_a.address != "" %}\hphantom{\field{Сторона А:} }{{ party_a.address }}\\{% endif %}
+\noindent\field{Сторона А:} {{ party_a.name }}, БИН/ИИН {{ party_a.identifier }}\par
+{% if party_a.address != "" %}\noindent\hphantom{\field{Сторона А:} }{{ party_a.address }}\par{% endif %}
 \vspace{2mm}
-\noindent\field{Сторона Б:} {{ party_b.name }}, БИН/ИИН {{ party_b.identifier }}\\
-{% if party_b.address != "" %}\hphantom{\field{Сторона Б:} }{{ party_b.address }}\\{% endif %}
-\vspace{4mm}
+\noindent\field{Сторона Б:} {{ party_b.name }}, БИН/ИИН {{ party_b.identifier }}\par
+{% if party_b.address != "" %}\noindent\hphantom{\field{Сторона Б:} }{{ party_b.address }}\par{% endif %}
+((# \par is unconditional by design -- the full-width table below has to start its
+    own paragraph. See templates/latex/README.md, "Tables start their own paragraph". #))\par\vspace{4mm}
 \noindent\begin{tabularx}{\textwidth}{@{}l X r r r r@{}}
 \toprule
  & & \multicolumn{2}{c}{По данным {{ party_a.name }}} & \multicolumn{2}{c}{По данным {{ party_b.name }}} \\
@@ -29,9 +30,9 @@
 \vspace{4mm}
 \noindent {{ closing.a_says }}\\
 {{ closing.b_says }}
-\vspace{12mm}
-\noindent
-\begin{tabular}{@{}p{0.45\textwidth}p{0.45\textwidth}@{}}
+((# \par is unconditional by design -- the full-width table below has to start its
+    own paragraph. See templates/latex/README.md, "Tables start their own paragraph". #))\par\vspace{12mm}
+\noindent\begin{tabular}{@{}p{0.45\textwidth}p{0.45\textwidth}@{}}
 От {{ party_a.name }}: \hrulefill & От {{ party_b.name }}: \hrulefill \\
 \end{tabular}
 \end{document}

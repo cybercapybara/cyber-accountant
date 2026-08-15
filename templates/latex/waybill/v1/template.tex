@@ -15,8 +15,9 @@
 \vspace{2mm}
 \noindent\field{Получатель:} {{ buyer.name }}, БИН/ИИН {{ buyer.identifier }}\\
 {% if buyer.address != "" %}\hphantom{\field{Получатель:} }{{ buyer.address }}\\{% endif %}
-\noindent\field{Основание:} {{ basis }}\\
-\vspace{4mm}
+\noindent\field{Основание:} {{ basis }}
+((# \par is unconditional by design -- the full-width table below has to start its
+    own paragraph. See templates/latex/README.md, "Tables start their own paragraph". #))\par\vspace{4mm}
 \noindent\begin{tabularx}{\textwidth}{@{}c X r r r r@{}}
 \toprule
 № & Наименование & Ед. & Кол-во & Цена, ₸ & Сумма, ₸ \\
@@ -29,9 +30,9 @@
 \hfill\field{Итого: {{ total }} ₸}\par
 \noindent Всего наименований {{ length(items) }}, на сумму {{ total }} ₸\\
 ({{ total_words }})
-\vspace{12mm}
-\noindent
-\begin{tabular}{@{}p{0.45\textwidth}p{0.45\textwidth}@{}}
+((# \par is unconditional by design -- the full-width table below has to start its
+    own paragraph. See templates/latex/README.md, "Tables start their own paragraph". #))\par\vspace{12mm}
+\noindent\begin{tabular}{@{}p{0.45\textwidth}p{0.45\textwidth}@{}}
 Отпустил: \hrulefill & Получил: \hrulefill \\[2mm]
 {{ released_by }} & {{ received_by }} \\
 \end{tabular}
