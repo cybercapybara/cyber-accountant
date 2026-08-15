@@ -20,6 +20,36 @@
  *                                                + a presigned PUT, TTL 600s
  *   POST /api/v1/documents/{id}/confirm-upload verify the object landed in
  *                                                S3, then finalize
+ *   GET  /api/v1/documents/{id}/versions       the document's history,
+ *                                                oldest first
+ *   POST /api/v1/documents/{id}/versions       EDIT: append a version and
+ *                                                queue its render (202)
+ *   POST /api/v1/documents/{id}/versions/{version_no}/download-url
+ *                                              presigned GET for ONE
+ *                                                historical version, TTL 300s
+ *
+ * Editing (P3 task 9) — why the body is `{input}` and not a snapshot.
+ * An accounting document is evidence: overwriting one in place silently
+ * rewrites a file someone may already have cited. So an edit APPENDS a
+ * version, the previous PDF stays in object storage, and `/versions` is what
+ * keeps it reachable. The security property that makes this safe is that the
+ * edit body goes through the SAME allowlist as creation
+ * (Docgen::InputPolicy), never through the stored snapshot:
+ *   - a caller-authored slug (invoice/avr/waybill/tax_invoice/reconciliation
+ *     — nothing in the database stands behind it) takes the whole object,
+ *     exactly like POST /documents/generate, and runs the same money
+ *     derivation, so a client-supplied `total`/`total_words` is still a 422;
+ *   - every other slug (fno_910, fno_300, payslip, hr_order,
+ *     labor_contract) accepts ONLY Docgen::InputPolicy::editable_fields(slug)
+ *     merged over the PREVIOUS version's snapshot, so each server-derived
+ *     figure is carried forward unchanged from the version that was rendered
+ *     out of authoritative rows.
+ * `input_snapshot` is precisely what the render job renders, so accepting it
+ * wholesale would reopen the forgery hole P2 closed (a declaration whose PDF
+ * claimed a 1 ₸ balance while the XML of the same filing told the truth).
+ * A document whose `source` is `uploaded` or `email`, or which has no
+ * `template_slug`, has no snapshot by construction and is 409 `not_editable`
+ * — there is nothing to re-render.
  *
  * RBAC: `uploads` and `confirm-upload` create/modify a document row and go
  * through API_REQUIRE_ORG_PERM for `documents`/write against the §5.3
@@ -38,7 +68,12 @@
  * which every route that has already loaded a row must go through, and
  * `list`'s unconditional narrowing: a caller holding only `hr_docs`/read
  * gets doc_type='hr' forced onto BOTH the listing query and its count,
- * regardless of what ?type it did or did not send.
+ * regardless of what ?type it did or did not send. That helper carries the
+ * WRITE gate too, not just reads: `createVersion` is a mutation, but WHICH
+ * resource it mutates still depends on the row it just loaded, so it calls
+ * ensure_document_access(..., kWrite) rather than API_REQUIRE_ORG_PERM with
+ * a fixed resource — a кадровик may edit an hr document and may not even see
+ * an invoice, and one gate has to express both.
  *
  * Presigning needs Storage::S3Storage::presign(), which is deliberately NOT
  * part of the StorageBackend interface (LocalStorage has no query-signing
@@ -125,9 +160,13 @@
 #include "api/HandlerSupport.hpp"
 #include "api/RequestUtils.hpp"
 #include "api/Validation.hpp"
+#include "docgen/InputPolicy.hpp"
+#include "docgen/TemplateRegistry.hpp"
 #include "files/FileKeys.hpp"
+#include "jobs/Jobs.hpp"
 #include "ledger/Document.hpp"
 #include "ledger/DocumentRepository.hpp"
+#include "ledger/DocumentVersion.hpp"
 #include "storage/Storage.hpp"
 #include "tenancy/OrgContext.hpp"
 #include "tenancy/OrgPermissions.hpp"
@@ -146,7 +185,27 @@ public:
     ADD_METHOD_TO(LedgerDocumentsController::downloadUrl, "/api/v1/documents/{1}/download-url", Post);
     ADD_METHOD_TO(LedgerDocumentsController::startUpload, "/api/v1/documents/uploads", Post);
     ADD_METHOD_TO(LedgerDocumentsController::confirmUpload, "/api/v1/documents/{1}/confirm-upload", Post);
+    ADD_METHOD_TO(LedgerDocumentsController::listVersions, "/api/v1/documents/{1}/versions", Get);
+    ADD_METHOD_TO(LedgerDocumentsController::createVersion, "/api/v1/documents/{1}/versions", Post);
+    // Formatting is suppressed for the next registration only: it is two
+    // columns over the limit, and scripts/check-routes-registered.sh scans
+    // ADD_METHOD_TO LINE BY LINE — a wrapped registration is invisible to the
+    // triple-sync gate, so the route would ship undocumented. Same hazard
+    // PayrollController::generatePayslip's comment records; there the fix was
+    // a shorter handler name, here it is the PATH that is long.
+    // clang-format off
+    ADD_METHOD_TO(LedgerDocumentsController::versionDownloadUrl, "/api/v1/documents/{1}/versions/{2}/download-url", Post);
+    // clang-format on
     METHOD_LIST_END
+
+    /// TTL of every presigned GET this controller mints — the document's
+    /// current file and any one historical version alike.
+    static constexpr int kDownloadTtlSec = 300;
+
+    /// The same job type DocgenController::generate enqueues (that file's
+    /// header explains why the string is duplicated rather than pulled in
+    /// from the worker-side docgen/RenderJob.hpp).
+    static constexpr const char* kRenderJobType = "docgen.render";
 
     /// doc_type allowlist — mirrors migrations/010_documents.sql's CHECK
     /// constraint byte-for-byte. DocumentRepository does not validate this
@@ -276,6 +335,13 @@ public:
     // GET /documents/{id} — checked AFTER find_in_org, so a document that
     // belongs to another organization stays a 404 rather than becoming a
     // 403 that confirms its existence.
+    //
+    // Accepted exposure, stated rather than left implicit: a presign issued
+    // before the document was voided, or before an edit superseded the
+    // version it points at, keeps working until its TTL (300s) runs out.
+    // That is the deal S3 query-signing makes, not a defect here — revoking
+    // an already-issued link would require proxying the download through
+    // this service, and there is no such path in the system.
     // -------------------------------------------------------------------
     void downloadUrl(const HttpRequestPtr& req,
                      std::function<void(const HttpResponsePtr&)>&& callback,
@@ -305,7 +371,7 @@ public:
                                                             "Presigned URLs require the S3 storage backend"));
                 return;
             }
-            const std::string url = s3->presign(*found->s3_key, "GET", 300);
+            const std::string url = s3->presign(*found->s3_key, "GET", kDownloadTtlSec);
             callback(Response::ok({{"url", url}}));
         });
     }
@@ -506,7 +572,230 @@ public:
         });
     }
 
+    // -------------------------------------------------------------------
+    // GET /api/v1/documents/{id}/versions — the document's history, oldest
+    // first. A READ of the document, gated exactly like GET /documents/{id}
+    // (the same per-row helper), because it is the same evidence seen from
+    // a different angle. `input_snapshot` is NOT in the payload — see
+    // Ledger::to_json(DocumentVersion).
+    // -------------------------------------------------------------------
+    void listVersions(const HttpRequestPtr& req,
+                      std::function<void(const HttpResponsePtr&)>&& callback,
+                      const std::string& id) {
+        API_REQUIRE_ORG(req, callback, ctx);
+        if (!is_valid_uuid(id)) {
+            callback(ErrorResponse::bad_request("invalid_id", "Malformed document id"));
+            return;
+        }
+
+        with_repo_errors(callback, "documents listVersions", [&] {
+            Ledger::DocumentRepository repo;
+            auto found = repo.find_in_org(id, ctx.org_id);
+            if (!found) {
+                callback(ErrorResponse::not_found("document"));
+                return;
+            }
+            if (!ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kRead))
+                return;
+            json data = json::array();
+            for (const auto& v : repo.list_versions(ctx.org_id, id))
+                data.push_back(json(v));
+            callback(Response::list(data));
+        });
+    }
+
+    // -------------------------------------------------------------------
+    // POST /api/v1/documents/{id}/versions — правка документа: новая
+    // версия + новый рендер, предыдущий PDF остаётся. Тело — {input},
+    // и это НЕ снапшот: принимается ровно тот же набор полей, что и при
+    // создании документа этого шаблона (см. Docgen::InputPolicy), всё
+    // остальное переносится из предыдущей версии. Приём снапшота целиком
+    // воспроизвёл бы дыру подделки, закрытую в P2.
+    // -------------------------------------------------------------------
+    void createVersion(const HttpRequestPtr& req,
+                       std::function<void(const HttpResponsePtr&)>&& callback,
+                       const std::string& id) {
+        API_REQUIRE_ORG(req, callback, ctx);
+        if (!is_valid_uuid(id)) {
+            callback(ErrorResponse::bad_request("invalid_id", "Malformed document id"));
+            return;
+        }
+        json body;
+        if (!Validation::parse_body(req, body, callback))
+            return;
+        if (body.contains("input") && !body["input"].is_object()) {
+            Validation::Errors errs;
+            errs.add("input", "not_object", "must be a JSON object");
+            callback(Validation::response_400(errs));
+            return;
+        }
+        const json client_input = body.value("input", json::object());
+
+        with_repo_errors(callback, "documents createVersion", [&] {
+            Ledger::DocumentRepository repo;
+            auto found = repo.find_in_org(id, ctx.org_id);
+            if (!found) {
+                callback(ErrorResponse::not_found("document"));
+                return;
+            }
+            // Хелпер задачи 7 — единственная точка, где решается, какой
+            // ресурс матрицы §5.3 у этого документа.
+            if (!ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kWrite))
+                return;
+            // Загруженные и пришедшие почтой документы не редактируются: у
+            // них input_snapshot пуст по построению, редактировать нечего.
+            if (found->source != "generated" || !found->template_slug || found->template_slug->empty()) {
+                callback(
+                    ErrorResponse::conflict("not_editable", "Only documents generated from a template can be edited"));
+                return;
+            }
+            const std::string slug = *found->template_slug;
+
+            auto previous = repo.latest_version(ctx.org_id, id);
+            if (!previous) {
+                spdlog::error("documents createVersion: document {} has no versions", id);
+                callback(ErrorResponse::internal_error());
+                return;
+            }
+
+            json input;
+            if (Docgen::InputPolicy::input_is_caller_authored(slug)) {
+                // Первичка: весь объект авторский, ровно как в
+                // POST /documents/generate — и та же деривация суммы.
+                input = client_input;
+                std::string bad_field, bad_code, bad_message;
+                if (!Docgen::InputPolicy::apply_derived_amount(slug, input, bad_field, bad_code, bad_message)) {
+                    callback(Validation::response_422(bad_field, bad_code, bad_message));
+                    return;
+                }
+            } else {
+                // Серверная форма: база — снапшот предыдущей версии,
+                // сверху ложатся ТОЛЬКО allowlisted-ключи. Любой другой —
+                // 422 not_allowed_override, тем же механизмом, что при
+                // создании.
+                input = previous->input_snapshot ? *previous->input_snapshot : json::object();
+                if (!Validation::merge_allowed_extra(
+                        input, client_input, Docgen::InputPolicy::editable_fields(slug), callback))
+                    return;
+            }
+
+            Docgen::TemplateRegistry registry;
+            auto info = registry.latest(slug);
+            if (!info) {
+                spdlog::error("documents createVersion: template '{}' not found on disk", slug);
+                callback(ErrorResponse::internal_error());
+                return;
+            }
+            if (auto err = Docgen::TemplateRegistry::validate(*info, input)) {
+                callback(Validation::response_422("input", "schema_validation_failed", *err));
+                return;
+            }
+            API_REQUIRE_JOBS_READY(callback);
+
+            auto version = repo.add_version(ctx.org_id,
+                                            id,
+                                            std::optional<nlohmann::json>{input},
+                                            std::optional<std::string>{info->version_str},
+                                            std::optional<std::string>{ctx.user_id});
+
+            // Best-effort enqueue — та же посадка, что у
+            // DocgenController::generate: версия уже существует, и сбой
+            // Redis не должен превращать её в 500 без номера, по которому
+            // клиент мог бы опрашивать состояние.
+            json payload = {{"org_id", ctx.org_id},
+                            {"document_id", id},
+                            {"version_id", version.id},
+                            {"slug", slug},
+                            {"input", input}};
+            bool render_queued = false;
+            try {
+                auto job = Jobs::get().submit(kRenderJobType, payload);
+                spdlog::debug("documents createVersion: version {} enqueued as job {}", version.id, job.id);
+                render_queued = true;
+            } catch (const std::exception& e) {
+                spdlog::error(
+                    "documents createVersion: enqueue docgen.render for version {} failed: {}", version.id, e.what());
+            }
+            const json response_body = {{"document_id", id},
+                                        {"version_id", version.id},
+                                        {"version_no", version.version_no},
+                                        {"render_queued", render_queued}};
+            callback(Response::accepted(response_body));
+        });
+    }
+
+    // -------------------------------------------------------------------
+    // POST /api/v1/documents/{id}/versions/{version_no}/download-url —
+    // presigned GET for ONE historical version, TTL 300s. Same read gate,
+    // same accepted TTL exposure as downloadUrl() above; the point of the
+    // route is that superseding a document does not take its earlier
+    // evidence away.
+    // -------------------------------------------------------------------
+    void versionDownloadUrl(const HttpRequestPtr& req,
+                            std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& id,
+                            const std::string& version_no_param) {
+        API_REQUIRE_ORG(req, callback, ctx);
+        if (!is_valid_uuid(id)) {
+            callback(ErrorResponse::bad_request("invalid_id", "Malformed document id"));
+            return;
+        }
+        int version_no = 0;
+        if (!parse_version_no(version_no_param, version_no)) {
+            callback(ErrorResponse::bad_request("invalid_version", "Version number must be a positive integer"));
+            return;
+        }
+
+        with_repo_errors(callback, "documents versionDownloadUrl", [&] {
+            Ledger::DocumentRepository repo;
+            auto found = repo.find_in_org(id, ctx.org_id);
+            if (!found) {
+                callback(ErrorResponse::not_found("document"));
+                return;
+            }
+            if (!ensure_document_access(callback, ctx, *found, Tenancy::OrgPerm::Action::kRead))
+                return;
+            auto version = repo.find_version(ctx.org_id, id, version_no);
+            if (!version) {
+                callback(ErrorResponse::not_found("document_version"));
+                return;
+            }
+            if (!version->s3_key || version->s3_key->empty()) {
+                callback(ErrorResponse::conflict("no_file", "This version has no stored file yet"));
+                return;
+            }
+            auto* s3 = s3_backend();
+            if (!s3) {
+                callback(ErrorResponse::service_unavailable("presign_unsupported",
+                                                            "Presigned URLs require the S3 storage backend"));
+                return;
+            }
+            const std::string url = s3->presign(*version->s3_key, "GET", kDownloadTtlSec);
+            callback(Response::ok({{"url", url}}));
+        });
+    }
+
 private:
+    /// Parse the `{version_no}` path segment. Digits only, no sign, no
+    /// whitespace, at most 9 of them (so std::stoi below cannot throw or
+    /// overflow), and strictly positive — version numbers start at 1
+    /// (migrations/018_document_versions.sql's CHECK). Anything else is a
+    /// malformed REQUEST SHAPE, i.e. a 400, not a 422: "abc" is not a
+    /// version number that happens to be wrong, it is not a version number.
+    static bool parse_version_no(const std::string& s, int& out) {
+        if (s.empty() || s.size() > 9)
+            return false;
+        for (const unsigned char c : s) {
+            if (c < '0' || c > '9')
+                return false;
+        }
+        const int value = std::stoi(s);
+        if (value <= 0)
+            return false;
+        out = value;
+        return true;
+    }
+
     /// Ресурс матрицы §5.3 для КОНКРЕТНОГО документа: кадровые документы —
     /// hr_docs (кадровик их видит), вся остальная первичка — documents (не
     /// видит). Обе живут в одной таблице, поэтому ресурс определяется
@@ -523,10 +812,11 @@ private:
     /// оставаться 404, а не превращаться в 403.
     ///
     /// Все маршруты над ОДНИМ документом обязаны ходить через неё, а не
-    /// повторять условие у себя: сейчас их два (get, downloadUrl), задачи 9
-    /// и 11 добавят ещё пять (listVersions, createVersion,
-    /// versionDownloadUrl, remove, voidDocument), и семь копий одного
-    /// условия разъедутся при первой же правке матрицы.
+    /// повторять условие у себя: сейчас их пять (get, downloadUrl и три
+    /// маршрута версий из задачи 9), задача 11 добавит ещё два (remove,
+    /// voidDocument), и семь копий одного условия разъедутся при первой же
+    /// правке матрицы. @p action здесь не только kRead: createVersion —
+    /// запись, и та же функция решает, по какому ресурсу её проверять.
     static bool ensure_document_access(const std::function<void(const HttpResponsePtr&)>& callback,
                                        const Tenancy::OrgContext& ctx,
                                        const Ledger::Document& doc,

@@ -23,6 +23,14 @@
  * for the one place a constraint violation is handled, and why it returns
  * `false` instead.
  *
+ * P3 task 9: two cross-org outcomes that used to reach the caller as raw
+ * SQLSTATEs (i.e. 500s) are now ordinary domain answers, because HTTP routes
+ * sit in front of both — add_version() throws
+ * Repositories::NotFoundError("document") instead of letting the composite FK
+ * raise 23503, and set_current_version() returns `false` instead of letting
+ * the DEFERRABLE documents_current_version_fk fail at COMMIT. See each
+ * method's comment for the exact mechanism.
+ *
  * `status` values are NOT validated here — migrations/010_documents.sql's
  * CHECK constraint is the source of truth for the allowed set (spanning both
  * the generated and the inbound lifecycle), and it is the API layer's job
@@ -45,6 +53,7 @@
 #include "database/Database.hpp"
 #include "ledger/Document.hpp"
 #include "ledger/DocumentVersion.hpp"
+#include "repositories/RepoErrors.hpp"
 #include "tenancy/OrgScoped.hpp"
 
 namespace Ledger {
@@ -280,14 +289,27 @@ public:
      * this document's rows) rather than by a read followed by a write, so
      * two concurrent edits cannot both decide they are version N —
      * UNIQUE(document_id, version_no) turns the loser into a 23505 instead
-     * of a silent overwrite. The aggregate over an empty set yields NULL, so
-     * COALESCE makes the first version 1.
+     * of a silent overwrite. The scalar subquery over an empty set yields
+     * NULL, so COALESCE makes the first version 1.
      *
-     * No application-side org check: document_versions' composite FK
-     * `(document_id, org_id) -> documents(id, org_id)` cannot be satisfied
-     * by a document from another tenant, so a cross-org call fails with a
-     * raw 23503 rather than quietly writing — the same "trust the caller,
-     * let the FK be the wall" posture link_entry() documents.
+     * P3 task 9 — cross-org call is a DOMAIN error, not a raw SQLSTATE.
+     * The source row of the INSERT is now the `documents` row itself,
+     * selected `WHERE d.id = $2 AND d.org_id = $1`: a document belonging to
+     * another tenant (or none at all) selects nothing, so the INSERT writes
+     * nothing and RETURNING comes back empty, which this method turns into
+     * Repositories::NotFoundError("document") — the 404 that
+     * Api::with_repo_errors() already maps, matching what find_in_org()
+     * would have answered for the same id. Before this, the composite FK
+     * `(document_id, org_id) -> documents(id, org_id)` was the only wall
+     * and a cross-org id surfaced as a raw pqxx::sql_error (SQLSTATE 23503)
+     * — i.e. a 500 — which is not an acceptable answer once an HTTP route
+     * (POST /documents/{id}/versions) sits in front of it. `org_id` and
+     * `document_id` are taken from that same authoritative row rather than
+     * from the parameters, so the pair written can never disagree with the
+     * document it belongs to.
+     *
+     * @throws Repositories::NotFoundError if @p document_id does not exist
+     *         in @p org_id.
      */
     DocumentVersion add_version(const std::string& org_id,
                                 const std::string& document_id,
@@ -297,12 +319,15 @@ public:
         std::optional<std::string> snapshot_text;
         if (input_snapshot)
             snapshot_text = input_snapshot->dump();
-        return Database::get().execute_write([&](auto& txn) {
+        auto inserted = Database::get().execute_write([&](auto& txn) -> std::optional<DocumentVersion> {
             auto r = txn.exec_params(
                 "INSERT INTO document_versions (org_id, document_id, version_no, template_version, input_snapshot, "
                 "created_by_user_id) "
-                "SELECT $1::uuid, $2::uuid, COALESCE(MAX(version_no), 0) + 1, $3::text, $4::jsonb, $5::uuid "
-                "  FROM document_versions WHERE document_id = $2::uuid "
+                "SELECT d.org_id, d.id, "
+                "       COALESCE((SELECT MAX(v.version_no) FROM document_versions v "
+                "                  WHERE v.document_id = d.id), 0) + 1, "
+                "       $3::text, $4::jsonb, $5::uuid "
+                "  FROM documents d WHERE d.id = $2::uuid AND d.org_id = $1::uuid "
                 "RETURNING " +
                     std::string(kVersionColumns),
                 org_id,
@@ -310,8 +335,13 @@ public:
                 template_version,
                 snapshot_text,
                 created_by_user_id);
+            if (r.empty())
+                return std::nullopt;
             return DocumentVersion::from_row(r[0]);
         });
+        if (!inserted)
+            throw Repositories::NotFoundError("document");
+        return *inserted;
     }
 
     /// Every version of @p document_id, oldest first. Org-scoped on the
@@ -400,17 +430,28 @@ public:
      *        document sees. Separate from set_version_file() on purpose —
      *        a version becomes visible only once its bytes are durably in
      *        object storage.
-     * @return false if no document matches (id, org_id) both. A version id
-     *         belonging to another tenant cannot be published even if this
-     *         returned true for the document: documents_current_version_fk
-     *         pins (current_version_id, org_id), so such an UPDATE dies with
-     *         a 23503 at COMMIT (the constraint is DEFERRABLE) rather than
-     *         pointing across the tenant boundary.
+     * @return false if no document matches (id, org_id) both, OR if
+     *         @p version_id is not a version OF THAT document in that org.
+     *
+     * P3 task 9 — the EXISTS predicate is the fix, not decoration.
+     * documents_current_version_fk pins (current_version_id, org_id), so a
+     * foreign version could never actually be published; but the constraint
+     * is DEFERRABLE, so the UPDATE used to SUCCEED at statement time and
+     * only die at COMMIT with a raw 23503 — i.e. the caller got a 500 for
+     * what is an ordinary "no such version here" outcome, and got it from a
+     * throw the calling handler could not attribute to this statement.
+     * Checking the version's own (id, org_id, document_id) up front turns
+     * that into this method's normal `false`, the same contract
+     * set_version_file()/set_status() already have.
      */
     bool set_current_version(const std::string& org_id, const std::string& document_id, const std::string& version_id) {
         return Database::get().execute_write([&](auto& txn) {
             auto r = txn.exec_params(
-                "UPDATE documents SET current_version_id = $3 WHERE id = $1 AND org_id = $2 RETURNING id",
+                "UPDATE documents SET current_version_id = $3 "
+                " WHERE id = $1 AND org_id = $2 "
+                "   AND EXISTS (SELECT 1 FROM document_versions v "
+                "                WHERE v.id = $3 AND v.org_id = $2 AND v.document_id = $1) "
+                "RETURNING id",
                 document_id,
                 org_id,
                 version_id);

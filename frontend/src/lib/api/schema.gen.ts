@@ -2501,6 +2501,248 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/documents/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * List a document's versions (oldest first)
+         * @description The document's history. A READ of the document, gated exactly like
+         *     `GET /documents/{id}` — `doc_type=hr` rows are the `hr_docs`
+         *     resource, every other document is `documents`, checked after the row
+         *     is located so another organization's document stays a 404.
+         *     `input_snapshot` is deliberately absent from every item: it is the
+         *     full render input, signatories and money included.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Every version of this document, ascending by version_no */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentVersionListResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a document belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Edit a document: append a new version and queue its render
+         * @description An accounting document is evidence, so an edit never overwrites a
+         *     file: it appends a version, queues a `docgen.render` job for it, and
+         *     leaves the previous PDF in storage, reachable through
+         *     `POST /documents/{id}/versions/{version_no}/download-url`. Until the
+         *     new render finishes, the document keeps reporting the PREVIOUS
+         *     version's file.
+         *
+         *     The body is `{input}` and is NOT a version snapshot — it passes
+         *     through exactly the same allowlist as creation; see
+         *     `CreateDocumentVersionRequest` for what that admits per template and
+         *     why. A field outside the allowlist is a 422 `not_allowed_override`
+         *     and nothing is written.
+         *
+         *     Only a document with `source='generated'` AND a `template_slug` can
+         *     be edited; `uploaded`/`email` documents have no render input by
+         *     construction and are a 409 `not_editable`. Write-gated per document
+         *     (`hr_docs` for `doc_type=hr`, `documents` otherwise), checked after
+         *     the row is located.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["CreateDocumentVersionRequest"];
+                };
+            };
+            responses: {
+                /** @description Version appended, render queued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CreateDocumentVersionResponse"];
+                    };
+                };
+                /** @description Malformed id, malformed JSON, or `input` is not an object */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your organization role is not allowed to write this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found (including a document belonging to another organization) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description not_editable (source is uploaded/email, or the document has no template_slug) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description not_allowed_override (a field outside the creation allowlist, including a server-derived money string), or schema_validation_failed */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description jobs_disabled — the job queue is not enabled, so nothing would render the new version */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{id}/versions/{version_no}/download-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                version_no: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a presigned download URL for ONE version of a document
+         * @description The counterpart of `POST /documents/{id}/download-url` for a
+         *     historical version — the point of versioning is that superseding a
+         *     document does not take its earlier evidence away. POST, but
+         *     semantically a READ: it writes nothing and carries the same
+         *     per-document read gate. The TTL caveat on `DownloadUrlResponse.url`
+         *     applies here too.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    version_no: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Presigned URL for this version's stored file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DownloadUrlResponse"];
+                    };
+                };
+                /** @description Malformed id, or invalid_version (version_no is not a positive integer) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your organization role is not allowed to read this document (hr_docs for doc_type=hr, documents otherwise) (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found — the document (including one belonging to another organization) or the version number */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description no_file — this version has no stored file yet (its render has not finished) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Presigning requires the S3 storage backend */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/documents/uploads": {
         parameters: {
             query?: never;
@@ -2989,7 +3231,7 @@ export interface paths {
         };
         /**
          * List registered docgen templates (slug, version, schema)
-         * @description Scans templates/latex/ (Docgen::TemplateRegistry::list()) — read-only, no viewer gate.
+         * @description Scans templates/latex/ (Docgen::TemplateRegistry::list()). Read-only, but NOT ungated: the template registry is the shape of the primary documents a role may not see, and "—" in the §5.3 matrix means invisible, not read-only — so this requires `documents`/read and answers 403 org_role_denied without it (the `hr` role, for one).
          */
         get: {
             parameters: {
@@ -5424,8 +5666,50 @@ export interface components {
             checksum_sha256: string;
         };
         DownloadUrlResponse: {
-            /** @description Presigned S3 GET URL, TTL 300s */
+            /** @description Presigned S3 GET URL, TTL 300s. A URL already issued keeps working until its TTL expires even if the document is later voided or the version superseded — revoking it would require proxying downloads, which this service does not do */
             url: string;
+        };
+        DocumentVersion: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            document_id: string;
+            /** @description Starts at 1; an edit appends the next number */
+            version_no: number;
+            /** @description null until this version's render has stored its file */
+            s3_key: string | null;
+            checksum_sha256: string | null;
+            mime: string | null;
+            /** Format: int64 */
+            size_bytes: number | null;
+            /** @description The on-disk template version this render used, e.g. 'v1' */
+            template_version: string | null;
+            /** Format: uuid */
+            created_by_user_id: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        DocumentVersionListResponse: {
+            data: components["schemas"]["DocumentVersion"][];
+        };
+        CreateDocumentVersionRequest: {
+            /** @description NOT a version snapshot. The edit goes through exactly the same allowlist as creation (Docgen::InputPolicy), because input_snapshot is precisely what the render job renders, and accepting it verbatim would reopen the forgery hole P2 closed. For a caller-authored slug (invoice, avr, waybill, tax_invoice, reconciliation) the whole object is taken, exactly as by POST /documents/generate, and runs the same money derivation — money is INTEGER tiyn (total_tiyn, or totals.*_tiyn), and a client-supplied total/total_words/totals.* string is a 422 not_allowed_override. For every server-built form (fno_910, fno_300, payslip, hr_order, labor_contract) ONLY the keys in Docgen::InputPolicy::editable_fields(slug) are accepted, merged over the PREVIOUS version's snapshot, so every server-derived figure is carried forward unchanged; any other key is a 422 not_allowed_override and nothing is written. */
+            input?: {
+                [key: string]: unknown;
+            };
+        };
+        CreateDocumentVersionResponse: {
+            /** Format: uuid */
+            document_id: string;
+            /**
+             * Format: uuid
+             * @description The version this edit appended
+             */
+            version_id: string;
+            /** @description The new version number. The document keeps reporting the PREVIOUS version's file until this one's render finishes */
+            version_no: number;
+            /** @description false if the docgen.render job could not be enqueued (e.g. a transient Redis error) — the version row still exists; an operator must re-enqueue it */
+            render_queued: boolean;
         };
         JournalLine: {
             /** Format: uuid */
