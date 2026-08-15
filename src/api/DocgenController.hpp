@@ -12,11 +12,17 @@
  * API_REQUIRE_ORG(req, callback, ctx)):
  *   GET  /api/v1/doc-templates      registry scan: {slug, version, schema}
  *                                    for every template on disk — read-only,
- *                                    no viewer gate.
+ *                                    not yet permission-gated (a follow-up
+ *                                    task adds the read-side gate).
  *   POST /api/v1/documents/generate  body {template_slug, input,
  *                                    counterparty_id?, link_entry_id?} ->
- *                                    202 {document_id}. Accountant/owner
- *                                    only.
+ *                                    202 {document_id}.
+ *
+ * RBAC: `documents/generate` goes through API_REQUIRE_ORG_PERM for
+ * `documents`/write against the §5.3 permission matrix (Tenancy::OrgPerm),
+ * which DENIES BY DEFAULT — an unknown role, resource or action is a 403, so
+ * a role added later cannot fail open the way the old `ctx.role == "viewer"`
+ * denylist let it.
  *
  * `docgen.render`'s job type string is duplicated here as `kRenderJobType`
  * rather than pulling in `docgen/RenderJob.hpp` for its `kJobType` constant:
@@ -129,6 +135,7 @@
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalRepository.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "utils/ErrorResponse.hpp"
 
 namespace Api {
@@ -168,10 +175,7 @@ public:
     // -------------------------------------------------------------------
     void generate(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot generate documents"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kDocuments, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;

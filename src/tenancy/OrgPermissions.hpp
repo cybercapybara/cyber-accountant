@@ -1,0 +1,140 @@
+/**
+ * @file OrgPermissions.hpp
+ * @brief Матрица прав тенантной роли (спека P3 §5.3) как чистая функция.
+ * @details До P3 контроль прав был денилистом из одного значения —
+ *          `if (ctx.role == "viewer")` в 23 местах девяти контроллеров — и
+ *          любая новая роль проходила его насквозь, получая полный CRUD на
+ *          журнал проводок, налоги, зарплату и её проведение в учёт. Здесь
+ *          таблица §5.3 записана явно, с ЗАПРЕТОМ ПО УМОЛЧАНИЮ: неизвестная
+ *          роль, неизвестный ресурс, незаполненная ячейка и неизвестное
+ *          действие дают false.
+ *
+ *          «—» в таблице спеки означает НЕВИДИМО, а не «только чтение»:
+ *          поэтому у кадровика нет и read на payroll/journal/tax, и гейт
+ *          обязан стоять не только на мутациях, но и на каждом GET
+ *          (задача 7 плана).
+ *
+ *          Роли перечислены один раз, в detail::kRoles, а гранты в строках
+ *          kMatrix идут позиционно по этому списку. Роль, добавленная в
+ *          kRoles, но не заведённая в строке ресурса, получает nullptr —
+ *          то есть отказ. Это и есть свойство, ради которого таблица
+ *          написана: забытая ячейка закрывает доступ, а не открывает.
+ *
+ *          Чистый модуль: ни БД, ни Drogon — тестируется в tests/unit
+ *          (tests/unit/test_org_permissions.cpp). Потребители используют
+ *          макрос API_REQUIRE_ORG_PERM (src/api/Guards.hpp), а не вызывают
+ *          allows() руками.
+ */
+
+#pragma once
+
+#include <cstddef>
+#include <iterator>
+#include <string>
+#include <string_view>
+
+namespace Tenancy::OrgPerm {
+
+namespace Resource {
+inline constexpr const char* kEmployees = "employees";
+inline constexpr const char* kHrDocs = "hr_docs";
+inline constexpr const char* kPayroll = "payroll";
+inline constexpr const char* kPayrollPosting = "payroll_posting";
+inline constexpr const char* kJournal = "journal";
+inline constexpr const char* kCounterparties = "counterparties";
+inline constexpr const char* kDocuments = "documents";
+inline constexpr const char* kTax = "tax";
+inline constexpr const char* kMembers = "members";
+}  // namespace Resource
+
+namespace Action {
+inline constexpr const char* kRead = "read";
+inline constexpr const char* kWrite = "write";
+}  // namespace Action
+
+namespace detail {
+
+/// Колонки таблицы §5.3 в порядке следования. Роли, которой здесь нет, не
+/// принадлежит ни одна ячейка — значит, она закрыта на всё.
+inline constexpr const char* kRoles[] = {"owner", "accountant", "hr", "viewer"};
+inline constexpr std::size_t kRoleCount = std::size(kRoles);
+
+/// Одна строка таблицы §5.3. Элементы @c grants идут ПОЗИЦИОННО по kRoles.
+/// Значение гранта: "rw" — чтение и запись, "r" — только чтение, "" —
+/// невидимо (ни чтения, ни записи), nullptr — ячейка не заполнена вовсе,
+/// что тоже означает отказ.
+struct MatrixRow {
+    const char* resource;
+    const char* grants[kRoleCount];
+};
+
+/// Таблица прав спеки P3 §5.3. Порядок колонок — kRoles. Колонки выровнены
+/// вручную (clang-format off): эту таблицу читают глазами на ревью, и
+/// съехавшая колонка здесь стоит дороже единообразия форматирования.
+// clang-format off
+inline constexpr MatrixRow kMatrix[] = {
+    //  ресурс                      owner accountant   hr  viewer
+    {Resource::kEmployees,        {"rw",     "rw",   "rw",   "r"}},
+    {Resource::kHrDocs,           {"rw",     "rw",   "rw",   "r"}},
+    {Resource::kPayroll,          {"rw",     "rw",     "",   "r"}},
+    {Resource::kPayrollPosting,   {"rw",     "rw",     "",    ""}},
+    {Resource::kJournal,          {"rw",     "rw",     "",   "r"}},
+    {Resource::kCounterparties,   {"rw",     "rw",     "",   "r"}},
+    {Resource::kDocuments,        {"rw",     "rw",     "",   "r"}},
+    {Resource::kTax,              {"rw",     "rw",     "",   "r"}},
+    {Resource::kMembers,          {"rw",      "",      "",    ""}},
+};
+// clang-format on
+
+/// Индекс роли в kRoles, либо kRoleCount, если роль неизвестна.
+constexpr std::size_t role_index(std::string_view role) {
+    for (std::size_t i = 0; i < kRoleCount; ++i) {
+        if (role == kRoles[i])
+            return i;
+    }
+    return kRoleCount;
+}
+
+/**
+ * @brief Грант роли @p role на ресурс @p resource в таблице @p rows.
+ * @return Строку гранта ("rw" / "r" / ""), либо nullptr, если пары в таблице
+ *         нет: неизвестная роль, неизвестный ресурс или незаполненная ячейка.
+ * @details Единственная точка «запрета по умолчанию» по двум измерениям из
+ *          трёх. Шаблон по массиву строк, а не по kMatrix напрямую, — чтобы
+ *          unit-тест мог прогнать ту же логику по собственной таблице с
+ *          намеренно пропущенной ячейкой и доказать, что она закрывает.
+ */
+template <std::size_t N>
+constexpr const char* grant_for(const MatrixRow (&rows)[N], std::string_view role, std::string_view resource) {
+    const std::size_t r = role_index(role);
+    if (r == kRoleCount)
+        return nullptr;  // неизвестная роль
+    for (std::size_t i = 0; i < N; ++i) {
+        if (resource == rows[i].resource)
+            return rows[i].grants[r];  // может быть nullptr — незаполненная ячейка
+    }
+    return nullptr;  // неизвестный ресурс
+}
+
+}  // namespace detail
+
+/**
+ * @brief Разрешено ли @p role выполнить @p action над @p resource.
+ * @details Запрет по умолчанию во всех трёх измерениях: неизвестный ресурс,
+ *          неизвестная роль и неизвестное действие дают false. Любой
+ *          непустой грант подразумевает чтение ("rw" и "r" читают, "" и
+ *          nullptr — нет); запись требует буквы 'w'.
+ */
+inline bool allows(const std::string& role, const std::string& resource, const std::string& action) {
+    const char* grants = detail::grant_for(detail::kMatrix, role, resource);
+    if (grants == nullptr)
+        return false;
+    const std::string_view granted(grants);
+    if (action == Action::kRead)
+        return !granted.empty();
+    if (action == Action::kWrite)
+        return granted.find('w') != std::string_view::npos;
+    return false;  // неизвестное действие
+}
+
+}  // namespace Tenancy::OrgPerm

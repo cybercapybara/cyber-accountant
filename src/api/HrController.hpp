@@ -25,9 +25,12 @@
  *                                                     ?employee_id)
  *   POST /api/v1/vacations                          create (accountant/owner)
  *
- * RBAC: every mutating route (create and generate-document) additionally
- * rejects `ctx.role == "viewer"` with 403. `org_id` comes EXCLUSIVELY from
- * `ctx.org_id`.
+ * RBAC: every mutating route (create and generate-document) additionally goes
+ * through API_REQUIRE_ORG_PERM for `hr_docs`/write against the §5.3
+ * permission matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown
+ * role, resource or action is a 403, so a role added later cannot fail open
+ * the way the old `ctx.role == "viewer"` denylist let it. Reads are gated in
+ * a follow-up task. `org_id` comes EXCLUSIVELY from `ctx.org_id`.
  *
  * Cross-org employee_id: HrRepository's create_order/create_contract/
  * create_vacation rely on migrations/012_hr.sql's composite FK
@@ -125,6 +128,7 @@
 #include "ledger/JournalService.hpp"
 #include "money/AmountInWords.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "tenancy/Organization.hpp"
 #include "tenancy/OrganizationRepository.hpp"
 #include "utils/ErrorResponse.hpp"
@@ -187,10 +191,7 @@ public:
     // -------------------------------------------------------------------
     void createOrder(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot create HR orders"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -277,10 +278,7 @@ public:
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot generate documents"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed HR order id"));
             return;
@@ -365,10 +363,7 @@ public:
     // -------------------------------------------------------------------
     void createContract(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot create labor contracts"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -444,10 +439,7 @@ public:
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot generate documents"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed labor contract id"));
             return;
@@ -555,10 +547,7 @@ public:
     // -------------------------------------------------------------------
     void createVacation(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot create vacations"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kHrDocs, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;

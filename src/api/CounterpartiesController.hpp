@@ -11,8 +11,11 @@
  *   GET   /api/v1/counterparties/{id}   fetch one
  *   PATCH /api/v1/counterparties/{id}   full replace (accountant/owner only)
  *
- * RBAC: mutations (POST/PATCH) additionally reject `ctx.role == "viewer"`
- * with 403 — the rule this task's brief states for every ledger route.
+ * RBAC: mutations (POST/PATCH) additionally go through API_REQUIRE_ORG_PERM
+ * for `counterparties`/write against the §5.3 permission matrix
+ * (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown role, resource or
+ * action is a 403, so a role added later cannot fail open the way the old
+ * `ctx.role == "viewer"` denylist let it. Reads are gated in a follow-up.
  * `org_id` is taken EXCLUSIVELY from `ctx.org_id` (the access token's
  * membership-backed org claim) — never from the path, body, or a query
  * param; that was the T7 review lesson behind `Files::org_key` trusting its
@@ -43,6 +46,7 @@
 #include "ledger/CounterpartyRepository.hpp"
 #include "ledger/KzIdentifiers.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "utils/ErrorResponse.hpp"
 
 namespace Api {
@@ -82,10 +86,8 @@ public:
     // -------------------------------------------------------------------
     void create(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot create counterparties"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(
+            callback, ctx, Tenancy::OrgPerm::Resource::kCounterparties, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -131,10 +133,8 @@ public:
                std::function<void(const HttpResponsePtr&)>&& callback,
                const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot modify counterparties"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(
+            callback, ctx, Tenancy::OrgPerm::Resource::kCounterparties, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed counterparty id"));
             return;

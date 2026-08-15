@@ -17,9 +17,14 @@
  *   POST /api/v1/payroll-runs/{id}/payslips/{employee_id}/generate-document
  *                                             -> `payslip` docgen, 202
  *
- * RBAC: every mutating route rejects `ctx.role == "viewer"` with 403, the
- * rule every ledger/HR route follows. `org_id` comes EXCLUSIVELY from
- * `ctx.org_id` — never a body field, a query param or a path segment.
+ * RBAC: every mutating route goes through API_REQUIRE_ORG_PERM against the
+ * §5.3 permission matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an
+ * unknown role, resource or action is a 403, so a role added later cannot
+ * fail open the way the old `ctx.role == "viewer"` denylist let it. The
+ * payroll routes require `payroll`/write; post-to-journal requires the
+ * separate `payroll_posting`/write. Read routes are gated in a follow-up
+ * task. `org_id` comes EXCLUSIVELY from `ctx.org_id` — never a body field, a
+ * query param or a path segment.
  *
  * `POST /payroll-runs` answers 200, not 201: PayrollService::calculate_run is
  * an UPSERT over `payroll_runs`' UNIQUE(org_id, period_year, period_month)
@@ -123,6 +128,7 @@
 #include "payroll/PayrollService.hpp"
 #include "payroll/Payslip.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "tenancy/Organization.hpp"
 #include "tenancy/OrganizationRepository.hpp"
 #include "utils/ErrorResponse.hpp"
@@ -202,10 +208,7 @@ public:
     // -------------------------------------------------------------------
     void calculate(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot calculate payroll"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kPayroll, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -275,10 +278,7 @@ public:
                  std::function<void(const HttpResponsePtr&)>&& callback,
                  const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot approve payroll runs"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kPayroll, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed payroll run id"));
             return;
@@ -306,10 +306,8 @@ public:
                        std::function<void(const HttpResponsePtr&)>&& callback,
                        const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot post payroll to the journal"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(
+            callback, ctx, Tenancy::OrgPerm::Resource::kPayrollPosting, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed payroll run id"));
             return;
@@ -383,10 +381,7 @@ public:
                          const std::string& id,
                          const std::string& employee_id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot generate documents"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kPayroll, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed payroll run id"));
             return;

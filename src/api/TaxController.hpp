@@ -27,11 +27,15 @@
  *   POST /api/v1/tax/filings/{id}/download-url  ?artifact=xml|pdf ->
  *                                               presigned GET, TTL 300s
  *
- * RBAC: `POST /tax/calculations` and `POST /tax/filings` reject
- * `ctx.role == "viewer"` with 403 — both write. `download-url` does NOT (it
- * mints a URL and writes nothing), exactly like
- * LedgerDocumentsController::downloadUrl. `org_id` comes EXCLUSIVELY from
- * `ctx.org_id`.
+ * RBAC: `POST /tax/calculations` and `POST /tax/filings` go through
+ * API_REQUIRE_ORG_PERM for `tax`/write against the §5.3 permission matrix
+ * (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown role, resource or
+ * action is a 403, so a role added later cannot fail open the way the old
+ * `ctx.role == "viewer"` denylist let it. `download-url` is not gated here
+ * (it mints a URL and writes nothing), exactly like
+ * LedgerDocumentsController::downloadUrl; the read-side gate for it and for
+ * the GETs lands in a follow-up task. `org_id` comes EXCLUSIVELY from
+ * `ctx.org_id` — never a body field, a query param or a path segment.
  *
  * `GET /tax/rates` and `GET /tax/deadlines` return SYSTEM data — `tax_rates`/
  * `tax_constants` and `tax_deadlines` have no org_id at all (the documented
@@ -188,6 +192,7 @@
 #include "tax/TaxReferenceRepository.hpp"
 #include "tax/TaxService.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "tenancy/Organization.hpp"
 #include "tenancy/OrganizationRepository.hpp"
 #include "utils/ErrorResponse.hpp"
@@ -366,10 +371,7 @@ public:
     // -------------------------------------------------------------------
     void createCalculation(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot run tax calculations"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -481,10 +483,7 @@ public:
     // -------------------------------------------------------------------
     void createFiling(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot generate tax filings"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kTax, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;

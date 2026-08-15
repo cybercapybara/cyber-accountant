@@ -12,9 +12,12 @@
  *   PATCH /api/v1/employees/{id}        patch editable fields (accountant/owner only)
  *   POST  /api/v1/employees/{id}/dismiss  {dismissed_on} -> status='dismissed' (accountant/owner only)
  *
- * RBAC: every mutating route (create/patch/dismiss) additionally rejects
- * `ctx.role == "viewer"` with 403 — the rule every ledger/HR route in this
- * codebase follows. `org_id` comes EXCLUSIVELY from `ctx.org_id`, never the
+ * RBAC: every mutating route (create/patch/dismiss) additionally goes through
+ * API_REQUIRE_ORG_PERM for `employees`/write against the §5.3 permission
+ * matrix (Tenancy::OrgPerm), which DENIES BY DEFAULT — an unknown role,
+ * resource or action is a 403, so a role added later cannot fail open the way
+ * the old `ctx.role == "viewer"` denylist let it. Reads are gated in a
+ * follow-up. `org_id` comes EXCLUSIVELY from `ctx.org_id`, never the
  * path/body/a query param.
  *
  * Validation split (same 400-shape / 422-value line CounterpartiesController's
@@ -63,6 +66,7 @@
 #include "ledger/JournalService.hpp"
 #include "ledger/KzIdentifiers.hpp"
 #include "tenancy/OrgContext.hpp"
+#include "tenancy/OrgPermissions.hpp"
 #include "utils/ErrorResponse.hpp"
 
 namespace Api {
@@ -108,10 +112,7 @@ public:
     // -------------------------------------------------------------------
     void create(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot create employees"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kEmployees, Tenancy::OrgPerm::Action::kWrite);
         json body;
         if (!Validation::parse_body(req, body, callback))
             return;
@@ -157,10 +158,7 @@ public:
                std::function<void(const HttpResponsePtr&)>&& callback,
                const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot modify employees"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kEmployees, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed employee id"));
             return;
@@ -194,10 +192,7 @@ public:
                  std::function<void(const HttpResponsePtr&)>&& callback,
                  const std::string& id) {
         API_REQUIRE_ORG(req, callback, ctx);
-        if (ctx.role == "viewer") {
-            callback(ErrorResponse::forbidden("viewer_read_only", "Viewers cannot dismiss employees"));
-            return;
-        }
+        API_REQUIRE_ORG_PERM(callback, ctx, Tenancy::OrgPerm::Resource::kEmployees, Tenancy::OrgPerm::Action::kWrite);
         if (!is_valid_uuid(id)) {
             callback(ErrorResponse::bad_request("invalid_id", "Malformed employee id"));
             return;

@@ -205,7 +205,7 @@ TEST_F(PayrollApiTest, CalculateRunViewerForbidden) {
     ctrl.calculate(req, [&](const HttpResponsePtr& r) { resp = r; });
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
-    EXPECT_EQ(body_of(resp)["error"].get<std::string>(), "viewer_read_only");
+    EXPECT_EQ(body_of(resp)["error"].get<std::string>(), "org_role_denied");
 }
 
 TEST_F(PayrollApiTest, CalculateRunMissingFieldsBadRequest) {
