@@ -1,0 +1,2 @@
+# This fixture carries an opening balance, which prints its own row heading.
+Сальдо на начало периода

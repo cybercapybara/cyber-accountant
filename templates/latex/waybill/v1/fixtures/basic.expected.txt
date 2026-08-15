@@ -1,0 +1,4 @@
+# Labels printed only when the fixture supplies the optional bank details.
+ИИК
+БИК
+КБе

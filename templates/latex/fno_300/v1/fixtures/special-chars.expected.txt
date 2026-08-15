@@ -1,0 +1,2 @@
+# balance_kind == "to_refund" — the other closing block.
+Сумма НДС, подлежащая возврату из бюджета:

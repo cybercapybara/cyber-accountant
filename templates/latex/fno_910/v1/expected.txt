@@ -1,0 +1,27 @@
+# Static labels ФНО 910.00 prints, and its page margin box.
+# The row codes are part of the form: a declaration that loses "910.00.001"
+# or the amount next to it is not a declaration.
+margin 18mm
+
+Упрощённая декларация для субъектов малого бизнеса
+(форма 910.00)
+полугодие
+года
+Наименование:
+БИН:
+Показатель
+Код строки
+Сумма
+Доход за налоговый период
+910.00.001
+Ставка налога
+910.00.002
+Сумма налога, подлежащая уплате
+910.00.003
+Сумма налога к уплате:
+Директор
+Бухгалтер
+Дата подписания:
+
+# period.half only ever selects a roman numeral, never a label of its own.
+unprinted period.half

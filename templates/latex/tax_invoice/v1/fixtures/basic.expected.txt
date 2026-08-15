@@ -1,0 +1,6 @@
+# Labels printed only when the fixture supplies the optional bank details and
+# both parties' VAT certificates.
+ИИК
+БИК
+КБе
+Свидетельство плательщика НДС:

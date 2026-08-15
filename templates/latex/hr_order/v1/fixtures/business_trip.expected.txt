@@ -5,10 +5,21 @@
 # They had no fixture, so nothing rendered them — that is why the render gate
 # saw the defect only in fno_300. They have one now.
 Іссапарға жіберу туралы бұйрық / Приказ о направлении в командировку
+іссапарға жіберілсін.
+Направить
 в командировку с
 по
 Мазмұны / Содержание:
 Негіздеме / Основание:
+
+# Both halves of the order body, in both languages, and the optional
+# effective_to sub-branch inside each of them — this fixture supplies an end
+# date, so "бастап … дейін" and "по …" must both be on the page. Asserting
+# only the title would have let the branch render its heading and nothing
+# else, which is exactly the shape of the defect that made this fixture
+# necessary.
+бастап
+дейін
 
 # Only the hire and dismiss branches restate the employee's ЖСН/ИИН — a trip
 # order identifies them by name and position. Nothing about that is new; this

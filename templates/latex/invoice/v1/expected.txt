@@ -1,0 +1,19 @@
+# Static labels every invoice prints, and its page margin box.
+# Format: scripts/check-render.py. Labels that only one fixture's data
+# switches on live in fixtures/<name>.expected.txt next to that fixture.
+margin 18mm
+
+Счёт на оплату №
+Поставщик:
+Покупатель:
+БИН/ИИН
+Наименование
+Кол-во
+Ед.
+Цена, ₸
+Сумма, ₸
+Итого к оплате:
+Всего наименований
+на сумму
+Руководитель
+Гл. бухгалтер

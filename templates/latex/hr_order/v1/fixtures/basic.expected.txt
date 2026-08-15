@@ -1,0 +1,17 @@
+# kind == "hire", with both an optional Содержание and Основание supplied.
+Жұмысқа қабылдау туралы бұйрық / Приказ о приёме на работу
+бастап
+лауазымына жұмысқа қабылдансын.
+Принять
+на работу с
+на должность
+Мазмұны / Содержание:
+Негіздеме / Основание:
+
+# Restated in the body of this branch. Not every branch does — see
+# fixtures/business_trip.expected.txt — so it is asserted per fixture.
+ЖСН/ИИН
+
+# A hire order has no end date: `effective_to` is only printed by the
+# vacation and business-trip branches.
+unprinted effective_to

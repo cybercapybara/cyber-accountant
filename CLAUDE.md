@@ -41,6 +41,11 @@ gates by construction. Hand-rolled versions usually don't.
    placeholders, env overrides everything (`docs/CONFIG.md` is the full
    table). gitleaks gates CI; `make prod-check` gates the prod profile.
 8. **Commits:** conventional commits, no AI-attribution trailers.
+9. **Document templates carry their own expectations:** every
+   `templates/latex/<slug>/v<N>/` needs an `expected.txt` listing the static
+   labels it prints and its `margin <N>mm`, plus optional per-fixture
+   `fixtures/<name>.expected.txt`. `scripts/check-render.py` fails if it is
+   missing — a template with no declared expectations cannot be gated.
 
 ## Gate sequence — run cheapest-first before pushing
 
@@ -54,11 +59,31 @@ gates by construction. Hand-rolled versions usually don't.
 7. `make ci-local` — full local reproduction of CI
 
 CI additionally runs clang-tidy, ASan+UBSan (+TSAN), gitleaks, Trivy,
-helm-render and the OpenAPI-drift gate. `template-render` smoke-renders every
-LaTeX template on the worker image; it triggers on changes under
-`templates/**`, `src/docgen/**`, or `docker/Dockerfile`. It fails on an
-overfull `\hbox` over `OVERFULL_MAX_PT` (1.0pt) as well as on a nonzero
-XeLaTeX exit — a template whose table overhangs the page still "compiles".
+helm-render and the OpenAPI-drift gate. `template-render` renders every
+template fixture on the worker image (`worker-render-check` target — the
+production worker image plus `pdftotext`/`python3`) and then **gates the PDF
+it produced**, in three steps:
+
+1. `scripts/render-templates.sh` — compiles every
+   `templates/latex/*/v*/fixtures/*.json` through the worker's
+   `--render-template` mode, i.e. the real render pipeline. A nonzero XeLaTeX
+   exit fails the job; so does an overfull `\hbox` over `OVERFULL_MAX_PT`
+   (1.0pt), kept as a LaTeX-only tripwire for overflow in material that
+   produces no text (a `\hrulefill` rule, an `\hline`).
+2. `scripts/check-render.py` — the gate proper, engine-agnostic, run per
+   fixture. **Content:** every scalar in the fixture and every label in
+   `expected.txt` must appear in the PDF's extracted text; a `*_tiyn` integer
+   is checked as the money string it must have been formatted into
+   (`1234567` → `12 345,67`), never as a raw integer, and an amount that
+   survives only broken across a line break counts as lost. **Geometry:**
+   every word box from `pdftotext -bbox` must lie inside the declared margin
+   box (0.5pt of slack sideways, 6.0pt vertically for font ascent).
+3. `scripts/check-render-selftest.sh` — breaks payslip, fno_910 and
+   tax_invoice on purpose and fails unless the gate catches all three and
+   names what was lost.
+
+It triggers on changes under `templates/**`, `src/docgen/**`,
+`docker/Dockerfile` or the three gate scripts.
 
 ## Don'ts
 
