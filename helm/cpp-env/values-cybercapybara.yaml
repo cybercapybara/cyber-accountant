@@ -36,7 +36,7 @@
 # There is NO imagePullSecret on this release, by design. All three
 # ghcr.io/cybercapybara/* packages (cyber-accountant, -worker, -frontend) are
 # PUBLIC, so the kubelet pulls them anonymously. Verified 2026-08-15 by
-# fetching each `0.4.1` manifest from ghcr.io with a token obtained WITHOUT
+# fetching each `0.4.2` manifest from ghcr.io with a token obtained WITHOUT
 # credentials — all three returned HTTP 200.
 #
 # This is a real, load-bearing dependency, so treat it as one:
@@ -163,7 +163,7 @@ redis:
 cyber-accountant:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant
-    tag: "0.4.1"  # payslips move to doc_type='payroll' (migration 023) so the hr role can no longer read them — NOT "v0.4.1" (release.yml strips the `v` prefix); confirmed present via /v2/.../tags/list before use
+    tag: "0.4.2"  # docgen escaping order: a string leaf is escaped only if the template PRINTS it, not when it COMPARES it — restores the ФНО 300.00 closing line and the business_trip/salary_change order bodies. NOT "v0.4.2" (release.yml strips the `v` prefix); confirmed present via /v2/.../tags/list before use
   # No imagePullSecrets: this package is public and pulled anonymously.
   # See "IMAGE PULLS DEPEND ON THE GHCR PACKAGES STAYING PUBLIC" at the top.
   externalKafka:
@@ -356,7 +356,7 @@ cyber-accountant:
 cyber-accountant-worker:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-worker
-    tag: "0.4.1"  # see note above — unprefixed tag, payslip permission fix
+    tag: "0.4.2"  # see note above — unprefixed tag, docgen escaping-order fix
   # No imagePullSecrets: this package is public and pulled anonymously.
   # See "IMAGE PULLS DEPEND ON THE GHCR PACKAGES STAYING PUBLIC" at the top.
   tracing:
@@ -429,6 +429,6 @@ cyber-accountant-worker:
 cpp-frontend:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-frontend
-    tag: "0.4.1"  # see note above — unprefixed tag, payslip permission fix
+    tag: "0.4.2"  # see note above — unprefixed tag, docgen escaping-order fix
   # No imagePullSecrets: this package is public and pulled anonymously.
   # See "IMAGE PULLS DEPEND ON THE GHCR PACKAGES STAYING PUBLIC" at the top.
