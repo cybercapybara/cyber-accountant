@@ -37,6 +37,7 @@ export type JournalLineWrite = Schemas['JournalLineWrite'];
 export type JournalEntry = Schemas['JournalEntry'];
 export type JournalEntryCreate = Schemas['JournalEntryCreate'];
 export type Document = Schemas['Document'];
+export type DocumentVersion = Schemas['DocumentVersion'];
 export type DocTemplate = Schemas['DocTemplate'];
 export type DocumentUploadCreate = Schemas['DocumentUploadCreate'];
 export type DocumentConfirmUpload = Schemas['DocumentConfirmUpload'];
@@ -113,8 +114,21 @@ export type DocumentListResponse = Schemas['DocumentListResponse'];
 export type DocumentDetailResponse = Schemas['DocumentDetailResponse'];
 /** POST /api/v1/documents/uploads — { data: Document, upload_url }. */
 export type DocumentUploadResponse = Schemas['DocumentUploadResponse'];
-/** POST /api/v1/documents/{id}/download-url — { url }. */
+/** POST /api/v1/documents/{id}/download-url, POST …/versions/{no}/download-url — { url }. */
 export type DownloadUrlResponse = Schemas['DownloadUrlResponse'];
+/** GET /api/v1/documents/{id}/versions — { data: DocumentVersion[] }, oldest first. */
+export type DocumentVersionListResponse = Schemas['DocumentVersionListResponse'];
+/** POST /api/v1/documents/{id}/versions — an EDIT. NOT a snapshot: `input`
+ * goes through the same allowlist as creation, so money stays integer tiyn
+ * and a client-supplied `total`/`total_words` is a 422 `not_allowed_override`.
+ * An absent body re-renders the stored input unchanged. */
+export type CreateDocumentVersionRequest = Schemas['CreateDocumentVersionRequest'];
+/** POST /api/v1/documents/{id}/versions — 202 { document_id, version_id,
+ * version_no, render_queued }. The document keeps reporting the PREVIOUS
+ * version's file until this one's render finishes. */
+export type CreateDocumentVersionResponse = Schemas['CreateDocumentVersionResponse'];
+/** POST /api/v1/documents/{id}/void — { reason }, mandatory and non-blank. */
+export type VoidDocumentRequest = Schemas['VoidDocumentRequest'];
 /** GET /api/v1/doc-templates — { data: DocTemplate[] }. */
 export type DocTemplateListResponse = Schemas['DocTemplateListResponse'];
 /** POST /api/v1/documents/generate — 202 { document_id, render_queued }. */

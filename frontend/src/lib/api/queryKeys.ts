@@ -38,6 +38,15 @@ export const qk = {
   },
   documents: {
     /**
+     * The bare prefix — the list, every detail and every version history at
+     * once. Editing, deleting and voiding all change what the OTHER two
+     * views show (a new version supersedes the file the list links to; a
+     * void marks a row that a detail card is displaying), so those three
+     * mutations invalidate this rather than picking a subset and leaving one
+     * view stale.
+     */
+    root: () => ['documents'] as const,
+    /**
      * `filters` (type/status) is serialised into the key, same pattern as
      * journal.entries above — a changed filter is a fresh cache entry,
      * while the bare prefix (['documents','all']) still matches every
@@ -49,6 +58,14 @@ export const qk = {
         ? (['documents', 'all'] as const)
         : (['documents', 'all', JSON.stringify(filters)] as const),
     detail: (id: string) => ['documents', 'detail', id] as const,
+    /**
+     * One document's version history. Sits under the same ['documents']
+     * prefix on purpose: an edit, a delete or a void invalidates
+     * `['documents']` and that one call reaches the list, the detail and
+     * every open history at once — the three views that disagree the moment
+     * any of them is refreshed alone.
+     */
+    versions: (id: string) => ['documents', 'versions', id] as const,
   },
   docTemplates: {
     all: () => ['docTemplates', 'all'] as const,

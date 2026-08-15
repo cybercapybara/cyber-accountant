@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import type { Document } from '@/lib/api/types';
 import { toTiyn } from '@/lib/money';
 
 /**
@@ -172,4 +173,334 @@ export function parseVatRatePercent(rate: string): number {
   const match = /^(\d+(?:\.\d+)?)/.exec(rate.trim());
   if (!match) return 0;
   return Number.parseFloat(match[1]);
+}
+
+// ── Аннулирование ───────────────────────────────────────────────────────────
+
+/** Причина аннулирования — обязательна: аннулирование без причины
+ *  бессмысленно для аудита, ради которого оно и существует. */
+export const voidDocumentSchema = z.object({
+  reason: z.string().trim().min(1, 'Укажите причину аннулирования'),
+});
+export type VoidDocumentValues = z.infer<typeof voidDocumentSchema>;
+
+// ── Что с документом вообще можно сделать ───────────────────────────────────
+
+/**
+ * Почему сервер отказал в удалении. Клиент не может узнать это заранее:
+ * в `Document` нет ни поля «связан с проведённой проводкой», ни «на меня
+ * ссылается приказ» — оба условия живут в других таблицах и наружу не
+ * выставлены (см. LedgerDocumentsController::remove). Поэтому интерфейс
+ * делает две вещи: правило написано рядом с кнопками ДО первого клика, а
+ * полученный от сервера отказ запоминается и превращает кнопку «Удалить» в
+ * объяснение — второй раз пользователь в ту же стену не упирается.
+ */
+export type DeleteBlockCode = 'document_has_posted_entries' | 'document_referenced';
+
+export const DELETE_BLOCK_REASONS: Record<DeleteBlockCode, string> = {
+  document_has_posted_entries:
+    'Документ связан с проведённой проводкой — его можно только аннулировать.',
+  document_referenced:
+    'На документ ссылается кадровый приказ или налоговая отчётность — доступно только аннулирование.',
+};
+
+/**
+ * Слаги, у которых есть форма правки. `payslip` отсутствует намеренно: с
+ * P3 у расчётного листка не осталось каллер-полей вовсе — всё, включая
+ * сумму прописью, выводится из сохранённой ведомости, и пустая правка
+ * означала бы «перерендерить то же самое».
+ */
+export const EDITABLE_TEMPLATE_SLUGS = [
+  'invoice',
+  'avr',
+  'waybill',
+  'tax_invoice',
+  'reconciliation',
+  'fno_910',
+  'fno_300',
+  'hr_order',
+  'labor_contract',
+] as const;
+export type EditableTemplateSlug = (typeof EDITABLE_TEMPLATE_SLUGS)[number];
+
+export function isEditableTemplateSlug(slug: string | null): slug is EditableTemplateSlug {
+  return !!slug && (EDITABLE_TEMPLATE_SLUGS as readonly string[]).includes(slug);
+}
+
+export interface DocumentActionAvailability {
+  canEdit: boolean;
+  canDelete: boolean;
+  canVoid: boolean;
+  /** Почему действие недоступно — показывается вместо кнопки, а не вместо ошибки. */
+  editBlockReason: string | null;
+  deleteBlockReason: string | null;
+  voidBlockReason: string | null;
+}
+
+/**
+ * Единственное место, где решается, что предложить пользователю над
+ * конкретным документом. Чистая функция от строки документа и от уже
+ * полученного (если был) отказа сервера в удалении — поэтому она
+ * тестируется без рендера.
+ *
+ * Главное правило, которое интерфейс обязан показывать, а не прятать за
+ * ошибкой: документ, ставший основанием проведённой проводки, удалить
+ * нельзя никогда — его аннулируют. Значит и предлагать надо аннулирование.
+ */
+export function documentActionAvailability(
+  doc: Pick<Document, 'source' | 'template_slug' | 'voided_at'>,
+  deleteBlock?: DeleteBlockCode | null,
+): DocumentActionAvailability {
+  if (doc.voided_at) {
+    return {
+      canEdit: false,
+      canDelete: false,
+      canVoid: false,
+      editBlockReason: 'Аннулированный документ изменить нельзя — он больше не перерендеривается.',
+      deleteBlockReason:
+        'Аннулированный документ удалить нельзя: он остаётся в реестре как след решения.',
+      voidBlockReason: 'Документ уже аннулирован.',
+    };
+  }
+
+  let editBlockReason: string | null = null;
+  if (doc.source !== 'generated') {
+    editBlockReason = 'Загруженные и присланные почтой документы не редактируются.';
+  } else if (doc.template_slug === 'payslip') {
+    editBlockReason =
+      'У расчётного листка не осталось полей для правки — он целиком выводится из ведомости.';
+  } else if (!isEditableTemplateSlug(doc.template_slug)) {
+    editBlockReason = 'Для этого шаблона правка не поддерживается.';
+  }
+
+  const deleteBlockReason = deleteBlock ? DELETE_BLOCK_REASONS[deleteBlock] : null;
+
+  return {
+    canEdit: editBlockReason === null,
+    canDelete: deleteBlockReason === null,
+    canVoid: true,
+    editBlockReason,
+    deleteBlockReason,
+    voidBlockReason: null,
+  };
+}
+
+// ── Снапшот версии → значения формы правки ──────────────────────────────────
+
+/**
+ * `input_snapshot` — это то, что уходило в рендер: суммы в нём уже
+ * отформатированы («1 234,56»), ставка НДС записана как «16%». Формы же
+ * работают с сырыми десятичными строками, поэтому предзаполнение — не
+ * присваивание, а обратное преобразование, и оно покрыто тестами.
+ *
+ * Ни одна из этих функций НЕ достаёт из снапшота `total`, `total_words`,
+ * `totals.*` и прочие серверные производные: их вычисляет сервер, а
+ * присланные клиентом — 422 `not_allowed_override`. Итог формы всегда
+ * пересчитывается из позиций.
+ */
+type Snapshot = Record<string, unknown> | null | undefined;
+
+function snapshotString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function snapshotObject(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function snapshotArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * «1 234,56» → «1234.56» — обратное к `formatTiynRu`. Неразобранное
+ * значение становится пустой строкой, а не нулём и не мусором: пустое поле
+ * поймает zod при отправке, а «0» тихо подменил бы цену.
+ */
+export function ruMoneyToDecimal(value: unknown): string {
+  // \s already covers NBSP and the narrow no-break space, so a value grouped
+  // by anything other than formatTiynRu's plain ASCII space parses too.
+  const raw = snapshotString(value).replace(/\s/g, '').replace(',', '.');
+  return /^\d+(\.\d{1,2})?$/.test(raw) ? raw : '';
+}
+
+/** «16%» → «16»; пусто остаётся пустым (НДС в счёте необязателен). */
+export function vatRateFromSnapshot(value: unknown): string {
+  return snapshotString(value).replace('%', '').trim();
+}
+
+function snapshotToParty(value: unknown): SellerDefaultsValues {
+  const party = snapshotObject(value);
+  return {
+    name: snapshotString(party.name),
+    identifier: snapshotString(party.identifier),
+    address: snapshotString(party.address),
+    iik: snapshotString(party.iik),
+    bik: snapshotString(party.bik),
+    bank: snapshotString(party.bank),
+    kbe: snapshotString(party.kbe),
+    vat_certificate: snapshotString(party.vat_certificate),
+  };
+}
+
+function snapshotToLineItems(value: unknown): LineItemValues[] {
+  const items = snapshotArray(value).map((raw) => {
+    const item = snapshotObject(raw);
+    return {
+      name: snapshotString(item.name),
+      qty: snapshotString(item.qty),
+      unit: snapshotString(item.unit),
+      price: ruMoneyToDecimal(item.price),
+    };
+  });
+  return items.length > 0 ? items : [{ ...EMPTY_LINE_ITEM }];
+}
+
+export function snapshotToInvoiceValues(
+  snapshot: Snapshot,
+  counterpartyId: string | null,
+): InvoiceFormValues {
+  const input = snapshotObject(snapshot);
+  return {
+    number: snapshotString(input.number),
+    date: snapshotString(input.date),
+    seller: snapshotToParty(input.seller),
+    buyerCounterpartyId: counterpartyId ?? '',
+    contract: snapshotString(input.contract),
+    items: snapshotToLineItems(input.items),
+    vat_rate: vatRateFromSnapshot(input.vat_rate),
+  };
+}
+
+export function snapshotToAvrValues(
+  snapshot: Snapshot,
+  counterpartyId: string | null,
+): AvrFormValues {
+  const input = snapshotObject(snapshot);
+  return {
+    ...snapshotToInvoiceValues(snapshot, counterpartyId),
+    act_period: snapshotString(input.act_period),
+  };
+}
+
+export function snapshotToWaybillValues(
+  snapshot: Snapshot,
+  counterpartyId: string | null,
+): WaybillFormValues {
+  const input = snapshotObject(snapshot);
+  return {
+    number: snapshotString(input.number),
+    date: snapshotString(input.date),
+    seller: snapshotToParty(input.seller),
+    buyerCounterpartyId: counterpartyId ?? '',
+    basis: snapshotString(input.basis),
+    items: snapshotToLineItems(input.items),
+    released_by: snapshotString(input.released_by),
+    received_by: snapshotString(input.received_by),
+  };
+}
+
+export function snapshotToTaxInvoiceValues(
+  snapshot: Snapshot,
+  counterpartyId: string | null,
+): TaxInvoiceFormValues {
+  const input = snapshotObject(snapshot);
+  const items = snapshotArray(input.items).map((raw) => {
+    const item = snapshotObject(raw);
+    return {
+      name: snapshotString(item.name),
+      qty: snapshotString(item.qty),
+      unit: snapshotString(item.unit),
+      price: ruMoneyToDecimal(item.price),
+      vat_rate: vatRateFromSnapshot(item.vat_rate),
+    };
+  });
+  return {
+    number: snapshotString(input.number),
+    date: snapshotString(input.date),
+    seller: snapshotToParty(input.seller),
+    buyerCounterpartyId: counterpartyId ?? '',
+    buyerVatCertificate: snapshotString(snapshotObject(input.buyer).vat_certificate),
+    items: items.length > 0 ? items : [{ ...EMPTY_VAT_LINE_ITEM }],
+  };
+}
+
+export function snapshotToReconciliationValues(
+  snapshot: Snapshot,
+  counterpartyId: string | null,
+): ReconciliationFormValues {
+  const input = snapshotObject(snapshot);
+  const opening = snapshotObject(input.opening_balance);
+  const closing = snapshotObject(input.closing);
+  const rows = snapshotArray(input.rows).map((raw) => {
+    const row = snapshotObject(raw);
+    return {
+      date: snapshotString(row.date),
+      doc: snapshotString(row.doc),
+      a_debit: ruMoneyToDecimal(row.a_debit),
+      a_credit: ruMoneyToDecimal(row.a_credit),
+      b_debit: ruMoneyToDecimal(row.b_debit),
+      b_credit: ruMoneyToDecimal(row.b_credit),
+    };
+  });
+  return {
+    period_from: snapshotString(input.period_from),
+    period_to: snapshotString(input.period_to),
+    partyA: snapshotToParty(input.party_a),
+    counterpartyId: counterpartyId ?? '',
+    openingADebit: ruMoneyToDecimal(opening.a_debit),
+    openingACredit: ruMoneyToDecimal(opening.a_credit),
+    rows: rows.length > 0 ? rows : [{ ...EMPTY_RECONCILIATION_ROW }],
+    aSays: snapshotString(closing.a_says),
+    bSays: snapshotString(closing.b_says),
+  };
+}
+
+/** Подписанты ФНО 910.00/300.00 — единственное, что каллеру дозволено. */
+export function snapshotToSignatories(snapshot: Snapshot): {
+  director: string;
+  accountant: string;
+} {
+  const input = snapshotObject(snapshot);
+  return {
+    director: snapshotString(input.director),
+    accountant: snapshotString(input.accountant),
+  };
+}
+
+/** Кадровый приказ: «Руководитель», «Основание», «Детали». */
+export function snapshotToHrOrderValues(snapshot: Snapshot): {
+  director: string;
+  reason: string;
+  details: string;
+} {
+  const input = snapshotObject(snapshot);
+  return {
+    director: snapshotString(input.director),
+    reason: snapshotString(input.reason),
+    details: snapshotString(input.details),
+  };
+}
+
+/** Трудовой договор: пять allowlisted-полей, два из них — вложенные. */
+export function snapshotToLaborContractValues(snapshot: Snapshot): {
+  director: string;
+  work_schedule: string;
+  probation_months: string;
+  employer_address: string;
+  employee_address: string;
+} {
+  const input = snapshotObject(snapshot);
+  const employer = snapshotObject(input.employer);
+  const employee = snapshotObject(input.employee);
+  const probation = input.probation_months;
+  return {
+    director: snapshotString(employer.director),
+    work_schedule: snapshotString(input.work_schedule),
+    probation_months: typeof probation === 'number' ? String(probation) : snapshotString(probation),
+    employer_address: snapshotString(employer.address),
+    employee_address: snapshotString(employee.address),
+  };
 }

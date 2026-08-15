@@ -209,6 +209,29 @@ export function GenerateDocumentPage() {
   );
 }
 
+/**
+ * Every form below is used TWICE: to create a document on this page, and to
+ * edit one from pages/Documents.tsx, which appends a version
+ * (POST /api/v1/documents/{id}/versions) with exactly the same `input`
+ * object — the edit endpoint runs it through the same Docgen::InputPolicy
+ * allowlist as creation, so there is nothing template-specific left for a
+ * second copy of these forms to own.
+ *
+ * `defaultValues` prefills from the stored render input (see the
+ * snapshotTo*Values mappers in lib/schemas/documents.ts, which invert the
+ * money/percent formatting the builders apply on the way out). The labels
+ * are props because appending a version is not creating a document, and the
+ * button must not claim otherwise.
+ */
+interface DocumentFormProps<Values> {
+  counterparties: Counterparty[];
+  submitting: boolean;
+  onSubmit: (body: GenerateDocumentCreate) => void;
+  defaultValues?: Values;
+  submitLabel?: string;
+  busyLabel?: string;
+}
+
 // ── Shared building blocks ──────────────────────────────────────────────────
 
 /** name/identifier/address/iik/bik/bank/kbe (+ optional vat_certificate)
@@ -398,15 +421,14 @@ export function buildInvoiceInput(
   return input;
 }
 
-function InvoiceForm({
+export function InvoiceForm({
   counterparties,
   submitting,
   onSubmit,
-}: {
-  counterparties: Counterparty[];
-  submitting: boolean;
-  onSubmit: (body: GenerateDocumentCreate) => void;
-}) {
+  defaultValues,
+  submitLabel = 'Создать документ',
+  busyLabel = 'Создание…',
+}: DocumentFormProps<InvoiceFormValues>) {
   const toast = useToast();
   const {
     control,
@@ -415,7 +437,7 @@ function InvoiceForm({
     formState: { errors },
   } = useForm<InvoiceFormValues>({
     resolver: zodResolver(invoiceFormSchema),
-    defaultValues: {
+    defaultValues: defaultValues ?? {
       number: '',
       date: '',
       seller: getSellerDefaults(),
@@ -601,7 +623,7 @@ function InvoiceForm({
           </div>
 
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Создание…' : 'Создать документ'}
+            {submitting ? busyLabel : submitLabel}
           </Button>
         </form>
       </CardContent>
@@ -615,15 +637,14 @@ export function buildAvrInput(values: AvrFormValues, buyer: PartyValues): Record
   return { ...buildInvoiceInput(values, buyer), act_period: values.act_period.trim() };
 }
 
-function AvrForm({
+export function AvrForm({
   counterparties,
   submitting,
   onSubmit,
-}: {
-  counterparties: Counterparty[];
-  submitting: boolean;
-  onSubmit: (body: GenerateDocumentCreate) => void;
-}) {
+  defaultValues,
+  submitLabel = 'Создать документ',
+  busyLabel = 'Создание…',
+}: DocumentFormProps<AvrFormValues>) {
   const toast = useToast();
   const {
     control,
@@ -632,7 +653,7 @@ function AvrForm({
     formState: { errors },
   } = useForm<AvrFormValues>({
     resolver: zodResolver(avrFormSchema),
-    defaultValues: {
+    defaultValues: defaultValues ?? {
       number: '',
       date: '',
       seller: getSellerDefaults(),
@@ -826,7 +847,7 @@ function AvrForm({
           </div>
 
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Создание…' : 'Создать документ'}
+            {submitting ? busyLabel : submitLabel}
           </Button>
         </form>
       </CardContent>
@@ -854,15 +875,14 @@ export function buildWaybillInput(
   };
 }
 
-function WaybillForm({
+export function WaybillForm({
   counterparties,
   submitting,
   onSubmit,
-}: {
-  counterparties: Counterparty[];
-  submitting: boolean;
-  onSubmit: (body: GenerateDocumentCreate) => void;
-}) {
+  defaultValues,
+  submitLabel = 'Создать документ',
+  busyLabel = 'Создание…',
+}: DocumentFormProps<WaybillFormValues>) {
   const toast = useToast();
   const {
     control,
@@ -871,7 +891,7 @@ function WaybillForm({
     formState: { errors },
   } = useForm<WaybillFormValues>({
     resolver: zodResolver(waybillFormSchema),
-    defaultValues: {
+    defaultValues: defaultValues ?? {
       number: '',
       date: '',
       seller: getSellerDefaults(),
@@ -1053,7 +1073,7 @@ function WaybillForm({
           </div>
 
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Создание…' : 'Создать документ'}
+            {submitting ? busyLabel : submitLabel}
           </Button>
         </form>
       </CardContent>
@@ -1105,15 +1125,14 @@ export function buildTaxInvoiceInput(
   };
 }
 
-function TaxInvoiceForm({
+export function TaxInvoiceForm({
   counterparties,
   submitting,
   onSubmit,
-}: {
-  counterparties: Counterparty[];
-  submitting: boolean;
-  onSubmit: (body: GenerateDocumentCreate) => void;
-}) {
+  defaultValues,
+  submitLabel = 'Создать документ',
+  busyLabel = 'Создание…',
+}: DocumentFormProps<TaxInvoiceFormValues>) {
   const toast = useToast();
   const {
     control,
@@ -1122,7 +1141,7 @@ function TaxInvoiceForm({
     formState: { errors },
   } = useForm<TaxInvoiceFormValues>({
     resolver: zodResolver(taxInvoiceFormSchema),
-    defaultValues: {
+    defaultValues: defaultValues ?? {
       number: '',
       date: '',
       seller: getSellerDefaults(),
@@ -1317,7 +1336,7 @@ function TaxInvoiceForm({
           </div>
 
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Создание…' : 'Создать документ'}
+            {submitting ? busyLabel : submitLabel}
           </Button>
         </form>
       </CardContent>
@@ -1359,15 +1378,14 @@ function buildReconciliationInput(
   return input;
 }
 
-function ReconciliationForm({
+export function ReconciliationForm({
   counterparties,
   submitting,
   onSubmit,
-}: {
-  counterparties: Counterparty[];
-  submitting: boolean;
-  onSubmit: (body: GenerateDocumentCreate) => void;
-}) {
+  defaultValues,
+  submitLabel = 'Создать документ',
+  busyLabel = 'Создание…',
+}: DocumentFormProps<ReconciliationFormValues>) {
   const toast = useToast();
   const {
     control,
@@ -1376,7 +1394,7 @@ function ReconciliationForm({
     formState: { errors },
   } = useForm<ReconciliationFormValues>({
     resolver: zodResolver(reconciliationFormSchema),
-    defaultValues: {
+    defaultValues: defaultValues ?? {
       period_from: '',
       period_to: '',
       partyA: getSellerDefaults(),
@@ -1570,7 +1588,7 @@ function ReconciliationForm({
           </div>
 
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Создание…' : 'Создать документ'}
+            {submitting ? busyLabel : submitLabel}
           </Button>
         </form>
       </CardContent>
