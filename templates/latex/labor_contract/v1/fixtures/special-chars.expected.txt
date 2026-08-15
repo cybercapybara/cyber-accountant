@@ -1,2 +1,9 @@
 # No ends_on: the open-ended branch of clause 2 is printed instead.
 и заключён на неопределённый срок
+
+# Printed amounts, declared as INTEGER TIYN — scripts/check-render.py
+# derives the printed string from each one with the same algorithm the
+# server's Money::format_tiyn_ru uses. Never write the printed form here:
+# a hand-written expected form is what let v0.4.2 print "450000.00" on a
+# ФНО 300.00 with the gate green.
+amount salary_tenge 100000

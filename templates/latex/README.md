@@ -160,8 +160,16 @@ had reported nothing at all.
 `scripts/check-render.py` runs once per fixture, on the PDF the render just
 produced, and knows nothing about which engine produced it (it is written to
 survive the Typst migration unchanged — see
-`.superpowers/sdd/typst-migration-spike.md`). Two layers:
+`.superpowers/sdd/typst-migration-spike.md`). Three layers:
 
+0. **Oracle.** Every printed amount is **derived from an integer number of
+   tiyn**, declared `amount <path> <tiyn>`, using the same algorithm as
+   `Money::format_tiyn_ru` (`src/money/MoneyFormat.hpp`). A fixture may not
+   hand-write the printed form of an amount; one that looks like an amount
+   and carries no directive is refused, and one in the machine form
+   (`450000.00` — `Ledger::format_tiyn`, which belongs in the database, the
+   API and the ФНО XML) is refused and named. See "Amounts are declared as
+   integers" below.
 1. **Content.** Every scalar in the fixture, and every static label in
    `expected.txt`, must appear in the PDF's extracted text (`pdftotext
    -layout` and `-raw`; content counts as present if it survives in either).
@@ -182,6 +190,7 @@ survive the Typst migration unchanged — see
 ```
 margin 18mm                    # required exactly once
 Сомасы, ₸ / Сумма, ₸           # a static label that must reach the PDF
+amount balance_tenge 45000000  # a printed amount, as INTEGER TIYN
 unprinted kind                 # a fixture value the template never prints
 known-defect <path|label>      # printed nowhere because of an open BUG:
                                # excluded, but re-announced on stderr on
@@ -197,10 +206,47 @@ When you add or change a template, add its labels here — and when the gate
 fails, read the finding: it names the fixture, and the exact value, label or
 word that was lost.
 
+### Amounts are declared as integers
+
+`amount <path> <tiyn>` lives in the **per-fixture** `fixtures/<name>.expected.txt`
+(a template-level `expected.txt` has no one fixture to check against). Repeat
+the line once per element for an array path — `amount items[].price 350000` —
+and the declared amounts are compared with the fixture's values at that path
+as multisets; empty cells (`"a_debit": ""`) are ignored.
+
+Why the integer and not the string: v0.4.2 shipped ФНО declarations, payslips
+and labour contracts printing `450000.00` where the document must read
+`450 000,00`, and the gate stayed green through all of it. Layers 1 and 2
+compare the PDF against the fixture — and the fixture hand-wrote the money
+string, so fixture and PDF agreed while both were wrong. `amount
+balance_tenge 45000000` can only ever mean `450 000,00`; there is no way to
+spell the machine form in a directive.
+
+What it does **not** prove is that the SERVER formats with
+`Money::format_tiyn_ru` — a fixture is an input to the template, not the
+output of a controller. That is pinned separately, on the controllers'
+`input_snapshot`, in `tests/integration/test_tax_api.cpp`,
+`test_payroll_api.cpp` and `test_hr_api.cpp` (each asserts the human form
+**and** asserts the value is not the machine form). And the gate's `money()`
+is a Python port of the C++ formatter: `MoneyFormatRu.MatchesEveryAmountDirective`
+(`tests/unit/test_money_format.cpp`) re-derives every directive in this repo
+through the real `Money::format_tiyn_ru`, so the two cannot drift apart.
+
+Amounts a **client** authors rather than the server (the `reconciliation`
+columns, and every `items[]` line of the первичка — see
+`Docgen::InputPolicy::derived_amount_for`, which only derives the TOTAL row)
+are declared the same way. The gate pins the format of the fixture; it does
+not and cannot pin what an API caller sends.
+
+### The self-test
+
 `scripts/check-render-selftest.sh` (a separate step of the same CI job) breaks
-`payslip`, `fno_910` and `tax_invoice` on purpose — amounts column emptied,
-one amount truncated to `10 000`, a table widened until its VAT columns fall
-off the page — renders each through the same pipeline and fails unless the
-gate catches all three *and* names what was lost. Each case renders the
+`payslip`, `fno_910`, `tax_invoice` and `fno_300` on purpose — amounts column
+emptied, one amount truncated to `10 000`, a table widened until its VAT
+columns fall off the page, and every amount of a ФНО 300.00 rewritten into the
+machine money form — renders each through the same pipeline and fails unless
+the gate catches all four *and* names what was lost. Each case renders the
 unmutated template first and requires a PASS, so a case cannot go green for
-the wrong reason.
+the wrong reason. The fourth case is the regression test for the gate's own
+blind spot: it breaks the FIXTURE, not the template, and must be caught by
+layer 0 before a pixel is compared.

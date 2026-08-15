@@ -39,6 +39,7 @@
 #include "ledger/JournalRepository.hpp"
 #include "ledger/JournalService.hpp"
 #include "money/AmountInWords.hpp"
+#include "money/MoneyFormat.hpp"
 #include "payroll/PayrollRepository.hpp"
 #include "payroll/PayrollService.hpp"
 #include "repositories/RoleRepository.hpp"
@@ -632,7 +633,14 @@ TEST_F(PayrollApiTest, GeneratePayslipDerivesNetWordsFromTheStoredNet) {
     ASSERT_TRUE(version.has_value());
     ASSERT_TRUE(version->input_snapshot.has_value());
     EXPECT_EQ((*version->input_snapshot)["net_words"].get<std::string>(), expected_words);
-    EXPECT_EQ((*version->input_snapshot)["net"].get<std::string>(), Ledger::format_tiyn(payslips[0].net));
+    // The PRINTED form. Asserted BOTH ways on purpose: the payslip is handed
+    // to an employee, so it must carry Money::format_tiyn_ru's "250 575,00",
+    // and it must NOT carry Ledger::format_tiyn's "250575.00" — which is what
+    // v0.4.2 printed, and which still belongs on journal_lines.amount and in
+    // the payroll API. A single positive assertion would go green again the
+    // moment someone "unified" the two formatters the wrong way round.
+    EXPECT_EQ((*version->input_snapshot)["net"].get<std::string>(), Money::format_tiyn_ru(payslips[0].net));
+    EXPECT_NE((*version->input_snapshot)["net"].get<std::string>(), Ledger::format_tiyn(payslips[0].net));
 }
 
 TEST_F(PayrollApiTest, GeneratePayslipRejectsClientSuppliedNetWords) {
@@ -689,9 +697,12 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsAuthoritativeOverrideAndKeepsTheTru
     Payroll::PayrollRepository payroll_repo;
     auto payslips = payroll_repo.list_payslips(run, /*from_primary=*/true);
     ASSERT_EQ(payslips.size(), 1U);
-    const std::string true_net = Ledger::format_tiyn(payslips[0].net);
-    const std::string true_gross = Ledger::format_tiyn(payslips[0].gross_tiyn);
+    // The figures as the payslip PRINTS them — Money::format_tiyn_ru, not
+    // Ledger::format_tiyn (see GeneratePayslipDocument above).
+    const std::string true_net = Money::format_tiyn_ru(payslips[0].net);
+    const std::string true_gross = Money::format_tiyn_ru(payslips[0].gross_tiyn);
     ASSERT_NE(true_net, "1.00");
+    ASSERT_NE(true_gross, Ledger::format_tiyn(payslips[0].gross_tiyn));
 
     const long before = queue_depth();
     json malicious = {{"net", "1.00"}};

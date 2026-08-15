@@ -5,11 +5,19 @@
 # A gate that only ever runs against healthy input is indistinguishable from a
 # gate that returns 0 unconditionally, and this repo has already shipped tests
 # named for mechanisms they did not exercise. So: take the real templates,
-# break them three different ways — the amounts column emptied, one amount
+# break them four different ways — the amounts column emptied, one amount
 # silently truncated, a table widened until its right-hand columns fall off
-# the page — render each through the SAME worker pipeline the real job uses,
-# and require that scripts/check-render.py fails on each one AND says what was
+# the page, and every amount of a ФНО 300.00 rewritten into the machine money
+# form — render each through the SAME worker pipeline the real job uses, and
+# require that scripts/check-render.py fails on each one AND says what was
 # lost.
+#
+# The fourth case is not like the first three. Those break the TEMPLATE and
+# the gate notices the PDF no longer matches the fixture. The fourth breaks
+# the FIXTURE, in the one way the gate could not see before v0.4.2: fixture
+# and PDF agree perfectly, and both are wrong, because the fixture hand-wrote
+# the printed form of an amount. It is the regression test for the gate's own
+# blind spot, and it must fail at LAYER 0 — before any pixel is compared.
 #
 # Every case also renders the UNMUTATED copy of the same template first and
 # requires a PASS. That control is the point: without it, a case could "pass"
@@ -73,6 +81,26 @@ break_over_wide_table() {
     local tex="$1/tax_invoice/v1/template.tex"
     sed 's/\\begin{tabularx}{\\textwidth}/\\begin{tabularx}{1.25\\textwidth}/' \
         "$tex" >"$tex.new" && mv "$tex.new" "$tex"
+}
+
+# 4. The v0.4.2 defect, reproduced exactly: every amount of the ФНО 300.00
+#    fixture is rewritten from the printed form into Ledger::format_tiyn's
+#    machine form, so the declaration reads "Сумма НДС, подлежащая уплате в
+#    бюджет: 450000.00 ₸". This is what the server actually produced, and the
+#    gate PASSED it — fixture and PDF agreed. Layer 0 must now refuse it
+#    without looking at the PDF at all. python3 rather than sed: only the
+#    whole-value amounts may be rewritten, not the digits inside free text.
+break_machine_money_form() {
+    python3 - "$1/fno_300/v1/fixtures/basic.json" <<'PY'
+import re, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+text = re.sub(r': "(\d{1,3}(?: \d{3})*),(\d{2})"',
+              lambda m: ': "%s.%s"' % (m.group(1).replace(" ", ""), m.group(2)), text)
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(text)
+PY
 }
 
 # --- driver ------------------------------------------------------------------
@@ -156,21 +184,27 @@ run_case() {
 
 run_case amounts-column payslip basic.json break_amounts_column \
     'CONTENT LOST' \
-    'value gross_tenge = "300 000,00"' \
-    'value social_tax = "15 840,00"'
+    'amount gross_tenge = 30000000 tiyn, printed as "300 000,00"' \
+    'amount social_tax = 1584000 tiyn, printed as "15 840,00"'
 
 run_case truncated-amount fno_910 basic.json break_truncated_amount \
     'CONTENT LOST' \
-    'value income_tenge = "10 000 000,00"'
+    'amount income_tenge = 1000000000 tiyn, printed as "10 000 000,00"'
 
 run_case over-wide-table tax_invoice basic.json break_over_wide_table \
     'static label "Ставка НДС"' \
     'OFF-MARGIN' \
     'crosses the RIGHT margin'
 
+run_case machine-money-form fno_300 basic.json break_machine_money_form \
+    'MACHINE MONEY FORM' \
+    'balance_tenge = "450000.00"' \
+    'FIXTURE FORMAT' \
+    'declares 45000000 tiyn'
+
 if [[ "$failures" -gt 0 ]]; then
     echo "check-render-selftest: $failures case(s) failed — the render gate is NOT" >&2
     echo "  proven to catch anything. Fix it before trusting a green template-render." >&2
     exit 1
 fi
-echo "check-render-selftest: 3 deliberate breakages, all caught, all named"
+echo "check-render-selftest: 4 deliberate breakages, all caught, all named"

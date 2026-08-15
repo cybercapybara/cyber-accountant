@@ -48,6 +48,7 @@
 #include "ledger/JournalEntry.hpp"
 #include "ledger/JournalService.hpp"
 #include "money/AmountInWords.hpp"
+#include "money/MoneyFormat.hpp"
 #include "repositories/RoleRepository.hpp"
 #include "repositories/UserRepository.hpp"
 #include "security/Auth.hpp"
@@ -712,8 +713,12 @@ TEST_F(TaxFilingApiTest, FilingRejectsAuthoritativeOverrideAndKeepsTheTrueFigure
 
     Tax::TaxService svc;
     auto calc = svc.calculate_vat(org.id, "2026-01-01", "2026-03-31");
-    const std::string true_balance = Ledger::format_tiyn(calc.total_tiyn < 0 ? -calc.total_tiyn : calc.total_tiyn);
+    // As the DECLARATION prints it. v0.4.2 filed «Сумма НДС, подлежащая
+    // уплате в бюджет: 450000.00 ₸» because this was Ledger::format_tiyn;
+    // the EXPECT_NE below fails if that ever comes back.
+    const std::string true_balance = Money::format_tiyn_ru(calc.total_tiyn < 0 ? -calc.total_tiyn : calc.total_tiyn);
     ASSERT_NE(true_balance, "1.00");
+    ASSERT_NE(true_balance, Ledger::format_tiyn(calc.total_tiyn < 0 ? -calc.total_tiyn : calc.total_tiyn));
 
     const long before = queue_depth();
     json malicious = fno300_extra();
@@ -832,11 +837,13 @@ TEST_F(TaxFilingApiTest, FilingRejectsASuppliedSalesTurnoverAndDerivesItFromTheL
     Tax::TaxService svc;
     auto calc = svc.calculate_vat(org.id, "2026-01-01", "2026-03-31");
     ASSERT_TRUE(calc.result_snapshot.contains("income_tiyn"));
-    const std::string derived_turnover = Ledger::format_tiyn(calc.result_snapshot.at("income_tiyn").get<long long>());
-    EXPECT_EQ(derived_turnover, "1500000.00");
+    const std::string derived_turnover = Money::format_tiyn_ru(calc.result_snapshot.at("income_tiyn").get<long long>());
+    EXPECT_EQ(derived_turnover, "1 500 000,00");
+    // …and NOT "1500000.00": the printed declaration carries the human form.
+    EXPECT_NE(derived_turnover, Ledger::format_tiyn(calc.result_snapshot.at("income_tiyn").get<long long>()));
     // The turnover is NOT the balance — a filing that confused the two would
     // still pass a weaker assertion.
-    EXPECT_NE(derived_turnover, Ledger::format_tiyn(calc.total_tiyn));
+    EXPECT_NE(derived_turnover, Money::format_tiyn_ru(calc.total_tiyn));
 
     const long before = queue_depth();
     json malicious = fno300_extra();

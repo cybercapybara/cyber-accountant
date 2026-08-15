@@ -87,13 +87,17 @@
  * rejected with a 422 `not_allowed_override` naming that field, BEFORE any
  * merge touches the input.
  *
- * Money in that input is rendered with Ledger::format_tiyn ("300000.00"),
- * the canonical form everywhere in this codebase. The template's own
- * fixtures use a prettier locale form ("300 000,00"); that is a presentation
- * difference only, and it is NOT something a caller may fix by overriding
- * the amount through the merge body (every amount here is derived from the
- * stored payslip and is therefore off the allowlist) — a second money
- * formatter, or a template-side change, is the honest way to get it.
+ * Money in that input is rendered with Money::format_tiyn_ru ("300 000,00").
+ * Until v0.4.2 it was Ledger::format_tiyn ("300000.00") and every payslip
+ * handed to an employee printed a machine string; the header used to call
+ * that "a presentation difference only" and name the fix — "a second money
+ * formatter … is the honest way to get it". That formatter already existed
+ * (src/money/MoneyFormat.hpp, used by the invoice/АВР/накладная/счёт-фактура
+ * path since P3); this call site simply was not switched to it. What did NOT
+ * change: Ledger::format_tiyn still owns journal_lines.amount (see
+ * PayrollService::post_to_journal) and the payroll API's own money strings.
+ * The rule is by DESTINATION, not by module — printed goes through
+ * format_tiyn_ru, stored/served/filed goes through format_tiyn.
  *
  * `doc_type` for the generated payslip is `"payroll"` (kPayslipDocType) —
  * NOT the `"hr"` generic bucket it used to be, and not the template slug
@@ -134,6 +138,7 @@
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalService.hpp"
 #include "money/AmountInWords.hpp"
+#include "money/MoneyFormat.hpp"
 #include "payroll/PayrollRepository.hpp"
 #include "payroll/PayrollService.hpp"
 #include "payroll/Payslip.hpp"
@@ -456,15 +461,17 @@ public:
             {"employer", {{"name", org->name}, {"bin", org->bin}}},
             {"employee",
              {{"full_name", full_name(*employee)}, {"iin", employee->iin}, {"position", employee->position}}},
-            {"gross_tenge", Ledger::format_tiyn(payslip->gross_tiyn)},
-            {"opv", Ledger::format_tiyn(payslip->opv)},
-            {"vosms", Ledger::format_tiyn(payslip->vosms)},
-            {"ipn", Ledger::format_tiyn(payslip->ipn)},
-            {"net", Ledger::format_tiyn(payslip->net)},
-            {"opvr", Ledger::format_tiyn(payslip->opvr)},
-            {"so", Ledger::format_tiyn(payslip->so)},
-            {"osms", Ledger::format_tiyn(payslip->osms)},
-            {"social_tax", Ledger::format_tiyn(payslip->social_tax)},
+            // Printed money: the HUMAN form. See the file header — the
+            // machine form stays on the journal/API side of the payslip.
+            {"gross_tenge", Money::format_tiyn_ru(payslip->gross_tiyn)},
+            {"opv", Money::format_tiyn_ru(payslip->opv)},
+            {"vosms", Money::format_tiyn_ru(payslip->vosms)},
+            {"ipn", Money::format_tiyn_ru(payslip->ipn)},
+            {"net", Money::format_tiyn_ru(payslip->net)},
+            {"opvr", Money::format_tiyn_ru(payslip->opvr)},
+            {"so", Money::format_tiyn_ru(payslip->so)},
+            {"osms", Money::format_tiyn_ru(payslip->osms)},
+            {"social_tax", Money::format_tiyn_ru(payslip->social_tax)},
             // Cannot throw here: PayrollService::calculate_run refuses a
             // gross above Payroll::kMaxGrossTiyn, which is the same bound
             // as Money::kMaxTiyn, and `net` is never larger than gross nor

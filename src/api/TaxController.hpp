@@ -151,11 +151,21 @@
  * input. This is the identical hole already found and fixed in HrController;
  * the shared checker lives in Api::Validation now.
  *
- * Money in that input is rendered with Ledger::format_tiyn — and for a НДС
- * refund position (`balance_tiyn < 0`, a normal outcome per
+ * Money in that input is rendered with Money::format_tiyn_ru ("450 000,00") —
+ * the HUMAN form, because this input is what gets PRINTED. It was
+ * Ledger::format_tiyn ("450000.00") until v0.4.2, so every filed declaration
+ * read "Сумма НДС, подлежащая уплате в бюджет: 450000.00 ₸" — a machine
+ * string on a Kazakhstani legal document. The machine form is untouched
+ * everywhere it belongs: journal_lines.amount, the API, and — decisively —
+ * the ФНО XML, which does not use either formatter at all (it carries WHOLE
+ * TENGE integers via FnoXml::tenge_amount, see src/tax/FnoXml.hpp). Printing
+ * and filing therefore have no formatter in common and cannot drag each
+ * other along.
+ *
+ * For a НДС refund position (`balance_tiyn < 0`, a normal outcome per
  * TaxService::calculate_vat) the ABSOLUTE value is formatted and the sign is
  * carried by the template's own `balance_kind` enum ("to_pay"/"to_refund"),
- * because format_tiyn rejects negatives by contract.
+ * because format_tiyn_ru rejects negatives by contract.
  */
 
 #pragma once
@@ -185,6 +195,7 @@
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalService.hpp"
 #include "money/AmountInWords.hpp"
+#include "money/MoneyFormat.hpp"
 #include "storage/Storage.hpp"
 #include "tax/Fno300.hpp"
 #include "tax/Fno910.hpp"
@@ -1023,9 +1034,9 @@ private:
                 !snapshot_int(calc, "rate_bp", rate_bp, missing_key))
                 return std::nullopt;
             input["period"] = {{"year", year}, {"half", std::to_string(half_of(calc.period_from))}};
-            input["income_tenge"] = Ledger::format_tiyn(income_tiyn);
+            input["income_tenge"] = Money::format_tiyn_ru(income_tiyn);
             input["rate_percent"] = format_bp_percent(rate_bp);
-            input["tax_tenge"] = Ledger::format_tiyn(calc.total_tiyn);
+            input["tax_tenge"] = Money::format_tiyn_ru(calc.total_tiyn);
             auto tax_words = spell_out_tiyn(calc.id, calc.total_tiyn, amount_out_of_range);
             if (!tax_words)
                 return std::nullopt;
@@ -1050,13 +1061,13 @@ private:
             !snapshot_int(calc, "income_tiyn", income_tiyn, missing_key))
             return std::nullopt;
         input["period"] = {{"year", year}, {"quarter", std::to_string(quarter_of(calc.period_from))}};
-        input["sales_tenge"] = Ledger::format_tiyn(income_tiyn);
-        input["vat_charged_tenge"] = Ledger::format_tiyn(accrued_tiyn);
-        input["vat_credited_tenge"] = Ledger::format_tiyn(deductible_tiyn);
-        // format_tiyn rejects negatives by contract, and a negative balance is
-        // a normal refund position — the magnitude goes in the amount, the
+        input["sales_tenge"] = Money::format_tiyn_ru(income_tiyn);
+        input["vat_charged_tenge"] = Money::format_tiyn_ru(accrued_tiyn);
+        input["vat_credited_tenge"] = Money::format_tiyn_ru(deductible_tiyn);
+        // format_tiyn_ru rejects negatives by contract, and a negative balance
+        // is a normal refund position — the magnitude goes in the amount, the
         // direction in balance_kind (the template's own enum).
-        input["balance_tenge"] = Ledger::format_tiyn(balance_tiyn < 0 ? -balance_tiyn : balance_tiyn);
+        input["balance_tenge"] = Money::format_tiyn_ru(balance_tiyn < 0 ? -balance_tiyn : balance_tiyn);
         input["balance_kind"] = balance_tiyn < 0 ? "to_refund" : "to_pay";
         // Модуль, как и balance_tenge строкой выше: знак несёт balance_kind,
         // а to_words_ru принимает только неотрицательное. Без этого первая
@@ -1073,13 +1084,13 @@ private:
     /// Money::to_words_ru with its ONE expected failure turned into a flag.
     /// The try is this narrow on purpose: wrapping the whole of
     /// build_form_input would report an unrelated failure (a malformed
-    /// period_from, a format_tiyn contract violation) as
+    /// period_from, a format_tiyn_ru contract violation) as
     /// `amount_out_of_range` and log it as such — a wrong diagnosis in a log
     /// costs more than no diagnosis. @p magnitude must already be
     /// non-negative; the sign lives in the form's own balance_kind field.
     /// Only std::out_of_range is caught, not to_words_ru's other throw
     /// (std::invalid_argument on a negative): every call site formats the
-    /// same figure with Ledger::format_tiyn one line earlier, and THAT
+    /// same figure with Money::format_tiyn_ru one line earlier, and THAT
     /// rejects negatives first, so a negative can never reach here.
     static std::optional<std::string> spell_out_tiyn(const std::string& calculation_id,
                                                      long long magnitude,
