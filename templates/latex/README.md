@@ -183,9 +183,10 @@ survive the Typst migration unchanged — see
 margin 18mm                    # required exactly once
 Сомасы, ₸ / Сумма, ₸           # a static label that must reach the PDF
 unprinted kind                 # a fixture value the template never prints
-known-defect balance_words     # printed nowhere because of an open BUG:
+known-defect <path|label>      # printed nowhere because of an open BUG:
                                # excluded, but re-announced on stderr on
-                               # every run so it cannot be forgotten
+                               # every run so it cannot be forgotten. No
+                               # template uses one today.
 ```
 
 Every label must also occur **verbatim in `template.tex`**; a label that does

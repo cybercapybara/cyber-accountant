@@ -1,5 +1,2 @@
-# balance_kind == "to_refund".
-# Same known defect as fixtures/basic.expected.txt — the escaped underscore
-# in the control value makes both closing blocks unreachable.
-known-defect Сумма НДС, подлежащая возврату из бюджета:
-known-defect balance_words
+# balance_kind == "to_refund" — the other closing block.
+Сумма НДС, подлежащая возврату из бюджета:

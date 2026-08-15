@@ -1,12 +1,14 @@
 # Static labels every HR order prints, and its page margin box.
-# The five order kinds each print their own title; those live in the
-# per-fixture files next to the fixture that selects them.
+# The five order kinds each print their own title and their own body; those
+# live in the per-fixture files next to the fixture that selects them — and so
+# does "ЖСН/ИИН", which only the hire and dismiss branches restate. It was
+# template-wide until business_trip and salary_change got fixtures and proved
+# it is not.
 margin 18mm
 
 Бұйрық №
 Приказ №
 БСН/БИН
-ЖСН/ИИН
 Басшы / Директор
 Бұйрықпен таныстым / С приказом ознакомлен(а):
 
