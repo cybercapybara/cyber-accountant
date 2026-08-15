@@ -52,6 +52,23 @@ describe('groupNavLinks', () => {
   it('leaves the public links ungrouped', () => {
     expect(ungroupedNavLinks(routes, null, null).map((r) => r.path)).toEqual(['/', '/about']);
   });
+
+  // Обе половины правки для анонимного посетителя: публичные ссылки он
+  // видит (до P3 не видел ни одной), а разделов у него нет вообще — ни
+  // одного пункта, ни пустой шапки раздела.
+  it('gives an anonymous visitor the public links and NO sections at all', () => {
+    expect(groupNavLinks(routes, null, null)).toEqual([]);
+    expect(ungroupedNavLinks(routes, null, null).map((r) => r.navLabel)).toEqual([
+      'Главная',
+      'О сервисе',
+    ]);
+  });
+
+  // Анонимный посетитель с (невозможной) org-ролью всё равно не получает
+  // ничего: роль без пользователя прав не даёт.
+  it('does not let an org role alone unlock sections for a null user', () => {
+    expect(groupNavLinks(routes, null, 'owner')).toEqual([]);
+  });
 });
 
 describe('role → visibility matrix (mirrors OrgPermissions.hpp §5.3)', () => {

@@ -47,6 +47,16 @@ export function shouldRetryMe(failureCount: number, error: unknown): boolean {
   return failureCount < 2;
 }
 
+/**
+ * Два среза одного конверта. Экспортированы отдельно, потому что кэш
+ * `['me']` не типизирован в точке записи (setQueryData): тест, прогоняющий
+ * посев кэша через ЭТИ функции, ловит рассогласование формы (голый User
+ * вместо конверта) там, где типы молчат.
+ */
+export const selectMeUser = (envelope: MeResponse | null | undefined) => envelope?.user ?? null;
+export const selectMeOrgRole = (envelope: MeResponse | null | undefined) =>
+  envelope?.org_role ?? null;
+
 /** Форма прежняя (пользователь или null) — ни один существующий
  *  потребитель useMe() не меняется. */
 export function useMe() {
@@ -56,7 +66,7 @@ export function useMe() {
     // Don't retry a deliberate "logged out" answer; do retry transient
     // failures (default exponential backoff applies to thrown errors).
     retry: shouldRetryMe,
-    select: (envelope) => envelope?.user ?? null,
+    select: selectMeUser,
   });
 }
 
@@ -72,6 +82,6 @@ export function useOrgRole() {
     queryKey: qk.me(),
     queryFn: fetchMeEnvelope,
     retry: shouldRetryMe,
-    select: (envelope) => envelope?.org_role ?? null,
+    select: selectMeOrgRole,
   });
 }

@@ -14,6 +14,25 @@ import { groupNavLinks, ungroupedNavLinks, type NavGroupId } from '@/routes/navG
 const groupPanelId = (id: NavGroupId) => `nav-group-${id}`;
 const groupButtonId = (id: NavGroupId) => `nav-group-${id}-button`;
 
+/**
+ * Стрелки/Home/End внутри раскрытого раздела: это главная навигация, и
+ * ходить по её пунктам одним Tab'ом мало. Escape и клик вне обрабатываются
+ * выше, на уровне компонента.
+ */
+function moveFocusInPanel(e: React.KeyboardEvent<HTMLDivElement>) {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+  const items = Array.from(e.currentTarget.querySelectorAll('a'));
+  if (items.length === 0) return;
+  e.preventDefault();
+  const current = items.indexOf(document.activeElement as HTMLAnchorElement);
+  const last = items.length - 1;
+  let next = 0;
+  if (e.key === 'End') next = last;
+  else if (e.key === 'ArrowDown') next = current === last ? 0 : current + 1;
+  else if (e.key === 'ArrowUp') next = current <= 0 ? last : current - 1;
+  items[next].focus();
+}
+
 export function Nav() {
   const me = useMe();
   const user = me.data ?? null;
@@ -141,6 +160,20 @@ export function Nav() {
                     aria-expanded={open}
                     aria-controls={groupPanelId(g.id)}
                     onClick={() => setOpenGroup((cur) => (cur === g.id ? null : g.id))}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'ArrowDown') return;
+                      e.preventDefault();
+                      setOpenGroup(g.id);
+                      // Закрытая панель — display:none, сфокусировать её
+                      // первый пункт можно только после перерисовки.
+                      setTimeout(
+                        () =>
+                          document
+                            .querySelector<HTMLAnchorElement>(`#${groupPanelId(g.id)} a`)
+                            ?.focus(),
+                        0,
+                      );
+                    }}
                     className={cn(
                       'flex items-center gap-1 rounded transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                       groupActive ? 'font-medium text-primary' : 'text-muted-foreground',
@@ -159,6 +192,7 @@ export function Nav() {
                     id={groupPanelId(g.id)}
                     role="group"
                     aria-labelledby={groupButtonId(g.id)}
+                    onKeyDown={moveFocusInPanel}
                     className={cn(
                       'absolute left-0 top-full z-50 mt-2 min-w-52 flex-col gap-1 rounded-md border border-border bg-background p-1 shadow-md',
                       open ? 'flex' : 'hidden',
@@ -232,7 +266,7 @@ export function Nav() {
             size="sm"
             variant="ghost"
             className="md:hidden"
-            aria-label="Открыть меню навигации"
+            aria-label={menuOpen ? 'Закрыть меню навигации' : 'Открыть меню навигации'}
             aria-expanded={menuOpen}
             aria-controls="mobile-nav"
             onClick={() => setMenuOpen((o) => !o)}
