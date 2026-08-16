@@ -5,7 +5,15 @@
 #let d = json("input.json")
 
 #set page(paper: "a4", margin: 18mm)
-#set text(font: "Noto Sans", size: 9.2pt, lang: "ru")
+// `overhang: false` is load-bearing, not taste. Typst HANGS a line-final
+// hyphen past the right edge; the gate measures word boxes against the
+// margin and fails them. The acceptance sentence below is justified
+// Russian prose long enough to hyphenate, and it did exactly that in CI
+// (`каче-` crossed the RIGHT margin by 1.63pt) while NOT hyphenating
+// under a locally installed Noto build — font metrics differ between the
+// worker image and Homebrew, so a local render cannot rule this out.
+// Turning the overhang off, not the hyphenation, keeps the line breaks.
+#set text(font: "Noto Sans", size: 9.2pt, lang: "ru", overhang: false)
 #set par(justify: true)
 
 #align(center)[

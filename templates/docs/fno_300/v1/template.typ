@@ -7,7 +7,13 @@
 #let d = json("input.json")
 
 #set page(paper: "a4", margin: 18mm)
-#set text(font: "Noto Sans", size: 9.2pt, lang: "ru")
+// `overhang: false` is load-bearing, not taste. Typst HANGS a line-final
+// hyphen past the right edge and the gate fails the word box against the
+// margin. `avr` proved a local render CANNOT rule this out: it did not
+// hyphenate under a Homebrew Noto build and did hyphenate in the worker
+// image, losing a declared label. Set uniformly: it is inert where nothing
+// hangs, and it suppresses the overhang without moving any line break.
+#set text(font: "Noto Sans", size: 9.2pt, lang: "ru", overhang: false)
 #set par(justify: true)
 
 // The quarter is an enum-pinned CONTROL value: it selects a roman numeral and

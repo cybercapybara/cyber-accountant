@@ -13,7 +13,13 @@
 // if the geometry layer ever complains, shrink the `inset` or the header text
 // size, NEVER the margin and never to a fixed column width.
 #set page(paper: "a4", flipped: true, margin: 12mm)
-#set text(font: "Noto Sans", size: 9.2pt, lang: "ru")
+// `overhang: false` is load-bearing, not taste. Typst HANGS a line-final
+// hyphen past the right edge and the gate fails the word box against the
+// margin. `avr` proved a local render CANNOT rule this out: it did not
+// hyphenate under a Homebrew Noto build and did hyphenate in the worker
+// image, losing a declared label. Set uniformly: it is inert where nothing
+// hangs, and it suppresses the overhang without moving any line break.
+#set text(font: "Noto Sans", size: 9.2pt, lang: "ru", overhang: false)
 #set par(justify: true)
 
 // Typst breaks a line after `/` INSIDE a word, and the gate's flow-variant
