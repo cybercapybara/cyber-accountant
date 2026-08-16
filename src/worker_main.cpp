@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -265,9 +266,14 @@ int run_render_template(const std::string& slug, const std::string& fixture_path
         fixture_file >> input;
 
         std::filesystem::create_directories(out_dir);
-        Docgen::render_and_compile(slug, input, out_dir);
+        // The engine descriptor is printed, not just discarded: this mode is
+        // what the `template-render` CI job runs, and its log is where a
+        // human finds out WHICH engine (and which Typst version) actually
+        // compiled a fixture. scripts/render-templates.sh only inspects the
+        // exit status, so the extra trailing text is safe.
+        const std::string engine = Docgen::render_and_compile(slug, input, out_dir);
 
-        std::cout << "PASS " << slug << " " << fixture_path << std::endl;
+        std::cout << "PASS " << slug << " " << fixture_path << " [" << engine << "]" << std::endl;
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "FAIL " << slug << " " << fixture_path << ": " << e.what() << std::endl;

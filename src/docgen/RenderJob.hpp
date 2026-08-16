@@ -59,6 +59,7 @@
 #pragma once
 
 #include <array>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -236,6 +237,91 @@ inline void compile_typst(const std::filesystem::path& dir, const std::string& c
 }
 
 /**
+ * @brief Turn the raw output of `typst --version` into the storable
+ *        descriptor: `typst 0.15.1` out of `typst 0.15.1 (9dfd3a08)`.
+ * @details Split out from engine_version() below purely so it is TESTABLE:
+ *          engine_version caches its answer in a function-local static (one
+ *          subprocess per worker, not one per render), and a cache cannot be
+ *          re-exercised with a second input inside one test binary. The
+ *          parsing is the part with a decision in it, so it is the part that
+ *          gets a test.
+ *
+ *          Takes the first whitespace-separated token that STARTS WITH A
+ *          DIGIT, which drops both the program name Typst prints first and
+ *          the `(9dfd3a08)` build hash it appends. Anything unrecognizable —
+ *          empty output, a line with no numeric token — degrades to the bare
+ *          engine name rather than storing a line whose shape we do not
+ *          understand.
+ * @return `typst <version>`, or the bare `typst` if no version is parseable.
+ */
+inline std::string typst_descriptor(const std::string& version_output) {
+    const std::string base = engine_name(Engine::kTypst);
+    std::string first_line = version_output;
+    if (const std::size_t eol = first_line.find_first_of("\r\n"); eol != std::string::npos)
+        first_line.erase(eol);
+
+    std::istringstream tokens(first_line);
+    std::string token;
+    while (tokens >> token) {
+        if (!token.empty() && std::isdigit(static_cast<unsigned char>(token.front())) != 0)
+            return base + " " + token;
+    }
+    return base;
+}
+
+/**
+ * @brief The engine descriptor recorded on a rendered version:
+ *        `xelatex`, or `typst` plus its parsed version — `typst 0.15.1`.
+ * @details The engine's stable NAME is never spelled out here: it comes from
+ *          `Docgen::engine_name()` (TemplateRegistry.hpp), the single place
+ *          that decides what a stored engine is called. This function only
+ *          appends the version.
+ *
+ *          Only Typst carries one, and that asymmetry is deliberate rather
+ *          than an omission: Typst is pre-1.0 and every minor release
+ *          restyles the same template, so its version is the difference
+ *          between a reproducible document and a guess. XeLaTeX's layout has
+ *          not moved in years, and the TeX Live release that pins it is
+ *          already recorded — by `docker/Dockerfile`, at the commit the image
+ *          was built from.
+ *
+ *          The real binary is asked (`typst --version`), once per process
+ *          (function-local static), NOT read off a constant in this file: the
+ *          pin is a property of the worker image, and a Dockerfile bump this
+ *          source never heard about must still be recorded truthfully.
+ *
+ *          What is stored is the PARSED version, not the raw line. `typst
+ *          --version` prints `typst 0.15.1 (9dfd3a08)` — the trailing commit
+ *          hash of the build, which would turn every "was this rendered by
+ *          0.15.1?" into a substring match, and would change the stored
+ *          descriptor for a rebuild of the very same release. That hash is
+ *          not lost: the version tag plus `TYPST_SHA256` in docker/Dockerfile
+ *          identify the downloaded binary exactly, which is a stronger record
+ *          than the hash alone and one this column does not have to carry.
+ *
+ *          If the binary cannot be asked — it is absent, it fails, or popen
+ *          itself fails — the descriptor degrades to a bare `typst` instead
+ *          of failing the render: a document with a coarse engine note beats
+ *          no document.
+ */
+inline std::string engine_version(Engine engine) {
+    if (engine != Engine::kTypst)
+        return engine_name(engine);
+
+    static const std::string cached = [] {
+        try {
+            std::string out;
+            if (run_command(typst_cmd() + " --version", &out) != 0)
+                return std::string(engine_name(Engine::kTypst));
+            return typst_descriptor(out);
+        } catch (const std::exception&) {
+            return std::string(engine_name(Engine::kTypst));
+        }
+    }();
+    return cached;
+}
+
+/**
  * @brief Validate, render and compile @p slug's latest template against
  *        @p input, producing `<out_dir>/main.pdf` whichever engine the
  *        template selects.
@@ -255,10 +341,16 @@ inline void compile_typst(const std::filesystem::path& dir, const std::string& c
  *          - `kTypst`  -> `write_typst_inputs` + `compile_typst`, leaving
  *            `main.typ` and `input.json` beside the PDF;
  *          - `kLatex`  -> `render_tex` + `compile_pdf`, leaving `main.tex`.
+ * @return the engine descriptor that produced the PDF (`engine_version`),
+ *         for the caller to store on the version alongside the file. It is
+ *         returned rather than recomputed by the caller because the engine
+ *         is resolved HERE, from the template on disk, and nowhere else.
  * @throws std::runtime_error on a missing template, schema-validation
  *         failure, or compile failure.
  */
-inline void render_and_compile(const std::string& slug, const json& input, const std::filesystem::path& out_dir) {
+inline std::string render_and_compile(const std::string& slug,
+                                      const json& input,
+                                      const std::filesystem::path& out_dir) {
     TemplateRegistry registry;
     auto info = registry.latest(slug);
     if (!info)
@@ -275,7 +367,7 @@ inline void render_and_compile(const std::string& slug, const json& input, const
     if (info->engine == Engine::kTypst) {
         write_typst_inputs(*info, normalized, out_dir);
         compile_typst(out_dir, typst_cmd());
-        return;
+        return engine_version(info->engine);
     }
 
     const std::string tex = render_tex(*info, normalized);
@@ -288,6 +380,7 @@ inline void render_and_compile(const std::string& slug, const json& input, const
         throw std::runtime_error("docgen: failed writing main.tex to " + out_dir.string());
 
     compile_pdf(out_dir, latex_cmd());
+    return engine_version(info->engine);
 }
 
 /**
@@ -322,7 +415,11 @@ inline json process_job(const json& payload) {
     std::string version_id = payload.value("version_id", std::string{});
 
     ScopedTempDir tmp("docgen-");
-    render_and_compile(slug, input, tmp.path());
+    // Which engine, and at which version, produced these exact bytes — stored
+    // on the version below. Taken from the render itself, never re-derived
+    // from the slug afterwards: the template on disk is what chooses the
+    // engine, and it may have been converted between the two.
+    const std::string engine = render_and_compile(slug, input, tmp.path());
 
     const auto pdf_path = tmp.path() / "main.pdf";
     std::ifstream pdf_file(pdf_path, std::ios::binary);
@@ -396,7 +493,7 @@ inline json process_job(const json& payload) {
     Storage::get().put(key, pdf_bytes, "application/pdf");
 
     if (!documents.set_version_file(
-            org_id, version_id, key, checksum, "application/pdf", static_cast<long long>(pdf_bytes.size())))
+            org_id, version_id, key, checksum, "application/pdf", static_cast<long long>(pdf_bytes.size()), engine))
         throw std::runtime_error("docgen: set_version_file found no version " + version_id + " in org " + org_id);
 
     // Publish: only now does the document report this file — and only while
@@ -443,7 +540,8 @@ inline json process_job(const json& payload) {
                 {"slug", slug},
                 {"key", key},
                 {"checksum_sha256", checksum},
-                {"size_bytes", pdf_bytes.size()}};
+                {"size_bytes", pdf_bytes.size()},
+                {"render_engine", engine}};
 }
 
 // Self-registration — the worker dispatches "docgen.render" jobs here as

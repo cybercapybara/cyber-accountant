@@ -40,6 +40,10 @@ struct DocumentVersion {
     std::optional<std::string> mime;
     std::optional<long long> size_bytes;
     std::optional<std::string> template_version;
+    /// Движок, собравший этот PDF: `xelatex` или `typst <версия>`
+    /// (migrations/024_document_versions_render_engine.sql). NULL у версий
+    /// без рендера — загруженный файл и ещё не отрендеренная версия.
+    std::optional<std::string> render_engine;
     std::optional<nlohmann::json> input_snapshot;
     std::optional<std::string> created_by_user_id;
     std::string created_at;
@@ -66,6 +70,8 @@ struct DocumentVersion {
             v.size_bytes = r["size_bytes"].template as<long long>();
         if (!r["template_version"].is_null())
             v.template_version = r["template_version"].template as<std::string>();
+        if (!r["render_engine"].is_null())
+            v.render_engine = r["render_engine"].template as<std::string>();
         if (!r["input_snapshot"].is_null()) {
             // Same fallback as Ledger::Document::from_row / AuditEntry: the
             // column is only ever written from nlohmann::json::dump(), so a
@@ -94,6 +100,12 @@ inline void to_json(nlohmann::json& j, const DocumentVersion& v) {
         {"mime", v.mime ? nlohmann::json(*v.mime) : nlohmann::json(nullptr)},
         {"size_bytes", v.size_bytes ? nlohmann::json(*v.size_bytes) : nlohmann::json(nullptr)},
         {"template_version", v.template_version ? nlohmann::json(*v.template_version) : nlohmann::json(nullptr)},
+        // Отдаётся наружу, в отличие от input_snapshot: это ровно тот факт,
+        // которого не хватает, когда человек спрашивает «почему этот PDF не
+        // такой, как тот, что я печатал в марте». template_version без
+        // движка на такой вопрос не отвечает — Typst pre-1.0 меняет вёрстку
+        // одного и того же шаблона от релиза к релизу.
+        {"render_engine", v.render_engine ? nlohmann::json(*v.render_engine) : nlohmann::json(nullptr)},
         {"created_by_user_id", v.created_by_user_id ? nlohmann::json(*v.created_by_user_id) : nlohmann::json(nullptr)},
         {"created_at", v.created_at},
         {"updated_at", v.updated_at},

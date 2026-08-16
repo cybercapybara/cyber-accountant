@@ -5893,6 +5893,8 @@ export interface components {
             size_bytes: number | null;
             /** @description The on-disk template version this render used, e.g. 'v1' */
             template_version: string | null;
+            /** @description The document engine that produced this PDF, with its version where the version matters: 'xelatex', or 'typst 0.15.1'. Typst is pre-1.0 and each minor release changes layout, so template_version alone does not identify what a page looked like. null for an uploaded or emailed file (no engine produced it) and for a version whose render has not finished */
+            render_engine: string | null;
             /** Format: uuid */
             created_by_user_id: string | null;
             created_at: string;

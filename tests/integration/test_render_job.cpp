@@ -357,6 +357,124 @@ TEST_F(RenderJobTest, WritesTheFileIntoTheAddressedVersionAndPublishesIt) {
     EXPECT_TRUE(Storage::get().exists(key));
 }
 
+// ── the engine descriptor itself ─────────────────────────────────────────────
+// Pure parsing, no fixture and no services — but it lives here rather than in
+// tests/unit because the function under test is declared in RenderJob.hpp,
+// which drags in the repository/storage/job stack that the unit bucket is
+// defined by NOT having.
+
+// Task 1 found that `typst --version` prints `typst 0.15.1 (9dfd3a08)`: the
+// build's commit hash is appended at runtime. Storing that line verbatim
+// would make "was this rendered by 0.15.1?" a substring match, and would
+// change the recorded descriptor when the SAME release is rebuilt. So the
+// version is parsed out and the hash dropped — the exact binary stays
+// identifiable through TYPST_SHA256 in docker/Dockerfile.
+TEST(DocgenEngineDescriptor, ParsesTheVersionAndDropsTheBuildHash) {
+    EXPECT_EQ(Docgen::typst_descriptor("typst 0.15.1 (9dfd3a08)\n"), "typst 0.15.1");
+    EXPECT_EQ(Docgen::typst_descriptor("typst 0.15.1\n"), "typst 0.15.1");
+    EXPECT_EQ(Docgen::typst_descriptor("typst 0.16.0 (deadbeef)\r\nignored second line\n"), "typst 0.16.0");
+}
+
+// An unreadable answer degrades to the bare engine name — the render still
+// produces a document, and a coarse engine note beats none. What it must NOT
+// do is store a line whose shape we do not understand.
+TEST(DocgenEngineDescriptor, DegradesToTheBareEngineNameOnUnparseableOutput) {
+    EXPECT_EQ(Docgen::typst_descriptor(""), "typst");
+    EXPECT_EQ(Docgen::typst_descriptor("command not found: typst\n"), "typst");
+}
+
+// XeLaTeX's descriptor is the bare engine name, and it comes from
+// Docgen::engine_name() — the one place a storable engine string is decided.
+TEST(DocgenEngineDescriptor, LatexDescriptorIsTheEngineName) {
+    EXPECT_EQ(Docgen::engine_version(Docgen::Engine::kLatex), Docgen::engine_name(Docgen::Engine::kLatex));
+    EXPECT_EQ(Docgen::engine_version(Docgen::Engine::kLatex), "xelatex");
+}
+
+// The engine that produced the bytes is part of the version's provenance:
+// Typst is pre-1.0, and re-rendering a v1 template under a later engine can
+// lay it out differently, so "which template" is not enough to reproduce a
+// document. The invoice template is still LaTeX, hence `xelatex` — and with
+// no version suffix, deliberately: only Typst's version moves the layout
+// (see Docgen::engine_version). DOCGEN_LATEX_CMD points at the stub script,
+// which is exactly why the descriptor may not be derived from the command.
+TEST_F(RenderJobTest, RecordsTheEngineOnTheRenderedVersion) {
+    use_succeeding_latex_stub();
+    auto org_id = make_org("111280000014");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    auto v1 = documents.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+    // Nothing was rendered into it yet, so it carries no engine at all.
+    EXPECT_FALSE(v1->render_engine.has_value());
+
+    auto result = Docgen::process_job(json{{"org_id", org_id},
+                                           {"document_id", doc.id},
+                                           {"version_id", v1->id},
+                                           {"slug", "invoice"},
+                                           {"input", valid_invoice_input()}});
+    ASSERT_FALSE(result.contains("skipped")) << result.dump();
+    EXPECT_EQ(result["render_engine"].get<std::string>(), "xelatex");
+
+    auto version = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->render_engine.has_value());
+    EXPECT_EQ(*version->render_engine, "xelatex");
+    // …and it is served, not just stored: this field is the answer to "why
+    // does this PDF differ from the one I printed in March".
+    EXPECT_EQ(nlohmann::json(*version)["render_engine"].get<std::string>(), "xelatex");
+}
+
+// The upload path shares set_version_file with the render path, and it must
+// neither invent an engine for a human-uploaded file nor blank one a render
+// already recorded — hence COALESCE on the column. Both halves are asserted
+// here because a plain `render_engine = $7` would pass the first.
+TEST_F(RenderJobTest, ConfirmUploadStyleWriteDoesNotTouchTheRecordedEngine) {
+    // No engine stub: nothing is rendered here, the repository is driven
+    // directly — this is about the WRITE, not about a compile.
+    auto org_id = make_org("111280000015");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    auto v1 = documents.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+
+    // No engine argument — the shape LedgerDocumentsController::confirmUpload
+    // calls with. A version that never had one keeps NULL.
+    ASSERT_TRUE(documents.set_version_file(
+        org_id, v1->id, "org/" + org_id + "/uploaded/x.pdf", std::string(64, 'a'), "application/pdf", 12));
+    auto after_upload = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(after_upload);
+    EXPECT_FALSE(after_upload->render_engine.has_value());
+
+    // Now record one, then repeat the engine-less write: it survives.
+    ASSERT_TRUE(documents.set_version_file(org_id,
+                                           v1->id,
+                                           "org/" + org_id + "/generated/x.pdf",
+                                           std::string(64, 'b'),
+                                           "application/pdf",
+                                           34,
+                                           std::string("typst 0.15.1")));
+    ASSERT_TRUE(documents.set_version_file(
+        org_id, v1->id, "org/" + org_id + "/uploaded/y.pdf", std::string(64, 'c'), "application/pdf", 56));
+    auto after = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(after);
+    ASSERT_TRUE(after->render_engine.has_value());
+    EXPECT_EQ(*after->render_engine, "typst 0.15.1");
+}
+
 // THE property the whole versioning work exists for: a later render must not
 // touch an earlier version's bytes. Both renders produce genuinely different
 // PDFs (set_canned_pdf), so equal-looking objects could not hide a rewrite.

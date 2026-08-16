@@ -509,7 +509,7 @@ components:
     # signatories and money included.
     DocumentVersion:
       type: object
-      required: [id, document_id, version_no, s3_key, checksum_sha256, mime, size_bytes, template_version, created_by_user_id, created_at, updated_at]
+      required: [id, document_id, version_no, s3_key, checksum_sha256, mime, size_bytes, template_version, render_engine, created_by_user_id, created_at, updated_at]
       properties:
         id:                 { type: string, format: uuid }
         document_id:        { type: string, format: uuid }
@@ -519,6 +519,7 @@ components:
         mime:               { type: ['string', 'null'] }
         size_bytes:         { type: ['integer', 'null'], format: int64 }
         template_version:   { type: ['string', 'null'], description: "The on-disk template version this render used, e.g. 'v1'" }
+        render_engine:      { type: ['string', 'null'], description: "The document engine that produced this PDF, with its version where the version matters: 'xelatex', or 'typst 0.15.1'. Typst is pre-1.0 and each minor release changes layout, so template_version alone does not identify what a page looked like. null for an uploaded or emailed file (no engine produced it) and for a version whose render has not finished" }
         created_by_user_id: { type: ['string', 'null'], format: uuid }
         created_at:         { type: string }
         updated_at:         { type: string }
