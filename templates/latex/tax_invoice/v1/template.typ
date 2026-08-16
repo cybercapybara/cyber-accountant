@@ -16,6 +16,23 @@
 #set text(font: "Noto Sans", size: 9.2pt, lang: "ru")
 #set par(justify: true)
 
+// Typst breaks a line after `/` INSIDE a word, and the gate's flow-variant
+// reconstruction (check-render.py::flow_variants) rejoins only HYPHENATED
+// breaks — so a value split at a slash is simply absent from the extracted
+// text and is reported CONTENT LOST, while the rendered page looks perfectly
+// normal. Found on hr_order, and it is REACHABLE here, not hypothetical: this
+// template prints the static label `БИН/ИИН` twice in justified prose whose
+// wrap point moves with the counterparty name, and the hostile fixture's
+// `#read("/etc/passwd")` carries two more slashes. A 116-character seller name
+// plus a 114-character buyer name splits BOTH occurrences into `БИН/` + `ИИН`
+// and the gate reports `CONTENT LOST static label "БИН/ИИН"` — measured, not
+// argued. Boxing every slash-bearing token makes it unbreakable and costs
+// nothing here: the only such tokens are short (`БИН/ИИН`, `#read("…")`,
+// house numbers like `55/21`), so none can overflow its column.
+// `hyphenate` is deliberately left ON: no declared label of this template
+// hyphenates, and hyphenated breaks are the ONE kind the gate does rejoin.
+#show regex("\S+/\S+"): it => box(it)
+
 #align(center)[
   #text(size: 14.4pt, weight: "bold")[Счёт-фактура № #d.number от #d.date]
 ]
