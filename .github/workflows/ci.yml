@@ -500,6 +500,11 @@ jobs:
         # in bytes. worker-render-check = the production worker-runtime layers
         # plus poppler-utils and python3, so it reads a little high; the
         # worker-runtime layers underneath are the ones that ship.
+        # Do the arithmetic in the shell, not the format string: Docker's Go
+        # template engine ships only a handful of helpers (json/lower/upper/
+        # title/split/join/println) and has no `div`, so `{{div .Size ...}}`
+        # aborts the step with `function "div" not defined` — which failed this
+        # job while all 23 fixtures and all six self-tests had already passed.
         run: |
-          docker image inspect cyber-accountant-template:worker-render \
-            --format '{{.Size}} bytes ({{div .Size 1048576}} MiB)'
+          size=$(docker image inspect cyber-accountant-template:worker-render --format '{{.Size}}')
+          echo "$size bytes ($((size / 1048576)) MiB)"
