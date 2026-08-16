@@ -13,7 +13,16 @@
 // exception). Justified Russian prose long enough to hyphenate is what makes
 // this the first template to hit it — the payslip's cells never wrap that far.
 // Turning the overhang off, not the hyphenation, keeps LaTeX's line breaks.
-#set text(font: "Noto Sans", size: 9.2pt, lang: "ru", overhang: false)
+// `hyphenate: false`: `overhang: false` alone is NOT enough. CI run
+// 31958855105 proved it on avr — with the overhang off the margin
+// excursion went away but Typst still SPLIT `каче-`/`ству`, and a split
+// word is not findable as contiguous text, so the whole declared
+// acceptance sentence was reported LOST. That is a real defect, not a
+// gate artifact: a broken text layer also breaks Ctrl+F for a reader.
+// Applied to every template that declares long justified prose labels
+// (this one does). This SUPERSEDES the earlier "turn the overhang off,
+// not the hyphenation" reasoning above, which predates that evidence.
+#set text(font: "Noto Sans", size: 9.2pt, lang: "ru", overhang: false, hyphenate: false)
 #set par(justify: true)
 // No \emergencystretch counterpart: the LaTeX source needed 2em of it because
 // polyglossia's russian setup has no Kazakh hyphenation patterns and a long

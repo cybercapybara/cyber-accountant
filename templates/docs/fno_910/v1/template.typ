@@ -16,7 +16,16 @@
 // design, which puts ink outside the margin box that scripts/check-render.py
 // fails at its 0.5pt side tolerance. Turning the overhang off, not the
 // hyphenation, keeps the line breaks. Carried over from labor_contract v1.
-#set text(font: "Noto Sans", size: 9.2pt, lang: "ru", overhang: false)
+// `hyphenate: false`: `overhang: false` alone is NOT enough. CI run
+// 31958855105 proved it on avr — with the overhang off the margin
+// excursion went away but Typst still SPLIT `каче-`/`ству`, and a split
+// word is not findable as contiguous text, so the whole declared
+// acceptance sentence was reported LOST. That is a real defect, not a
+// gate artifact: a broken text layer also breaks Ctrl+F for a reader.
+// Applied to every template that declares long justified prose labels
+// (this one does). This SUPERSEDES the earlier "turn the overhang off,
+// not the hyphenation" reasoning above, which predates that evidence.
+#set text(font: "Noto Sans", size: 9.2pt, lang: "ru", overhang: false, hyphenate: false)
 #set par(justify: true)
 
 #align(center)[

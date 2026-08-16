@@ -13,7 +13,16 @@
 // under a locally installed Noto build — font metrics differ between the
 // worker image and Homebrew, so a local render cannot rule this out.
 // Turning the overhang off, not the hyphenation, keeps the line breaks.
-#set text(font: "Noto Sans", size: 9.2pt, lang: "ru", overhang: false)
+// `hyphenate: false` for the same reason as hr_order/reconciliation, and
+// proven here by CI rather than argued: the acceptance sentence below is
+// long justified Russian prose, Typst split `каче-`/`ству` across lines in
+// the worker image, and the gate reported the whole declared label LOST —
+// a broken word is not findable as contiguous text. `overhang: false`
+// alone removed the margin excursion but NOT the split, so the label was
+// still gone. Off, the sentence sets slightly looser and stays findable.
+// A local render cannot decide this: Homebrew Noto does not hyphenate it,
+// the image does.
+#set text(font: "Noto Sans", size: 9.2pt, lang: "ru", overhang: false, hyphenate: false)
 #set par(justify: true)
 
 #align(center)[
