@@ -47,12 +47,13 @@ gates by construction. Hand-rolled versions usually don't.
    `fixtures/<name>.expected.txt`. `scripts/check-render.py` fails if it is
    missing — a template with no declared expectations cannot be gated. It
    also needs a `fixtures/special-chars.json` whose data carries the hostile
-   payload **in the syntax of the engine that compiles it** (a Typst template
-   adds `#panic(`, `#read(`, `*`, `` ` ``, `@` to the LaTeX weapons): that
-   fixture is what makes `template-render` an injection guard, and
+   payload: `#panic(`, `#read(`, `*`, `` ` ``, `@`, plus the bytes the
+   deleted LaTeX escaper used to rewrite (`% & # $ _ { } \ ^ ~`), which stay
+   on the list because the requirement was never "the escaper handles them"
+   but "the engine PRINTS them". That fixture is what makes `template-render`
+   an injection guard, and
    `ShippedTemplatesTest.EveryTemplateShipsAHostileSpecialCharsFixture`
-   (`tests/unit/test_template_registry.cpp`) fails if a conversion leaves it
-   behind.
+   (`tests/unit/test_template_registry.cpp`) fails if one goes bland.
 10. **Printed money is `Money::format_tiyn_ru`; stored/served/filed money is
    `Ledger::format_tiyn`.** The rule is by DESTINATION, not by module. Every
    `input` handed to a docgen template — the ФНО forms (TaxController), the
@@ -84,14 +85,10 @@ below), then runs three steps:
 1. `scripts/render-templates.sh` — compiles every
    `templates/latex/*/v*/fixtures/*.json` through the worker's
    `--render-template` mode, i.e. the real render pipeline. A nonzero engine
-   exit fails the job; so does an overfull `\hbox` over `OVERFULL_MAX_PT`
-   (1.0pt), kept as a LaTeX-only tripwire for overflow in material that
-   produces no text (a `\hrulefill` rule, an `\hline`). That tripwire is
-   **engine-conditional**: mandatory (missing `main.log` = failure) for a
-   version directory that still has a `template.tex`, skipped for a
-   `template.typ` one, which writes no transcript — and a `template.typ`
-   directory that *did* leave a `main.log` fails as an engine/tree
-   disagreement. The summary line reports the per-engine split.
+   exit fails the job, and that is **all** it can catch: Typst clips silently,
+   exits 0 and writes no transcript, so there is nothing to grep. The
+   overfull-`\hbox` tripwire went with the last `template.tex` and was not
+   replaced — step 2 reads the PDF instead, which is why it exists.
 2. `scripts/check-render.py` — the gate proper, engine-agnostic, run per
    fixture. **Oracle:** every printed amount is DERIVED from an integer
    declared `amount <path> <tiyn>` in the per-fixture expectation file, by the
@@ -106,11 +103,11 @@ below), then runs three steps:
    broken across a line break counts as lost. **Geometry:** every word box
    from `pdftotext -bbox` must lie inside the declared margin box (0.5pt of
    slack sideways, 6.0pt vertically for font ascent). The `margin <N>mm` in
-   `expected.txt` is cross-checked against the template's own page setup in
-   either engine — `\usepackage[margin=18mm]{geometry}` or Typst's
-   `#set page(..., margin: 18mm)`. **Syntax:** no extracted token may look
-   like template syntax (a Typst `#` sigil, a content-block bracket, an inja
-   delimiter, a LaTeX control sequence, a bare `else`/`endif`) unless the
+   `expected.txt` is cross-checked against the template's own page setup
+   (`#set page(..., margin: 18mm)`). **Syntax:** no extracted token may look
+   like template syntax (a Typst `#` sigil, a content-block bracket, a bare
+   `else`/`endif`; inja delimiters and LaTeX control sequences are still
+   screened so a stray one cannot creep back in) unless the
    fixture or a declared label contains it — the `special-chars` fixtures
    ship `#panic("x")` and `#read("/etc/passwd")` as DATA and must keep
    passing, so the test is provenance, not appearance. **Ink:** the page is
@@ -118,7 +115,7 @@ below), then runs three steps:
    it — a solid band spanning the word box and past both sides, with the
    word's own ink above AND below it in the same pixel columns. An underline,
    a `\midrule` or a signature line has ink on one side only; measured over
-   all 22 fixtures, zero findings.
+   all 23 fixtures, zero findings.
 3. `scripts/check-render-selftest.sh` — breaks payslip, fno_910, tax_invoice,
    fno_300 and labor_contract on purpose and fails unless the gate catches all
    six and names what went wrong. The fno_300 case breaks the FIXTURE, not the
@@ -157,31 +154,36 @@ It triggers on changes under `templates/**`, `src/docgen/**`,
 
 ## Document engines
 
-The worker image (`docker/Dockerfile`, stage `worker-runtime`) is the only
-image with a document engine, and it currently carries **two**: TeX Live
-(XeLaTeX) and **Typst, pinned to 0.15.1** at `/usr/local/bin/typst`. Both stay
-until the last template is converted
-(`.superpowers/sdd/typst-migration-spike.md`); do not drop a TeX package
-before then.
+**Typst, pinned to 0.15.1**, is the only document engine. All ten templates are
+`template.typ`; the XeLaTeX render path, the inja templating layer and
+`escape_latex` were deleted with the last `template.tex`. The worker image
+(`docker/Dockerfile`, stage `worker-runtime`) is the only image carrying an
+engine, and still carries the TeX Live layer — dropping it is its own task.
 
-- **Which engine a template uses is a property of its directory, not a list
-  anywhere.** `TemplateRegistry::load()` decides it per version directory —
-  `template.typ` ⇒ Typst, `template.tex` ⇒ XeLaTeX — and `engine_name()`
-  produces the string stored on the document version. The migration converts
-  one template at a time, so the split moves; ask the tree
-  (`ls templates/latex/*/v*/template.*`) rather than any prose, here or
-  elsewhere. When no `template.tex` is left, the XeLaTeX pipeline,
-  `escape_latex` and the TeX Live layer of the worker image can go.
-
+- **Data is never code.** A Typst template opens its own input
+  (`#let d = json("input.json")`), which `write_typst_inputs` writes beside the
+  copied template, so a tenant-supplied value is content and cannot be parsed
+  as source. That is why there is no escaping layer and why adding one would be
+  a regression, not a hardening: escaping BEFORE templating is what shipped ФНО
+  300.00 forms without their closing line and hr_order orders with no body at
+  all. Every template's `special-chars` fixture pins the property through the
+  real engine in CI.
+- **Which engine a template uses is still a property of its directory, not a
+  list anywhere.** `TemplateRegistry::load()` decides it per version directory
+  (`template.typ` ⇒ Typst) and `engine_name()` produces the string stored on
+  the document version. `Docgen::Engine` has one value today and the enum stays
+  — `document_versions.render_engine` still holds `xelatex` on rows rendered
+  before the migration, and a second engine must be a change to `load()` rather
+  than to every call site.
 - The Typst pin is not decorative. Typst is pre-1.0 and every minor release
   changes layout, so the version is a build arg (`TYPST_VERSION`), the
   download is checksum-verified against `TYPST_SHA256`, and `template-render`
   fails if `typst --version` on the built image is not 0.15.1. Bumping it is a
   deliberate act with a template-version consequence, never a drive-by.
-- Neither engine ships fonts. Both find **Noto Sans** — the family with the
-  Kazakh glyph coverage (ә ғ қ ң ө ұ ү һ і) — from `fonts-noto-core` in
-  `/usr/share/fonts`, XeLaTeX via fontspec and Typst by scanning that
-  directory. The same CI step asserts `typst fonts` still lists it.
+- Typst ships no fonts. It finds **Noto Sans** — the family with the Kazakh
+  glyph coverage (ә ғ қ ң ө ұ ү һ і) — from `fonts-noto-core` in
+  `/usr/share/fonts`, by scanning that directory. The same CI step asserts
+  `typst fonts` still lists it.
 
 ## Don'ts
 

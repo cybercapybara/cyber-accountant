@@ -248,12 +248,12 @@ void worker_loop(const std::string& worker_id, const std::vector<std::string>& t
 
 /**
  * @brief `--render-template <slug> <fixture.json> <outdir>` — validate,
- *        render and XeLaTeX-compile one fixture, standalone (no
- *        Core::initialize: no Postgres/Redis/Storage needed). Used by
+ *        stage and compile one fixture, standalone (no Core::initialize: no
+ *        Postgres/Redis/Storage needed). Used by
  *        scripts/render-templates.sh, which the `template-render` CI job
- *        runs against the worker image (the only place TeX Live lives — see
- *        docker/Dockerfile) for every fixture under every template version
- *        directory in templates/latex.
+ *        runs against the worker image (the only place a document engine
+ *        lives — see docker/Dockerfile) for every fixture under every
+ *        template version directory in templates/latex.
  * @return 0 and prints "PASS ..." on success; 1 and prints "FAIL ...: <why>"
  *         to stderr otherwise.
  */

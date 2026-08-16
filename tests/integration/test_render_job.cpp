@@ -4,21 +4,15 @@
  *        src/docgen/RenderJob.hpp) against real Postgres + Redis + a
  *        LocalStorage backend.
  *
- * NEITHER ENGINE'S REAL BINARY is invoked here: DOCGEN_LATEX_CMD *and*
- * DOCGEN_TYPST_CMD are both pointed at one stub shell script (written to a
- * temp file and chmod +x'd in SetUp) that either copies a hardcoded minimal
- * PDF into `main.pdf` (success case) or exits 1 without producing one
- * (failure case). It ignores its arguments, so it stands in for `xelatex
- * main.tex` and `typst compile main.typ` alike. Both are stubbed because the
- * engine is chosen by the TEMPLATE DIRECTORY (Docgen::TemplateRegistry::load)
- * and the Typst migration moves that choice one commit at a time: this
- * fixture drives the invoice, and stubbing only the engine the invoice
- * happened to use on the day it was written is how it would go red — or,
- * worse, quietly stop running — the moment the invoice converted.
+ * THE REAL ENGINE IS NEVER INVOKED here: DOCGEN_TYPST_CMD is pointed at a
+ * stub shell script (written to a temp file and chmod +x'd in SetUp) that
+ * answers `--version`, and then either copies a hardcoded minimal PDF into
+ * `main.pdf` (success case) or exits 1 without producing one (failure case).
+ * It ignores its arguments, so it stands in for `typst compile main.typ`.
  *
- * The full pipeline — schema validation, the render (inja + LaTeX escaping,
- * or the Typst template copy + input.json), the engine invocation, sha256,
- * Storage::put, DocumentRepository::version_render_state/set_version_file/
+ * The full pipeline — schema validation, the Typst staging (template copy +
+ * input.json), the engine invocation, sha256, Storage::put,
+ * DocumentRepository::version_render_state/set_version_file/
  * set_current_version/set_status_if — runs for real; only the compiler itself
  * is faked. A real engine only ever runs via scripts/render-templates.sh (the
  * `template-render` CI job, on the worker image — see docker/Dockerfile).
@@ -73,8 +67,8 @@ fs::path scripts_dir_path() {
     return fs::temp_directory_path() / "docgen_render_job_scripts";
 }
 
-/// Make @p path executable for owner/group/other — the stub scripts
-/// DOCGEN_LATEX_CMD points at need +x to run via popen()'s `sh -c`.
+/// Make @p path executable for owner/group/other — the stub script
+/// DOCGEN_TYPST_CMD points at needs +x to run via popen()'s `sh -c`.
 void make_executable(const fs::path& path) {
     std::error_code ec;
     fs::permissions(path,
@@ -86,7 +80,6 @@ void make_executable(const fs::path& path) {
 
 class RenderJobTest : public TestHelpers::CoreBackedTest {
 protected:
-    std::unique_ptr<TestHelpers::ScopedEnv> latex_cmd_env_;
     std::unique_ptr<TestHelpers::ScopedEnv> typst_cmd_env_;
 
     std::string config_file_name() const override { return "render_job_test_config.json"; }
@@ -125,7 +118,6 @@ protected:
     }
 
     void TearDown() override {
-        latex_cmd_env_.reset();
         typst_cmd_env_.reset();
         TestHelpers::CoreBackedTest::TearDown();
         std::error_code ec;
@@ -188,7 +180,7 @@ protected:
     /// one test render TWICE and get DIFFERENT files, which is what makes
     /// "version 1's object still holds version 1's content" a real assertion
     /// instead of a tautology. Deliberately rewrites the canned PDF rather
-    /// than pointing the engine variables at a second script: re-seating them
+    /// than pointing the engine variable at a second script: re-seating it
     /// would construct the new ScopedEnv and only then destroy the old one,
     /// and that destructor would restore the variable right back over the new
     /// value.
@@ -196,21 +188,19 @@ protected:
         std::ofstream(scripts_dir_path() / "canned.pdf", std::ios::binary) << bytes;
     }
 
-    /// Point BOTH engine commands at @p script_path. Which one the render
-    /// actually uses is decided by the template directory on disk, and it
-    /// changes under this fixture as templates convert — so the fixture
-    /// stubs whichever engine the invoice happens to select today, without
-    /// naming it.
+    /// Point the engine command at @p script_path. Named for the ENGINE in
+    /// the abstract, not for Typst: which binary a render reaches for is
+    /// decided by the template directory on disk (Docgen::TemplateRegistry::
+    /// load), and this fixture deliberately never spells out which one the
+    /// invoice selects today.
     void use_engine_stub(const fs::path& script_path) {
         make_executable(script_path);
-        latex_cmd_env_ = std::make_unique<TestHelpers::ScopedEnv>("DOCGEN_LATEX_CMD", script_path.string());
         typst_cmd_env_ = std::make_unique<TestHelpers::ScopedEnv>("DOCGEN_TYPST_CMD", script_path.string());
     }
 
-    /// Points both engine commands at a stub script that copies the canned
-    /// PDF into `main.pdf` (cwd, per compile_pdf/compile_typst's
-    /// `cd <dir> && ...`) and exits 0. The stub ignores its arguments, so the
-    /// same script serves `xelatex ... main.tex` and `typst compile main.typ`.
+    /// Points the engine command at a stub script that copies the canned
+    /// PDF into `main.pdf` (cwd, per compile_typst's `cd <dir> && ...`) and
+    /// exits 0. The stub ignores its arguments.
     void use_succeeding_engine_stub() {
         const fs::path pdf_path = scripts_dir_path() / "canned.pdf";
         set_canned_pdf(kFakePdfBytes);
@@ -231,7 +221,7 @@ protected:
         use_engine_stub(script_path);
     }
 
-    /// Points both engine commands at a stub script that fails (exit 1)
+    /// Points the engine command at a stub script that fails (exit 1)
     /// without producing a PDF — simulates a compile error from whichever
     /// engine the template selects.
     void use_failing_engine_stub() {
@@ -309,8 +299,8 @@ TEST_F(RenderJobTest, RenderJobInvalidInputFails) {
     EXPECT_FALSE(stored->s3_key.has_value());
 }
 
-// Named for the engine in the abstract, not for XeLaTeX: the stub fails
-// whichever binary the invoice's directory currently selects.
+// Named for the engine in the abstract: the stub fails whichever binary the
+// invoice's directory currently selects.
 TEST_F(RenderJobTest, RenderJobEngineFailureFails) {
     use_failing_engine_stub();
     auto org_id = make_org("111280000003");
@@ -418,13 +408,6 @@ TEST(DocgenEngineDescriptor, DegradesToTheBareEngineNameOnUnparseableOutput) {
     EXPECT_EQ(Docgen::typst_descriptor("command not found: typst\n"), "typst");
 }
 
-// XeLaTeX's descriptor is the bare engine name, and it comes from
-// Docgen::engine_name() — the one place a storable engine string is decided.
-TEST(DocgenEngineDescriptor, LatexDescriptorIsTheEngineName) {
-    EXPECT_EQ(Docgen::engine_version(Docgen::Engine::kLatex), Docgen::engine_name(Docgen::Engine::kLatex));
-    EXPECT_EQ(Docgen::engine_version(Docgen::Engine::kLatex), "xelatex");
-}
-
 // The engine that produced the bytes is part of the version's provenance:
 // Typst is pre-1.0, and re-rendering a v1 template under a later engine can
 // lay it out differently, so "which template" is not enough to reproduce a
@@ -432,13 +415,12 @@ TEST(DocgenEngineDescriptor, LatexDescriptorIsTheEngineName) {
 //
 // WHICH engine is deliberately not written here. It is read off the invoice's
 // own TemplateInfo — the same directory-decided answer the render pipeline
-// uses — because that answer moves as the migration proceeds, and a literal
-// "xelatex" here (what this test asserted before the invoice converted) is a
-// test that has to be edited by every conversion instead of surviving it. The
+// uses — because a literal engine name is a test that has to be edited by
+// every conversion instead of surviving it; this one survived all ten. The
 // property is the AGREEMENT: what got stored on the version is the engine the
-// template on disk selects, prefix-matched because Typst's descriptor carries
-// a version suffix and XeLaTeX's does not (see Docgen::engine_version). The
-// engine command variables point at the stub script, which is exactly why the
+// template on disk selects, prefix-matched because the descriptor carries a
+// version suffix the bare name does not (see Docgen::engine_version). The
+// engine command variable points at the stub script, which is exactly why the
 // descriptor may not be derived from the command.
 TEST_F(RenderJobTest, RecordsTheEngineOnTheRenderedVersion) {
     use_succeeding_engine_stub();
@@ -647,7 +629,7 @@ TEST_F(RenderJobTest, IsANoOpForASupersededVersion) {
 
 TEST_F(RenderJobTest, DoesNotOverwriteAnAlreadyRenderedVersionOnRerun) {
     // ВАЖНО про форму проверки: PDF в этом дереве НЕ байт-стабилен —
-    // SOURCE_DATE_EPOCH нигде не выставляется, XeLaTeX штампует в файл дату
+    // SOURCE_DATE_EPOCH нигде не выставляется, движок штампует в файл дату
     // сборки. Поэтому «повтор ничего не перезаписал» доказывается тем, что
     // джоба вернула skipped и байты в хранилище не изменились, а НЕ тем, что
     // второй рендер дал ту же контрольную сумму: без гварда суммы разошлись

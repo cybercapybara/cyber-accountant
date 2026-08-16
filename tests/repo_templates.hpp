@@ -16,12 +16,13 @@
  *
  * THE RULE. A template directory is reachable when THE DIRECTORY AND ITS
  * `schema.json` exist. Which engine compiles it is decided per version
- * directory by `Docgen::TemplateRegistry::load` (`template.typ` ⇒ Typst,
- * `template.tex` ⇒ XeLaTeX), it moves one commit at a time for the whole
- * migration, and no probe may depend on it. `schema.json` is the right
- * witness: it is the file every template has under either engine, it is what
- * the registry needs to resolve the directory at all, and it is the one that
- * cannot go missing without the template being genuinely broken.
+ * directory by `Docgen::TemplateRegistry::load`, from the source file on
+ * disk, and no probe may depend on that file's name. `schema.json` is the
+ * right witness: it is the file every template has whatever compiles it, it
+ * is what the registry needs to resolve the directory at all, and it is the
+ * one that cannot go missing without the template being genuinely broken.
+ * The rule outlived the migration that motivated it and is the standing one
+ * for any future engine change.
  *
  * A SKIP IS LOUD, AND NARROW. The only environment that genuinely cannot run
  * these tests is one with no repo checkout under the working directory at all
@@ -51,7 +52,8 @@
 namespace TestTemplates {
 
 /// The docgen template root, relative to the working directory. Still named
-/// `latex` for both engines — it is a path in the repo, not an engine claim.
+/// `latex` though nothing under it is LaTeX any more — it is a path in the
+/// repo, not an engine claim, and renaming it is its own task.
 inline constexpr const char* kRoot = "templates/latex";
 
 /// Is a repo checkout reachable from the working directory at all? This is
@@ -98,8 +100,8 @@ inline std::string no_checkout_reason() {
 inline std::string missing_template_reason(const std::string& slug, const std::string& version = "v1") {
     return "the repo checkout is reachable but " + version_dir(slug, version).string() +
            "/schema.json is not — the template was renamed, moved or deleted. This is a broken repository, not an "
-           "environment to skip over. A probe must ask for the DIRECTORY and its schema.json, never for one engine's "
-           "template.tex/template.typ.";
+           "environment to skip over. A probe must ask for the DIRECTORY and its schema.json, never for the "
+           "engine-specific source file inside it.";
 }
 
 }  // namespace TestTemplates

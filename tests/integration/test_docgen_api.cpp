@@ -569,9 +569,10 @@ TEST_F(DocgenApiTest, GenerateFormatsInvoiceVatAndTotalFromIntegers) {
 
 // Third instance of the same forgery class this phase, and the subtlest: the
 // LABEL, not the amount. `vat_rate` is caller text printed inside the VAT
-// line's parentheses — «НДС ({{ vat_rate }}): {{ vat_amount }} ₸» — and
-// escape_latex deliberately passes '(', ')', ':', digits, spaces and '₸'
-// through untouched (only LaTeX-special bytes are rewritten). So a rate of
+// line's parentheses — «НДС (#d.vat_rate): #d.vat_amount ₸» — and nothing
+// between the request and the page rewrites a '(', ')', ':', digit, space or
+// '₸'. (Under the retired LaTeX path that was the escaper's deliberate
+// choice; under Typst nothing transforms a value at all.) So a rate of
 // "16%): 9 999 999,00 ₸ (" closed the parenthesis, printed a fabricated
 // amount, and reopened it — a forged figure standing directly above the
 // server-derived total. The schema pattern is what stops it: the rate may now

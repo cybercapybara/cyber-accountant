@@ -2,9 +2,9 @@
  * @file test_template_registry.cpp
  * @brief Unit tests for Docgen::TemplateRegistry — discovery + schema
  *        validation against a fixture tree under a temp directory — and for
- *        Docgen::render_tex / Docgen::write_typst_inputs (Renderer.hpp),
- *        which operate on the same TemplateInfo this registry resolves. No
- *        Config, no network, no sidecars, no XeLaTeX, no Typst.
+ *        Docgen::write_typst_inputs (Renderer.hpp), which operates on the
+ *        same TemplateInfo this registry resolves. No Config, no network, no
+ *        sidecars, no Typst binary.
  */
 
 #include <algorithm>
@@ -48,25 +48,14 @@ protected:
         fs::remove_all(root_, ec);
     }
 
-    /// Write templates/<slug>/<version_dir>/template.tex + schema.json.
+    /// Write templates/<slug>/<version_dir>/template.typ + schema.json — the
+    /// two files a version directory must have for load() to resolve it.
     void write_version(const std::string& slug,
                        const std::string& version_dir,
-                       const std::string& tex = "Hello {{ name }}",
+                       const std::string& typ = "#let d = json(\"input.json\")",
                        const json& schema = json{{"type", "object"},
                                                  {"required", json::array({"name"})},
                                                  {"properties", {{"name", {{"type", "string"}}}}}}) {
-        const fs::path dir = root_ / slug / version_dir;
-        fs::create_directories(dir);
-        std::ofstream(dir / "template.tex") << tex;
-        std::ofstream(dir / "schema.json") << schema.dump();
-    }
-
-    /// Write templates/<slug>/<version_dir>/template.typ + schema.json — the
-    /// Typst sibling of write_version(), for the engine-discovery tests.
-    void write_typst_version(const std::string& slug,
-                             const std::string& version_dir,
-                             const std::string& typ = "#let d = json(\"input.json\")",
-                             const json& schema = json{{"type", "object"}}) {
         const fs::path dir = root_ / slug / version_dir;
         fs::create_directories(dir);
         std::ofstream(dir / "template.typ") << typ;
@@ -140,26 +129,17 @@ TEST_F(TemplateRegistryTest, LatestFindsSingleVersion) {
     EXPECT_EQ(info->slug, "invoice");
     EXPECT_EQ(info->version, 1);
     EXPECT_EQ(info->version_str, "v1");
-    EXPECT_EQ(info->source_path, root_ / "invoice" / "v1" / "template.tex");
+    EXPECT_EQ(info->source_path, root_ / "invoice" / "v1" / "template.typ");
 }
 
 // ── per-template engine discovery ────────────────────────────────────────
-// The engine is a property of the template directory, decided once here, so
-// the migration can convert one template at a time with both engines live.
-
-TEST_F(TemplateRegistryTest, LatexTemplateReportsXelatexEngine) {
-    write_version("invoice", "v1");
-    Docgen::TemplateRegistry registry(root_);
-
-    auto info = registry.latest("invoice");
-    ASSERT_TRUE(info.has_value());
-    EXPECT_EQ(info->engine, Docgen::Engine::kLatex);
-    EXPECT_EQ(info->source_path, root_ / "invoice" / "v1" / "template.tex");
-    EXPECT_STREQ(Docgen::engine_name(info->engine), "xelatex");
-}
+// The engine is a property of the template directory, decided once in load()
+// and nowhere else. One engine ships today; what these pin is that the
+// decision still happens there, so adding a second one later is a change to
+// load() rather than to every call site.
 
 TEST_F(TemplateRegistryTest, TypstTemplateReportsTypstEngine) {
-    write_typst_version("payslip", "v1");
+    write_version("payslip", "v1");
     Docgen::TemplateRegistry registry(root_);
 
     auto info = registry.latest("payslip");
@@ -169,32 +149,17 @@ TEST_F(TemplateRegistryTest, TypstTemplateReportsTypstEngine) {
     EXPECT_STREQ(Docgen::engine_name(info->engine), "typst");
 }
 
-// Transient state while a template is being converted: the .typ is
-// authoritative. Deliberate, not accidental — the conversion commit adds the
-// .typ and deletes the .tex, and if a rebase ever lands only half of that,
-// the new source must win rather than the retired one.
-TEST_F(TemplateRegistryTest, TypstWinsWhenBothSourcesExist) {
-    write_version("payslip", "v1");
-    std::ofstream(root_ / "payslip" / "v1" / "template.typ") << "typst body";
-    Docgen::TemplateRegistry registry(root_);
-
-    auto info = registry.latest("payslip");
-    ASSERT_TRUE(info.has_value());
-    EXPECT_EQ(info->engine, Docgen::Engine::kTypst);
-    EXPECT_EQ(info->source_path, root_ / "payslip" / "v1" / "template.typ");
-}
-
 // list() resolves through the same load(), so discovery over the whole tree
-// reports the engine per directory too — not just the single-slug path.
+// fills in the engine per directory too — not just the single-slug path.
 TEST_F(TemplateRegistryTest, ListReportsTheEnginePerTemplate) {
     write_version("invoice", "v1");
-    write_typst_version("payslip", "v1");
+    write_version("payslip", "v1");
     Docgen::TemplateRegistry registry(root_);
 
     const auto all = registry.list();
     ASSERT_EQ(all.size(), 2u);
     EXPECT_EQ(all[0].slug, "invoice");
-    EXPECT_EQ(all[0].engine, Docgen::Engine::kLatex);
+    EXPECT_EQ(all[0].engine, Docgen::Engine::kTypst);
     EXPECT_EQ(all[1].slug, "payslip");
     EXPECT_EQ(all[1].engine, Docgen::Engine::kTypst);
 }
@@ -226,10 +191,10 @@ TEST_F(TemplateRegistryTest, IgnoresNonVersionDirectories) {
     EXPECT_EQ(info->version_str, "v1");
 }
 
-// Neither source present is a malformed template, not "no such engine" and
-// not a silent not-found: the directory declares a version and a schema, so
-// something is missing from the commit and it must fail loudly.
-TEST_F(TemplateRegistryTest, MissingBothSourcesThrows) {
+// No source present is a malformed template, not a silent not-found: the
+// directory declares a version and a schema, so something is missing from the
+// commit and it must fail loudly.
+TEST_F(TemplateRegistryTest, MissingTemplateTypThrows) {
     fs::create_directories(root_ / "broken" / "v1");
     std::ofstream(root_ / "broken" / "v1" / "schema.json") << json::object().dump();
     Docgen::TemplateRegistry registry(root_);
@@ -239,7 +204,7 @@ TEST_F(TemplateRegistryTest, MissingBothSourcesThrows) {
 
 TEST_F(TemplateRegistryTest, MissingSchemaJsonThrows) {
     fs::create_directories(root_ / "broken" / "v1");
-    std::ofstream(root_ / "broken" / "v1" / "template.tex") << "x";
+    std::ofstream(root_ / "broken" / "v1" / "template.typ") << "x";
     Docgen::TemplateRegistry registry(root_);
 
     EXPECT_THROW(registry.latest("broken"), std::runtime_error);
@@ -278,91 +243,6 @@ TEST_F(TemplateRegistryTest, ValidateWithResolvedTemplateInfo) {
 
     EXPECT_FALSE(Docgen::TemplateRegistry::validate(*info, json{{"name", "Ada"}}).has_value());
     EXPECT_TRUE(Docgen::TemplateRegistry::validate(*info, json::object()).has_value());
-}
-
-// ── render_tex (Renderer.hpp) ────────────────────────────────────────────
-// Exercises inja substitution plus the automatic LaTeX-escaping pass over
-// every string leaf of the input — operates on the TemplateInfo this
-// registry resolves, so these tests live alongside it.
-
-TEST_F(TemplateRegistryTest, RenderTexSubstitutesVariables) {
-    write_version("greet", "v1", "Hello {{ name }}, total {{ total }}.");
-    Docgen::TemplateRegistry registry(root_);
-    auto info = registry.latest("greet");
-    ASSERT_TRUE(info.has_value());
-
-    auto out = Docgen::render_tex(*info, json{{"name", "Ada"}, {"total", "100"}});
-    EXPECT_EQ(out, "Hello Ada, total 100.");
-}
-
-// The brief's canonical special-character case: a string containing several
-// LaTeX-special characters must come out auto-escaped, substituted in place.
-TEST_F(TemplateRegistryTest, RenderTexAutoEscapesSpecialCharactersInBody) {
-    write_version("greet", "v1", "Line: {{ line }}");
-    Docgen::TemplateRegistry registry(root_);
-    auto info = registry.latest("greet");
-    ASSERT_TRUE(info.has_value());
-
-    auto out = Docgen::render_tex(*info, json{{"line", "50% скидка & \"спец\" _x_"}});
-    EXPECT_EQ(out, "Line: 50\\% скидка \\& \"спец\" \\_x\\_");
-}
-
-// Numbers/booleans are substituted as-is (inja stringifies them), never run
-// through escape_latex — there is nothing to escape in a bare number, and
-// e.g. a JSON `true` must not become the (mangled) string "true" escaped.
-TEST_F(TemplateRegistryTest, RenderTexLeavesNumbersAndBooleansUnescaped) {
-    write_version("greet", "v1", "{{ count }}/{{ ok }}");
-    Docgen::TemplateRegistry registry(root_);
-    auto info = registry.latest("greet");
-    ASSERT_TRUE(info.has_value());
-
-    auto out = Docgen::render_tex(*info, json{{"count", 5}, {"ok", true}});
-    EXPECT_EQ(out, "5/true");
-}
-
-// render_tex must not mutate the caller's input.
-TEST_F(TemplateRegistryTest, RenderTexDoesNotMutateInput) {
-    write_version("greet", "v1", "{{ line }}");
-    Docgen::TemplateRegistry registry(root_);
-    auto info = registry.latest("greet");
-    ASSERT_TRUE(info.has_value());
-
-    json input = {{"line", "a & b"}};
-    const json snapshot = input;
-    Docgen::render_tex(*info, input);
-    EXPECT_EQ(input, snapshot);
-}
-
-// Regression: every shipped template defines a one-arg LaTeX macro like
-// `\newcommand{\field}[1]{\textbf{#1}}` — inja's DEFAULT comment markers are
-// "{#"/"#}", so the literal `{#1}` in that macro body used to be parsed as
-// an unterminated comment ("expected comment close, got '<eof>'") and the
-// render failed outright. render_tex must handle this without throwing, and
-// the macro parameter marker must survive into the output unchanged (it's
-// plain LaTeX text, not inja syntax under the remapped markers).
-TEST_F(TemplateRegistryTest, RenderTexCoexistsWithLatexMacroParameters) {
-    write_version("greet", "v1", "\\newcommand{\\field}[1]{\\textbf{#1}}\n{{ name }}");
-    Docgen::TemplateRegistry registry(root_);
-    auto info = registry.latest("greet");
-    ASSERT_TRUE(info.has_value());
-
-    auto out = Docgen::render_tex(*info, json{{"name", "Ada"}});
-    EXPECT_EQ(out, "\\newcommand{\\field}[1]{\\textbf{#1}}\nAda");
-    EXPECT_NE(out.find("{#1}"), std::string::npos);
-}
-
-// render_tex's remapped comment markers — "((#" / "#))" — are still cut from
-// the output, same as inja's default "{# #}" would be, just spelled
-// differently so it can't collide with LaTeX macro parameters.
-TEST_F(TemplateRegistryTest, RenderTexCommentMarkersAreStripped) {
-    write_version("greet", "v1", "A((#hidden comment#))B");
-    Docgen::TemplateRegistry registry(root_);
-    auto info = registry.latest("greet");
-    ASSERT_TRUE(info.has_value());
-
-    auto out = Docgen::render_tex(*info, json::object());
-    EXPECT_EQ(out, "AB");
-    EXPECT_EQ(out.find("hidden"), std::string::npos);
 }
 
 // ── normalize_input (schema-driven default-fill) ─────────────────────────
@@ -470,12 +350,10 @@ TEST(NormalizeInputTest, FillsMissingOptionalFieldsOfRealInvoiceSchema) {
 
 // End-to-end against the REAL shipped invoice template: an input missing
 // every optional field must reach the engine WITHOUT throwing, and must not
-// make the template print any of its conditional blocks' labels. Both engines
-// spell the condition the same way — inja `{% if seller.iik != "" %}` and
-// Typst `#if d.seller.iik != ""` — because both are matched to
-// normalize_input's fill (see TemplateRegistry::normalize_input's doc comment
-// on why "" is truthy in inja), so the property is one property, checked
-// through whichever engine the directory currently selects.
+// make the template print any of its conditional blocks' labels. The template
+// spells the condition `#if d.seller.iik != ""` because that is what matches
+// normalize_input's fill — the zero value is a real value, not a marker, so a
+// truthiness test would keep the block.
 //
 // It was `RenderTexOfRealInvoiceTemplateOmitsEmptyConditionalBlocks`, guarded
 // by a probe for `invoice/v1/template.tex` — so the invoice conversion
@@ -505,16 +383,7 @@ TEST(NormalizeInputTest, RealInvoiceTemplateGetsEmptyOptionalsForItsConditionalB
     };
     const json normalized = Docgen::TemplateRegistry::normalize_input(info->schema, input);
 
-    if (info->engine == Docgen::Engine::kLatex) {
-        std::string out;
-        EXPECT_NO_THROW(out = Docgen::render_tex(*info, normalized));
-        EXPECT_EQ(out.find("ИИК"), std::string::npos);
-        EXPECT_EQ(out.find("Основание"), std::string::npos);
-        EXPECT_EQ(out.find("НДС"), std::string::npos);
-        return;
-    }
-
-    // Typst: the fill is what the template's `!= ""` guards compare against,
+    // The fill is what the template's `!= ""` guards compare against,
     // and it has to survive the trip to the engine as the EMPTY STRING — a
     // missing key is a hard engine error, and any other value prints a label
     // with nothing after it.
@@ -544,51 +413,17 @@ TEST(NormalizeInputTest, RealInvoiceTemplateGetsEmptyOptionalsForItsConditionalB
     fs::remove_all(staging, ec);
 }
 
-// ── escaping vs. templating: WHEN a string leaf is escaped ───────────────
-// Regression bundle for the defect that shipped in v0.4.1: render_tex used
-// to escape EVERY string leaf before inja saw the tree, so a template's own
-// control flow was evaluated against escaped data. `{% if balance_kind ==
-// "to_pay" %}` tested `to\_pay`, never matched, and every ФНО 300.00 went
-// out without its closing line and amount in words; hr_order's
-// `business_trip` and `salary_change` orders went out with no body at all.
-//
-// The rule now: a string leaf is escaped UNLESS its schema node pins it to
-// an `enum` and the value IS one of those literals. Everything below pins
-// both halves of that rule — the branch works, and nothing else stopped
-// being escaped.
+// ── helpers for the shipped-template sweeps below ───────────────────────
 
-/// The canonical hostile value: a counterparty name carrying every kind of
-/// LaTeX weapon at once. It must reach the PDF as literal text, always.
-const char* const kInjection = "ТОО \"Алма & Ко\" \\textbf{x} $x^2$ #read(\"/etc/passwd\")";
-/// The same string after escape_latex — what the `.tex` must contain.
-const char* const kInjectionEscaped =
-    "ТОО \"Алма \\& Ко\" \\textbackslash{}textbf\\{x\\} \\$x\\textasciicircum{}2\\$ \\#read(\"/etc/passwd\")";
-
-/// The Typst-engine sibling of kInjection: the same hostile counterparty
-/// name, carrying the constructs TYPST would act on — a code sigil, a call
-/// that reads the filesystem, a binding, strong/emphasis markers, math mode,
-/// a label and a raw block. There is no escaped counterpart because there is
-/// no escaping on that path: the value travels to the engine inside
-/// `input.json` and must arrive byte for byte, unchanged and unspliced.
+/// The canonical hostile value: a counterparty name carrying the constructs
+/// TYPST would act on — a code sigil, a call that reads the filesystem, a
+/// binding, strong/emphasis markers, math mode, a label and a raw block, plus
+/// the LaTeX-special bytes the retired escaper used to rewrite. There is no
+/// escaped counterpart because there is no escaping on this path: the value
+/// travels to the engine inside `input.json` and must arrive byte for byte,
+/// unchanged and unspliced.
 const char* const kTypstInjection =
     "ТОО \"Алма & Ко\" #panic(\"pwned\") #read(\"/etc/passwd\") #let x = 1 *bold* _it_ $x^2$ @lbl `code`";
-
-/// Does @p needle occur in @p haystack NOT preceded by a backslash? The
-/// escaped forms of the payload legitimately contain their own raw needle as
-/// a substring (`\#read(` contains `#read(`), so a plain find() would report
-/// a hit on correctly escaped output. What matters is an occurrence LaTeX
-/// would act on: one that is not preceded by the escaping backslash.
-/// @note Every needle passed below therefore STARTS with the special
-///       character being checked, and is long enough not to collide with the
-///       template's own LaTeX (`& Ко"` rather than `& Ко`, which would also
-///       match the table header `Показатель & Код строки`).
-bool contains_unescaped(const std::string& haystack, const std::string& needle) {
-    for (std::size_t pos = haystack.find(needle); pos != std::string::npos; pos = haystack.find(needle, pos + 1)) {
-        if (pos == 0 || haystack[pos - 1] != '\\')
-            return true;
-    }
-    return false;
-}
 
 /// Replace EVERY string leaf of @p node with @p value, in place.
 void overwrite_strings(json& node, const std::string& value) {
@@ -648,127 +483,18 @@ void collect_enum_paths(const json& root,
         collect_enum_paths(root, prop.value(), prefix.empty() ? prop.key() : prefix + "." + prop.key(), out);
 }
 
-/// Every field path a template PRINTS — inja `{{ a.b }}` expressions and
-/// Typst `#d.a.b` references — as opposed to the things it branches on
-/// inside `{% %}` / an `if`. Both forms are collected unconditionally: a
-/// file only ever contains one of them, and a helper that silently found
-/// nothing is how a shipped test rots into `EXPECT_TRUE(true)`.
+/// Every field path a template PRINTS — a Typst `#d.a.b` reference — as
+/// opposed to the things it branches on inside an `if`. The inja `{{ a.b }}`
+/// half went with the last `template.tex`; the caller guards against this
+/// finding nothing (see NeverPrintAnEnumPinnedField's enum_fields tally),
+/// because a helper that silently matches nothing is how a shipped test rots
+/// into `EXPECT_TRUE(true)`.
 std::vector<std::string> printed_expressions(const std::string& source) {
     std::vector<std::string> out;
-    for (std::size_t pos = source.find("{{"); pos != std::string::npos; pos = source.find("{{", pos + 2)) {
-        const std::size_t end = source.find("}}", pos + 2);
-        if (end == std::string::npos)
-            break;
-        std::string expr = source.substr(pos + 2, end - pos - 2);
-        const std::size_t first = expr.find_first_not_of(" \t\r\n");
-        const std::size_t last = expr.find_last_not_of(" \t\r\n");
-        if (first != std::string::npos)
-            out.push_back(expr.substr(first, last - first + 1));
-    }
     static const std::regex kTypst(R"(#d\.([A-Za-z_][A-Za-z0-9_.]*))");
     for (std::sregex_iterator it(source.begin(), source.end(), kTypst), end; it != end; ++it)
         out.push_back((*it)[1].str());
     return out;
-}
-
-// THE defect, in miniature: an enum-pinned control value whose literal
-// contains a LaTeX-special character. Escaping it first made the branch
-// unreachable; it must now reach the comparison intact.
-TEST_F(TemplateRegistryTest, RenderTexLeavesSchemaEnumControlValuesUnescaped) {
-    const json schema = json::parse(R"({
-        "type": "object",
-        "properties": {"balance_kind": {"type": "string", "enum": ["to_pay", "to_refund"]}}
-    })");
-    write_version("decl",
-                  "v1",
-                  R"({% if balance_kind == "to_pay" %}PAY{% endif %})"
-                  R"({% if balance_kind == "to_refund" %}REFUND{% endif %})",
-                  schema);
-    Docgen::TemplateRegistry registry(root_);
-    auto info = registry.latest("decl");
-    ASSERT_TRUE(info.has_value());
-
-    EXPECT_EQ(Docgen::render_tex(*info, json{{"balance_kind", "to_pay"}}), "PAY");
-    EXPECT_EQ(Docgen::render_tex(*info, json{{"balance_kind", "to_refund"}}), "REFUND");
-}
-
-// The exception is a MEMBERSHIP test on the value, not a property of the
-// field: a value that is not one of the schema's literals is escaped exactly
-// as before. So a caller who somehow gets a hostile string into an
-// enum-pinned field (past the controller allowlist and past
-// TemplateRegistry::validate) still cannot place a single raw LaTeX byte —
-// and still cannot take the branch.
-TEST_F(TemplateRegistryTest, RenderTexEscapesAnEnumFieldValueThatIsNotOneOfTheLiterals) {
-    const json schema = json::parse(R"({
-        "type": "object",
-        "properties": {"kind": {"type": "string", "enum": ["hire", "to_pay"]}}
-    })");
-    write_version("decl", "v1", R"([{% if kind == "to_pay" %}PAY{% endif %}][{{ kind }}])", schema);
-    Docgen::TemplateRegistry registry(root_);
-    auto info = registry.latest("decl");
-    ASSERT_TRUE(info.has_value());
-
-    // Shaped to close the comparison and open a command if it were ever
-    // interpolated raw.
-    const std::string hostile = R"(to_pay" %}\input{/etc/passwd}((#)";
-    const std::string out = Docgen::render_tex(*info, json{{"kind", hostile}});
-
-    EXPECT_EQ(out.find("PAY"), std::string::npos) << "a non-literal value must not take the branch";
-    EXPECT_EQ(out.find("\\input"), std::string::npos) << "raw \\input reached the .tex";
-    EXPECT_NE(out.find("\\textbackslash{}input\\{/etc/passwd\\}"), std::string::npos);
-    EXPECT_EQ(out, "[][to\\_pay\" \\%\\}\\textbackslash{}input\\{/etc/passwd\\}((\\#]");
-}
-
-// The schema walk must not lose escaping anywhere the old blanket walk
-// covered: nested objects, arrays of objects, and leaves the schema does not
-// describe at all (an unknown key, or an array whose schema declares no
-// `items`). Absent schema information means "escape" — the safe direction.
-TEST_F(TemplateRegistryTest, RenderTexEscapesNestedArrayAndSchemaLessLeaves) {
-    const json schema = json::parse(R"({
-        "type": "object",
-        "properties": {
-            "seller": {"$ref": "#/definitions/party"},
-            "items": {"type": "array", "items": {"type": "object",
-                      "properties": {"name": {"type": "string"}}}},
-            "loose": {"type": "array"}
-        },
-        "definitions": {
-            "party": {"type": "object", "properties": {"name": {"type": "string"}}}
-        }
-    })");
-    write_version("inv",
-                  "v1",
-                  "[{{ seller.name }}][{{ items.0.name }}][{{ items.0.note }}][{{ loose.0 }}][{{ undeclared }}]",
-                  schema);
-    Docgen::TemplateRegistry registry(root_);
-    auto info = registry.latest("inv");
-    ASSERT_TRUE(info.has_value());
-
-    const json input = {{"seller", {{"name", "A & B"}}},
-                        // `note` is not declared by items' schema; `loose`
-                        // declares no `items`; `undeclared` is not a
-                        // property at all. All three must still be escaped.
-                        {"items", json::array({json{{"name", "C & D"}, {"note", "E & F"}}})},
-                        {"loose", json::array({"G & H"})},
-                        {"undeclared", "I & J"}};
-
-    EXPECT_EQ(Docgen::render_tex(*info, input), "[A \\& B][C \\& D][E \\& F][G \\& H][I \\& J]");
-}
-
-// A non-string enum (a schema pinning an integer) must not make the leaf
-// skip escaping by accident, and must not disturb the numbers-pass-through
-// rule either.
-TEST_F(TemplateRegistryTest, RenderTexEscapesAStringLeafAgainstANonStringEnum) {
-    const json schema = json::parse(R"({
-        "type": "object",
-        "properties": {"n": {"enum": [1, 2]}, "s": {"enum": [1, 2]}}
-    })");
-    write_version("mix", "v1", "[{{ n }}][{{ s }}]", schema);
-    Docgen::TemplateRegistry registry(root_);
-    auto info = registry.latest("mix");
-    ASSERT_TRUE(info.has_value());
-
-    EXPECT_EQ(Docgen::render_tex(*info, json{{"n", 2}, {"s", "a_b"}}), "[2][a\\_b]");
 }
 
 // ── write_typst_inputs (Renderer.hpp) ────────────────────────────────────
@@ -788,7 +514,7 @@ TEST_F(TemplateRegistryTest, WriteTypstInputsCopiesTemplateAndWritesNormalizedJs
             }
         }
     })");
-    write_typst_version("payslip", "v1", "#let d = json(\"input.json\")\n#d.employer.name", schema);
+    write_version("payslip", "v1", "#let d = json(\"input.json\")\n#d.employer.name", schema);
     Docgen::TemplateRegistry registry(root_);
     auto info = registry.latest("payslip");
     ASSERT_TRUE(info.has_value());
@@ -820,7 +546,7 @@ TEST_F(TemplateRegistryTest, WriteTypstInputsCopiesTemplateAndWritesNormalizedJs
 // reaches the engine as DATA, byte for byte, with no escaping applied.
 TEST_F(TemplateRegistryTest, WriteTypstInputsNeverTransformsValues) {
     const json schema = json::parse(R"({"type": "object", "properties": {"note": {"type": "string"}}})");
-    write_typst_version("payslip", "v1", "#let d = json(\"input.json\")", schema);
+    write_version("payslip", "v1", "#let d = json(\"input.json\")", schema);
     Docgen::TemplateRegistry registry(root_);
     auto info = registry.latest("payslip");
     ASSERT_TRUE(info.has_value());
@@ -842,7 +568,7 @@ TEST_F(TemplateRegistryTest, WriteTypstInputsNeverTransformsValues) {
 // the same directory (the `--render-template` CLI mode reuses one out_dir).
 TEST_F(TemplateRegistryTest, WriteTypstInputsOverwritesAPreviousStaging) {
     const json schema = json::parse(R"({"type": "object", "properties": {"note": {"type": "string"}}})");
-    write_typst_version("payslip", "v1", "#let d = json(\"input.json\")", schema);
+    write_version("payslip", "v1", "#let d = json(\"input.json\")", schema);
     Docgen::TemplateRegistry registry(root_);
     auto info = registry.latest("payslip");
     ASSERT_TRUE(info.has_value());
@@ -869,7 +595,7 @@ TEST_F(TemplateRegistryTest, WriteTypstInputsOverwritesAPreviousStaging) {
 // silently skipped copy that would leave compile_typst to fail with a
 // confusing "main.typ not found" from the engine instead.
 TEST_F(TemplateRegistryTest, WriteTypstInputsThrowsWhenTheOutputDirIsMissing) {
-    write_typst_version("payslip", "v1");
+    write_version("payslip", "v1");
     Docgen::TemplateRegistry registry(root_);
     auto info = registry.latest("payslip");
     ASSERT_TRUE(info.has_value());
@@ -928,27 +654,19 @@ TEST(ShippedTemplatesTest, EveryShippedTemplateReportsTheEngineOfItsSourceFile) 
 
     for (const auto& info : templates) {
         EXPECT_TRUE(fs::exists(info.source_path)) << info.slug << ": " << info.source_path.string() << " is missing";
-        const std::string extension = info.source_path.extension().string();
-        if (extension == ".typ") {
-            EXPECT_EQ(info.engine, Docgen::Engine::kTypst) << info.slug;
-            EXPECT_STREQ(Docgen::engine_name(info.engine), "typst") << info.slug;
-        } else {
-            EXPECT_EQ(extension, ".tex") << info.slug << ": unknown template source extension";
-            EXPECT_EQ(info.engine, Docgen::Engine::kLatex) << info.slug;
-            EXPECT_STREQ(Docgen::engine_name(info.engine), "xelatex") << info.slug;
-        }
+        EXPECT_EQ(info.source_path.extension().string(), ".typ") << info.slug << ": unknown template source extension";
+        EXPECT_EQ(info.engine, Docgen::Engine::kTypst) << info.slug;
+        EXPECT_STREQ(Docgen::engine_name(info.engine), "typst") << info.slug;
     }
 }
 
-// The shipped catalogue: ten document types, and every one of them claimed by
-// an engine. Deliberately says NOTHING about which engine any given slug uses
-// — that is what the Typst migration moves, one commit at a time, and it is
-// asserted against the file on disk by the test above instead of against a
-// list here that would go stale on every conversion. What this pins is the
-// thing a conversion must never change: the set of documents the service can
-// render. A conversion changes a template's source file, never its slug, so
-// this list only moves when a document type is genuinely added or retired.
-TEST(ShippedTemplatesTest, TheSameTenDocumentTypesShipUnderEitherEngine) {
+// The shipped catalogue: ten document types, every one of them resolvable.
+// Deliberately says NOTHING about engines — that is asserted against the file
+// on disk by the test above. What this pins is the thing the migration must
+// never have changed: the set of documents the service can render. A
+// conversion changed a template's source file, never its slug, so this list
+// only moves when a document type is genuinely added or retired.
+TEST(ShippedTemplatesTest, TheSameTenDocumentTypesShip) {
     REQUIRE_REPO_TEMPLATE_TREE();
 
     Docgen::TemplateRegistry registry;
@@ -989,70 +707,43 @@ TEST(ShippedTemplatesTest, TheSameTenDocumentTypesShipUnderEitherEngine) {
 // the payload is not one of the schema's literals, so it is treated like any
 // other string and the control branches simply do not fire.)
 //
-// Each template is exercised through ITS OWN engine, chosen from the same
-// TemplateInfo the render pipeline uses, so this keeps holding as templates
-// convert one at a time — no list of slugs to update:
+// The property that REPLACED escaping is separation, and that is what is
+// checked here: `write_typst_inputs` does not escape, because there is nothing
+// to escape — the payload travels beside the template in `input.json` and the
+// template reads it as data. So `main.typ` must be a byte-exact copy of the
+// template (the payload never becomes source) and every value must arrive byte
+// for byte (nothing on the way to the engine transformed it into something
+// else). The engine is read off the same TemplateInfo the render pipeline uses
+// rather than assumed, so this keeps holding if a second engine is ever added.
 //
-//   * XeLaTeX — `render_tex`, whose whole job is the escaping. The property
-//     is checked on the `.tex` it produces: the payload present in its
-//     escaped form, and none of its raw forms present at all.
-//   * Typst — `write_typst_inputs`, which does NOT escape, because there is
-//     nothing to escape: the payload travels beside the template in
-//     `input.json` and the template reads it as data. The property that
-//     replaces escaping is separation, and that is what is checked here —
-//     `main.typ` is a byte-exact copy of the template (the payload never
-//     becomes source) and every value arrives byte for byte (nothing on the
-//     way to the engine transformed it into something else).
-//
-// The Typst half's remaining claim — that the engine then TYPESETS those
-// bytes rather than running them — needs the real binary, which no C++ test
-// bucket has (tests/unit takes no services; tests/integration stubs
-// DOCGEN_LATEX_CMD and never invokes an engine; typst 0.15.1 exists only on
-// the worker image). It runs in the `template-render` CI job instead, which
-// compiles every `fixtures/*.json` with the real engine and then gates the
-// PDF: layer 1 (content) requires every fixture scalar to appear in the
-// extracted text — so a `#panic("x")` that Typst EXECUTED fails the compile
-// and one it interpreted goes missing from the text — and layer 3 (syntax)
-// requires every syntax-looking token in the PDF to be accounted for by the
-// fixture or a declared label. Those fixtures are the shipped
-// `special-chars.json`, and the test below keeps them hostile so that gate
-// cannot quietly lose its teeth.
-TEST(ShippedTemplatesTest, TheInjectionPayloadStaysDataInEveryTemplateThroughItsOwnEngine) {
+// The remaining claim — that the engine then TYPESETS those bytes rather than
+// running them — needs the real binary, which no C++ test bucket has
+// (tests/unit takes no services; tests/integration stubs DOCGEN_TYPST_CMD and
+// never invokes an engine; typst 0.15.1 exists only on the worker image). It
+// runs in the `template-render` CI job instead, which compiles every
+// `fixtures/*.json` with the real engine and then gates the PDF: layer 1
+// (content) requires every fixture scalar to appear in the extracted text — so
+// a `#panic("x")` that Typst EXECUTED fails the compile and one it interpreted
+// goes missing from the text — and layer 3 (syntax) requires every
+// syntax-looking token in the PDF to be accounted for by the fixture or a
+// declared label. Those fixtures are the shipped `special-chars.json`, and the
+// test below keeps them hostile so that gate cannot quietly lose its teeth.
+TEST(ShippedTemplatesTest, TheInjectionPayloadStaysDataInEveryTemplate) {
     REQUIRE_REPO_TEMPLATE_TREE();
 
     Docgen::TemplateRegistry registry;  // default root: "templates/latex"
     const auto templates = registry.list();
     ASSERT_FALSE(templates.empty());
 
-    std::size_t latex_checked = 0;
-    std::size_t typst_checked = 0;
+    std::size_t checked = 0;
     for (const auto& info : templates) {
         const fs::path fixture_path = info.dir / "fixtures" / "basic.json";
         ASSERT_TRUE(fs::exists(fixture_path)) << info.slug << " has no fixtures/basic.json";
         json fixture;
         std::ifstream(fixture_path) >> fixture;
 
-        if (info.engine == Docgen::Engine::kLatex) {
-            overwrite_strings(fixture, kInjection);
-            const json normalized = Docgen::TemplateRegistry::normalize_input(info.schema, fixture);
-
-            std::string out;
-            ASSERT_NO_THROW(out = Docgen::render_tex(info, normalized)) << info.slug;
-
-            EXPECT_NE(out.find(kInjectionEscaped), std::string::npos)
-                << info.slug << ": the payload is not present in its escaped form";
-            // None of the raw forms may appear. `\textbf{#1}` occurs in these
-            // templates as a macro DEFINITION, so the needles below are the
-            // payload's own byte sequences, which no template source contains.
-            EXPECT_FALSE(contains_unescaped(out, "\\textbf{x}")) << info.slug << ": raw \\textbf{x} reached the .tex";
-            EXPECT_FALSE(contains_unescaped(out, "$x^2$")) << info.slug << ": raw math mode reached the .tex";
-            EXPECT_FALSE(contains_unescaped(out, "#read(")) << info.slug << ": raw macro parameter reached the .tex";
-            EXPECT_FALSE(contains_unescaped(out, "& Ко\"")) << info.slug << ": raw & reached the .tex";
-            EXPECT_FALSE(contains_unescaped(out, "^2")) << info.slug << ": raw superscript reached the .tex";
-            ++latex_checked;
-            continue;
-        }
-
+        ASSERT_EQ(info.engine, Docgen::Engine::kTypst)
+            << info.slug << ": this sweep only knows how to check the Typst staging path";
         overwrite_strings(fixture, kTypstInjection);
         const json normalized = Docgen::TemplateRegistry::normalize_input(info.schema, fixture);
 
@@ -1089,40 +780,43 @@ TEST(ShippedTemplatesTest, TheInjectionPayloadStaysDataInEveryTemplateThroughIts
         }
         EXPECT_GT(carried, 0u) << info.slug << ": the payload reached input.json nowhere";
         fs::remove_all(staging, ec);
-        ++typst_checked;
+        ++checked;
     }
 
-    // Every shipped template went through exactly one of the two branches —
-    // the guard cannot silently stop covering a template because its engine
-    // changed under it.
-    EXPECT_EQ(latex_checked + typst_checked, templates.size());
+    // Every shipped template was actually swept — the guard cannot silently
+    // stop covering one.
+    EXPECT_EQ(checked, templates.size());
 }
 
 // The other half of the injection guard, and the reason the CI job that runs
 // it has anything hostile to render: every template must SHIP a fixture whose
 // data carries the weapons of the engine that will compile it. Without this,
-// converting a template and rewriting its `special-chars.json` into something
-// bland would disarm `template-render`'s real-engine check silently — the job
-// would stay green while proving nothing about injection.
+// rewriting a `special-chars.json` into something bland would disarm
+// `template-render`'s real-engine check silently — the job would stay green
+// while proving nothing about injection.
 //
 // Checked statically here (no engine, no services) because the fixture is a
 // file in the repo; the compile that turns it into evidence happens in
 // `template-render` (scripts/render-templates.sh + scripts/check-render.py).
-// Converting a template therefore means extending its special-chars fixture
-// with the Typst constructs as well — see templates/latex/README.md.
+// See templates/latex/README.md.
 TEST(ShippedTemplatesTest, EveryTemplateShipsAHostileSpecialCharsFixture) {
     REQUIRE_REPO_TEMPLATE_TREE();
 
-    // Weapons of the LaTeX escaper (LatexEscape.hpp) — every one of them must
-    // arrive in the PDF as a printed character.
-    const std::vector<std::string> kAnyEngine = {"%", "&", "#", "$", "_", "{", "}", "\\", "^", "~"};
+    // The bytes the retired LaTeX escaper used to rewrite. They stay on the
+    // list after its deletion because the requirement was never "the escaper
+    // handles them" but "the engine PRINTS them", and that is the thing the
+    // rendered PDF has to show.
+    const std::vector<std::string> kEscaperWeapons = {"%", "&", "#", "$", "_", "{", "}", "\\", "^", "~"};
     // ... plus the constructs Typst itself would act on: code sigil calls, a
     // strong marker, a raw block, a label.
-    const std::vector<std::string> kTypstOnly = {"*", "`", "@", "#panic(", "#read("};
+    const std::vector<std::string> kTypstWeapons = {"*", "`", "@", "#panic(", "#read("};
 
     Docgen::TemplateRegistry registry;
     const auto templates = registry.list();
     ASSERT_FALSE(templates.empty());
+
+    std::vector<std::string> required = kEscaperWeapons;
+    required.insert(required.end(), kTypstWeapons.begin(), kTypstWeapons.end());
 
     for (const auto& info : templates) {
         const fs::path fixture_path = info.dir / "fixtures" / "special-chars.json";
@@ -1132,10 +826,6 @@ TEST(ShippedTemplatesTest, EveryTemplateShipsAHostileSpecialCharsFixture) {
         std::ifstream(fixture_path) >> fixture;
         std::vector<std::pair<std::string, std::string>> leaves;
         collect_string_leaves(fixture, "", leaves);
-
-        std::vector<std::string> required = kAnyEngine;
-        if (info.engine == Docgen::Engine::kTypst)
-            required.insert(required.end(), kTypstOnly.begin(), kTypstOnly.end());
 
         for (const auto& token : required) {
             bool carried = false;
@@ -1152,11 +842,12 @@ TEST(ShippedTemplatesTest, EveryTemplateShipsAHostileSpecialCharsFixture) {
     }
 }
 
-// The one rule the escaping exception costs template authors: an
-// `enum`-pinned field is a control value, so branch on it — never print it.
-// Raw `to_pay` typeset in text mode is a LaTeX error, and a control
-// identifier is not something a reader should ever see. Statically checked
-// against every shipped template so it cannot be forgotten.
+// One rule survives the escaper's deletion, on its own merits: an
+// `enum`-pinned field is a control value, so branch on it — never print it. It
+// used to be enforced because raw `to_pay` typeset in LaTeX text mode was a
+// compile error; it stays because a control identifier is not something a
+// reader should ever see on a filed document. Statically checked against every
+// shipped template so it cannot be forgotten.
 TEST(ShippedTemplatesTest, NeverPrintAnEnumPinnedField) {
     REQUIRE_REPO_TEMPLATE_TREE();
 
@@ -1180,7 +871,7 @@ TEST(ShippedTemplatesTest, NeverPrintAnEnumPinnedField) {
                 << info.slug << "/" << info.version_str << " (" << Docgen::engine_name(info.engine) << ") prints '"
                 << path
                 << "', but its schema pins that field to an enum — enum fields are control "
-                   "values, reach the template unescaped, and must only be compared";
+                   "values and must only be compared, never typeset";
         }
     }
     // Guard against the check passing because it found nothing to check.
@@ -1207,38 +898,22 @@ TEST(ShippedTemplatesTest, NeverPrintAnEnumPinnedField) {
 // (scripts/check-render-selftest.sh) carries it as a deliberate breakage: a
 // `] else [` split across lines.
 
-// The other production symptom: an hr_order of every kind must print a body.
-// `business_trip` and `salary_change` — the two kinds whose literal carries
-// an underscore — printed a header, signature lines and nothing in between.
-TEST(ShippedTemplatesTest, HrOrderPrintsABodyForEveryKind) {
-    REQUIRE_REPO_TEMPLATE_TREE();
-
-    Docgen::TemplateRegistry registry;
-    auto info = registry.latest("hr_order");
-    ASSERT_TRUE(info.has_value());
-
-    // kind -> a phrase only that kind's block prints.
-    const std::vector<std::pair<std::string, std::string>> kinds = {{"hire", "на работу с"},
-                                                                    {"dismiss", "с должности"},
-                                                                    {"vacation", "отпуск с"},
-                                                                    {"business_trip", "в командировку с"},
-                                                                    {"salary_change", "Изменить должностной оклад"}};
-
-    for (const auto& [kind, phrase] : kinds) {
-        const json input = {
-            {"kind", kind},
-            {"number", "42"},
-            {"issued_on", "14.08.2026"},
-            {"employer", {{"name", "Cyber Capybara ТОО"}, {"bin", "104332181962"}}},
-            {"employee",
-             {{"full_name", "Серикбаева Айгерим Кайратовна"}, {"iin", "900112350487"}, {"position", "Бухгалтер"}}},
-            {"effective_from", "18.08.2026"},
-            {"director", "Ахметов Ерлан Серикович"}};
-        ASSERT_FALSE(Docgen::TemplateRegistry::validate(*info, input).has_value()) << kind;
-        const std::string out =
-            Docgen::render_tex(*info, Docgen::TemplateRegistry::normalize_input(info->schema, input));
-        EXPECT_NE(out.find(phrase), std::string::npos) << "hr_order kind '" << kind << "' rendered no body";
-    }
-}
+// HrOrderPrintsABodyForEveryKind went the same way, and for the same reason —
+// the other production symptom it guarded was that `business_trip` and
+// `salary_change`, the two kinds whose literal carries an underscore, printed
+// a header, signature lines and nothing in between. It searched the rendered
+// LaTeX SOURCE for a phrase only that kind's block emits, so once hr_order
+// converted there was no source to search: it was rendering a `template.typ`
+// through inja, which left the file essentially unchanged, and every phrase it
+// looked for was found in the template's own literal text. It PASSED without
+// rendering anything — the vacuous-green failure mode this file's other
+// gravestones describe.
+//
+// Its property is now carried end to end by the render gate: all five kinds
+// ship a fixture (`basic` = hire, `special-chars` = dismiss, plus `vacation`,
+// `business_trip` and `salary_change`), each with a `.expected.txt` naming the
+// labels only that kind's branch prints, and scripts/check-render.py requires
+// every one of them in the compiled PDF. `vacation` was added by the
+// conversion for exactly this handover — see its fixture's header comment.
 
 }  // namespace

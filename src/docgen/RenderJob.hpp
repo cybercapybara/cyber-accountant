@@ -31,28 +31,28 @@
  *     renders of identical input produce DIFFERENT bytes and "did someone
  *     re-render this?" is not answerable from a digest.
  *
- * TWO ENGINES, one per template directory (see TemplateRegistry::load). The
- * migration converts one template at a time, so both are live:
+ * ONE ENGINE, still chosen per template directory (TemplateRegistry::load),
+ * never by a caller or a payload field: Typst (`docgen.typst_cmd` /
+ * `DOCGEN_TYPST_CMD`, default `typst`). `write_typst_inputs` writes the
+ * normalized input to `input.json` and copies the template to `main.typ` in
+ * the same ScopedTempDir, then ONE `typst compile --root <dir> main.typ
+ * main.pdf` pass — Typst has no aux-file fixpoint to converge, so there is
+ * nothing to run twice. The template reads the data itself
+ * (`#let d = json("input.json")`), so there is no templating layer and
+ * nothing to escape: a value is content, never source. The JSON goes in a
+ * FILE, not on the command line via `--input` — an unbounded document has no
+ * business on an argv.
  *
- *   * Typst (`docgen.typst_cmd` / `DOCGEN_TYPST_CMD`, default `typst`) —
- *     `write_typst_inputs` writes the normalized input to `input.json` and
- *     copies the template to `main.typ` in the same ScopedTempDir, then one
- *     `typst compile --root <dir> main.typ main.pdf` pass. The template reads
- *     the data itself (`#let d = json("input.json")`), so there is no
- *     templating layer and nothing to escape — a value is content, never
- *     source. The JSON goes in a FILE, not on the command line via
- *     `--input`: an unbounded document has no business on an argv;
- *   * XeLaTeX (`docgen.latex_cmd` / `DOCGEN_LATEX_CMD`, default `xelatex`),
- *     described next, for the templates not yet converted.
+ * The inja + XeLaTeX path this replaced (`render_tex`, `escape_latex`,
+ * `compile_pdf`, `DOCGEN_LATEX_CMD`) is gone as of the Typst migration's
+ * task 16; `document_versions.render_engine` still carries `xelatex` on rows
+ * rendered before it, which is why `engine_name()` remains the single place
+ * a storable engine string is decided.
  *
- * The XeLaTeX invocation runs twice under `/usr/bin/timeout 60` — once for
- * content, once more so a future template's `\ref`/`\pageref`/totals that
- * depend on a first pass resolve (the shipped invoice template needs none,
- * but the two-pass contract is cheap insurance for templates that do). Unit/
- * integration tests never invoke the real xelatex: DOCGEN_LATEX_CMD points
- * at a stub script that copies a canned PDF — see
- * tests/integration/test_render_job.cpp. The real XeLaTeX only runs in the
- * `template-render` CI job, on the worker image (the only place TeX Live is
+ * Unit/integration tests never invoke the real engine: DOCGEN_TYPST_CMD
+ * points at a stub script that answers `--version` and copies a canned PDF —
+ * see tests/integration/test_render_job.cpp. The real Typst only runs in the
+ * `template-render` CI job, on the worker image (the only place it is
  * installed — see docker/Dockerfile).
  */
 
@@ -93,11 +93,10 @@ inline constexpr const char* kJobType = "docgen.render";
 /**
  * @brief RAII scratch directory. Created via `mkdtemp` under the system temp
  *        root; removed recursively on every exit path (success, exception,
- *        early return) so a failed render never leaks a `main.tex`/`main.pdf`
- *        pair — or, worse, the input JSON snapshot, baked into `main.tex` on
- *        the LaTeX path and sitting there verbatim as `input.json` on the
- *        Typst one. That directory is also the Typst sandbox: `--root` points
- *        at it, so it is the entire filesystem a template can read.
+ *        early return) so a failed render never leaks a `main.typ`/`main.pdf`
+ *        pair — or, worse, the input JSON snapshot, which sits there verbatim
+ *        as `input.json`. That directory is also the Typst sandbox: `--root`
+ *        points at it, so it is the entire filesystem a template can read.
  */
 class ScopedTempDir {
 public:
@@ -122,23 +121,11 @@ private:
     std::filesystem::path path_;
 };
 
-/// Resolve the configured XeLaTeX command: `docgen.latex_cmd` /
-/// `DOCGEN_LATEX_CMD`, default `xelatex`. Works even without Config
+/// Resolve the configured Typst command: `docgen.typst_cmd` /
+/// `DOCGEN_TYPST_CMD`, default `typst`. Works even without Config
 /// initialized (falls back to a raw getenv), so the worker's
 /// `--render-template` CLI smoke-test mode (no Core::initialize) can use it
 /// too.
-inline std::string latex_cmd() {
-    if (Config::is_initialized())
-        return Config::get().get<std::string>("docgen.latex_cmd", "DOCGEN_LATEX_CMD", "xelatex");
-    if (const char* env = std::getenv("DOCGEN_LATEX_CMD"))
-        return env;
-    return "xelatex";
-}
-
-/// Resolve the configured Typst command: `docgen.typst_cmd` /
-/// `DOCGEN_TYPST_CMD`, default `typst`. Same Config-optional shape as
-/// latex_cmd() so the worker's `--render-template` CLI mode (no
-/// Core::initialize) can use it too.
 inline std::string typst_cmd() {
     if (Config::is_initialized())
         return Config::get().get<std::string>("docgen.typst_cmd", "DOCGEN_TYPST_CMD", "typst");
@@ -175,28 +162,6 @@ inline int run_command(const std::string& cmd, std::string* output = nullptr) {
     if (WIFEXITED(status))
         return WEXITSTATUS(status);
     return -1;  // killed by signal (e.g. the timeout(1) wrapper firing)
-}
-
-/**
- * @brief Compile `<tex_dir>/main.tex` to `<tex_dir>/main.pdf` by running
- *        @p cmd twice, each under a 60s timeout with shell-escape disabled.
- * @throws std::runtime_error on any nonzero exit, or if compilation reports
- *         success but `main.pdf` is missing.
- */
-inline void compile_pdf(const std::filesystem::path& tex_dir, const std::string& cmd) {
-    const std::string invocation =
-        "/usr/bin/timeout 60 " + cmd + " -interaction=nonstopmode -halt-on-error -no-shell-escape main.tex";
-    const std::string full_cmd = "cd " + tex_dir.string() + " && " + invocation;
-
-    for (int pass = 1; pass <= 2; ++pass) {
-        std::string output;
-        const int rc = run_command(full_cmd, &output);
-        if (rc != 0)
-            throw std::runtime_error("docgen: latex pass " + std::to_string(pass) + " failed (exit " +
-                                     std::to_string(rc) + "): " + output);
-    }
-    if (!std::filesystem::exists(tex_dir / "main.pdf"))
-        throw std::runtime_error("docgen: latex reported success but main.pdf is missing");
 }
 
 /**
@@ -270,20 +235,20 @@ inline std::string typst_descriptor(const std::string& version_output) {
 }
 
 /**
- * @brief The engine descriptor recorded on a rendered version:
- *        `xelatex`, or `typst` plus its parsed version — `typst 0.15.1`.
+ * @brief The engine descriptor recorded on a rendered version: `typst` plus
+ *        its parsed version — `typst 0.15.1`.
  * @details The engine's stable NAME is never spelled out here: it comes from
  *          `Docgen::engine_name()` (TemplateRegistry.hpp), the single place
  *          that decides what a stored engine is called. This function only
  *          appends the version.
  *
- *          Only Typst carries one, and that asymmetry is deliberate rather
- *          than an omission: Typst is pre-1.0 and every minor release
- *          restyles the same template, so its version is the difference
- *          between a reproducible document and a guess. XeLaTeX's layout has
- *          not moved in years, and the TeX Live release that pins it is
- *          already recorded — by `docker/Dockerfile`, at the commit the image
- *          was built from.
+ *          A version is carried at all because Typst is pre-1.0 and every
+ *          minor release restyles the same template, so it is the difference
+ *          between a reproducible document and a guess. (The retired XeLaTeX
+ *          descriptor was the bare engine name for the opposite reason: its
+ *          layout had not moved in years and the TeX Live release pinning it
+ *          was already recorded by `docker/Dockerfile`. Rows written then
+ *          still read `xelatex`.)
  *
  *          The real binary is asked (`typst --version`), once per process
  *          (function-local static), NOT read off a constant in this file: the
@@ -304,10 +269,7 @@ inline std::string typst_descriptor(const std::string& version_output) {
  *          of failing the render: a document with a coarse engine note beats
  *          no document.
  */
-inline std::string engine_version(Engine engine) {
-    if (engine != Engine::kTypst)
-        return engine_name(engine);
-
+inline std::string engine_version(Engine /*engine*/) {
     static const std::string cached = [] {
         try {
             std::string out;
@@ -322,25 +284,22 @@ inline std::string engine_version(Engine engine) {
 }
 
 /**
- * @brief Validate, render and compile @p slug's latest template against
- *        @p input, producing `<out_dir>/main.pdf` whichever engine the
- *        template selects.
+ * @brief Validate, stage and compile @p slug's latest template against
+ *        @p input, producing `<out_dir>/main.pdf`.
  * @details Shared by the render job and the worker's `--render-template`
  *          CLI smoke-test mode (src/worker_main.cpp), so both paths exercise
- *          the exact same validate -> normalize -> render -> compile
+ *          the exact same validate -> normalize -> stage -> compile
  *          pipeline. `TemplateRegistry::normalize_input` runs strictly AFTER
  *          `validate()` succeeds — it schema-driven-fills every optional
- *          field the caller omitted (so `{{ }}`/`{% if %}` in the template
- *          can dot into it without inja's "variable not found" render
- *          error) — see that function's doc comment for why templates
- *          additionally had to switch `{% if X %}` to `{% if X != "" %}` on
- *          optional string fields.
+ *          field the caller omitted, without which Typst fails the whole
+ *          compile with "dictionary does not contain key" the moment a
+ *          template dots into one.
  *
  *          The engine is `info->engine`, decided by the template directory
- *          (TemplateRegistry::load), never by a caller or a payload field:
- *          - `kTypst`  -> `write_typst_inputs` + `compile_typst`, leaving
- *            `main.typ` and `input.json` beside the PDF;
- *          - `kLatex`  -> `render_tex` + `compile_pdf`, leaving `main.tex`.
+ *          (TemplateRegistry::load), never by a caller or a payload field.
+ *          There is one engine today, and the resolution stays here anyway:
+ *          `write_typst_inputs` + `compile_typst`, leaving `main.typ` and
+ *          `input.json` beside the PDF.
  * @return the engine descriptor that produced the PDF (`engine_version`),
  *         for the caller to store on the version alongside the file. It is
  *         returned rather than recomputed by the caller because the engine
@@ -360,26 +319,11 @@ inline std::string render_and_compile(const std::string& slug,
 
     const json normalized = TemplateRegistry::normalize_input(info->schema, input);
 
-    // Everything above is shared by both engines — the template lookup, the
-    // schema validation, and the default-fill. normalize_input is MORE
-    // load-bearing for Typst, not less: inja printed nothing for a missing
-    // optional, Typst hard-errors with "dictionary does not contain key".
-    if (info->engine == Engine::kTypst) {
-        write_typst_inputs(*info, normalized, out_dir);
-        compile_typst(out_dir, typst_cmd());
-        return engine_version(info->engine);
-    }
-
-    const std::string tex = render_tex(*info, normalized);
-    std::ofstream out(out_dir / "main.tex", std::ios::binary | std::ios::trunc);
-    if (!out)
-        throw std::runtime_error("docgen: cannot write main.tex to " + out_dir.string());
-    out << tex;
-    out.close();
-    if (!out)
-        throw std::runtime_error("docgen: failed writing main.tex to " + out_dir.string());
-
-    compile_pdf(out_dir, latex_cmd());
+    // normalize_input is MORE load-bearing under Typst, not less: inja
+    // printed nothing for a missing optional, Typst hard-errors with
+    // "dictionary does not contain key".
+    write_typst_inputs(*info, normalized, out_dir);
+    compile_typst(out_dir, typst_cmd());
     return engine_version(info->engine);
 }
 

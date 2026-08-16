@@ -122,9 +122,8 @@ bool is_minio_available() {
 class LedgerDocumentsApiTest : public TestHelpers::CoreBackedTest {
 protected:
     Api::LedgerDocumentsController ctrl;
-    std::unique_ptr<TestHelpers::ScopedEnv> latex_stub_;
     std::unique_ptr<TestHelpers::ScopedEnv> typst_stub_;
-    std::filesystem::path latex_stub_dir_;
+    std::filesystem::path engine_stub_dir_;
 
     std::string config_file_name() const override { return "documents_api_test_config.json"; }
 
@@ -183,36 +182,27 @@ protected:
     void TearDown() override {
         if (!::testing::Test::IsSkipped() && Cache::is_initialized())
             drain_queue();
-        latex_stub_.reset();
         typst_stub_.reset();
-        if (!latex_stub_dir_.empty()) {
+        if (!engine_stub_dir_.empty()) {
             std::error_code ec;
-            std::filesystem::remove_all(latex_stub_dir_, ec);
+            std::filesystem::remove_all(engine_stub_dir_, ec);
         }
         Storage::reset_for_testing();
         TestHelpers::CoreBackedTest::TearDown();
     }
 
-    /// Point BOTH engine commands at a stub that "compiles" anything into
+    /// Point the engine command at a stub that "compiles" anything into
     /// @p bytes, so a test can run the REAL Docgen::process_job (schema
-    /// validation, the render, storage, repository writes) without TeX Live
-    /// or Typst — same idiom as tests/integration/test_render_job.cpp, which
+    /// validation, the staging, storage, repository writes) without a Typst
+    /// binary — same idiom as tests/integration/test_render_job.cpp, which
     /// owns the render pipeline's own coverage. Only the tests that actually
-    /// drive the worker call this.
-    ///
-    /// Both, because the engine is chosen by the template DIRECTORY and the
-    /// Typst migration moves that choice one commit at a time. Stubbing only
-    /// DOCGEN_LATEX_CMD meant that the moment the invoice became a
-    /// `template.typ`, the worker below reached for the real `typst` binary —
-    /// which the test image does not carry — and the test failed for a reason
-    /// that had nothing to do with what it asserts. The stub ignores its
-    /// arguments, so one script serves both invocations.
+    /// drive the worker call this. The stub ignores its arguments.
     void use_engine_stub(const std::string& bytes) {
-        latex_stub_dir_ = std::filesystem::temp_directory_path() / ("documents_api_latex_" + Jobs::generate_uuid());
-        std::filesystem::create_directories(latex_stub_dir_);
-        const std::filesystem::path pdf_path = latex_stub_dir_ / "canned.pdf";
+        engine_stub_dir_ = std::filesystem::temp_directory_path() / ("documents_api_engine_" + Jobs::generate_uuid());
+        std::filesystem::create_directories(engine_stub_dir_);
+        const std::filesystem::path pdf_path = engine_stub_dir_ / "canned.pdf";
         std::ofstream(pdf_path, std::ios::binary) << bytes;
-        const std::filesystem::path script_path = latex_stub_dir_ / "fake-latex.sh";
+        const std::filesystem::path script_path = engine_stub_dir_ / "fake-engine.sh";
         {
             std::ofstream script(script_path);
             // `--version` is answered, not compiled — Docgen::engine_version
@@ -231,7 +221,6 @@ protected:
                                          std::filesystem::perms::others_exec,
                                      std::filesystem::perm_options::replace,
                                      ec);
-        latex_stub_ = std::make_unique<TestHelpers::ScopedEnv>("DOCGEN_LATEX_CMD", script_path.string());
         typst_stub_ = std::make_unique<TestHelpers::ScopedEnv>("DOCGEN_TYPST_CMD", script_path.string());
     }
 

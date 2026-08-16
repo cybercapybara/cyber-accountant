@@ -1,10 +1,9 @@
 # Document templates (docgen)
 
-Two engines live here at once while the LaTeX → Typst migration runs: a
-template is Typst or XeLaTeX according to the source file in its own version
-directory (see "Layout"). The directory name `templates/latex/` is historical
-— it is a path stored in nothing but this repo's scripts, and it is renamed in
-one commit once the last `.tex` is gone.
+Every template here is **Typst**. The XeLaTeX path, the inja templating layer
+and the LaTeX escaper were deleted once the last `template.tex` was converted.
+The directory name `templates/latex/` is historical — it is a path stored in
+nothing but this repo's scripts, and it is renamed in its own commit.
 
 Each subdirectory is one **template slug** (a document type: `invoice`,
 `avr`, `waybill`, `tax_invoice`, `reconciliation`, ...). `Docgen::TemplateRegistry`
@@ -16,8 +15,7 @@ just adding files in the right layout.
 
 ```
 templates/latex/<slug>/v<N>/
-├── template.typ         # Typst source, reads its data from input.json     ─┐ exactly
-├── template.tex         # OR: inja template — LaTeX with {{ }} / {% %}     ─┘ one of these
+├── template.typ         # Typst source, reads its data from input.json
 ├── schema.json          # JSON Schema (draft-07) the input JSON must satisfy
 ├── expected.txt         # page margin + the static labels this template prints
 └── fixtures/
@@ -27,15 +25,14 @@ templates/latex/<slug>/v<N>/
 ```
 
 **The source file IS the engine declaration.** `TemplateRegistry::load()`
-(`src/docgen/TemplateRegistry.hpp`) picks Typst for a directory holding a
-`template.typ` and XeLaTeX for one holding a `template.tex`, and that decision
-travels with the resolved `TemplateInfo` all the way to the compile and to
-`document_versions.render_engine`. Nothing else — no list, no config key —
-records which template uses which engine, so a conversion is exactly: add the
-`.typ`, delete the `.tex`, keep everything else. A version directory with
-neither file is a hard error, not a silently skipped template. The migration
-is still under way, so the tree holds both kinds at once; `ls
-*/v*/template.*` is the only honest scoreboard.
+(`src/docgen/TemplateRegistry.hpp`) resolves `template.typ` per version
+directory and stamps the engine onto the `TemplateInfo`, which travels all the
+way to the compile and to `document_versions.render_engine`. Nothing else — no
+list, no config key — records which template uses which engine. There is one
+engine today and `Docgen::Engine` has one value, but the decision deliberately
+stays in `load()`: adding a second engine must be a change there, not at every
+call site. A version directory with no `template.typ` is a hard error, not a
+silently skipped template.
 
 - `<slug>` is the document type, matching `documents.doc_type` /
   `documents.template_slug` (migrations/010_documents.sql).
@@ -53,157 +50,94 @@ is still under way, so the tree holds both kinds at once; `ls
   static labels the template prints. Without it the gate refuses to run, since
   it cannot tell a lost column from a template that never had one.
 
-Reference implementations, one per engine: `templates/latex/invoice/v1/`
-(Typst) and `templates/latex/tax_invoice/v1/` (LaTeX) — the same kind of
-document, so the two are directly comparable.
+Reference implementation: `templates/latex/invoice/v1/`.
 
 ## Writing a template
 
-The rest of this section is the **LaTeX/inja** path, and applies only to a
-directory holding a `template.tex`. A Typst template has no templating layer
-at all: `Docgen::write_typst_inputs` copies the template to `main.typ` and
-writes the (normalized) input beside it as `input.json`, the template reads it
-with `#let d = json("input.json")`, and a value is therefore content and never
-source. Nothing is escaped on that path because nothing can be executed —
-`#panic("x")` in a counterparty name is typeset character for character. The
-one thing it demands in exchange: every key the schema declares must be
-present, because Typst hard-errors on a missing dictionary key where inja
-merely printed nothing, which is what `TemplateRegistry::normalize_input`
-guarantees before staging.
+There is no templating layer and nothing to escape. `Docgen::write_typst_inputs`
+copies the template to `main.typ` and writes the (normalized) input beside it
+as `input.json`; the template reads it with `#let d = json("input.json")`, so a
+value is content and never source. `#panic("x")` in a counterparty name is
+typeset character for character — which is why the escaper was deleted rather
+than ported to Typst syntax: there is nothing for it to do, and an escaper on
+this path could only corrupt the data it touched.
 
-- Use inja's default delimiters: `{{ expr }}` for expressions, `{% if %}` /
-  `{% for %}` / `{% endif %}` / `{% endfor %}` for control flow. See
-  [pantor/inja](https://github.com/pantor/inja) for the full syntax
-  (a Jinja2 subset).
-- **Comments are `((# ... #))`, NOT inja's default `{# ... #}`.** Every
-  shipped template defines `\newcommand{\field}[1]{\textbf{#1}}` (or a
-  similar one-arg macro) — `#1`/`#2`/... macro parameters are routine and
-  unavoidable in LaTeX, and `{#1}` starts with the exact two characters
-  inja treats as "open comment" by default. With no matching `#}` in the
-  file, that silently turns the rest of the template into an unterminated
-  comment and the render fails with a parser error at EOF ("expected
-  comment close, got '<eof>'"). `Docgen::render_tex` (`src/docgen/Renderer.hpp`)
-  remaps the comment markers to `((#` / `#))` via inja's
-  `Environment::set_comment(open, close)` — a sequence that cannot occur in
-  valid LaTeX — specifically so template authors never have to dodge this.
-  Write `((# like this #))` for an inja-only comment that doesn't end up in
-  the rendered `.tex`; do not use `{# #}`, it is not special anymore.
-  (`{% %}` was checked too: every `template.tex` shipped as of this writing
-  was grepped for a literal, non-inja `{%` — LaTeX has no construct that
-  produces one on its own, since `%` starts a LaTeX line comment and would
-  need a `{` immediately before it to collide, which none of these
-  templates do — so `{% %}` was left at its inja default. If a future
-  template ever needs a literal `{%` in its LaTeX body, re-run that grep and
-  remap `set_statement` the same way.)
-- Every **string** value in the input JSON is automatically escaped for
-  LaTeX (`Docgen::escape_latex`, `src/docgen/LatexEscape.hpp`) before
-  substitution — `\ { } $ & # ^ _ % ~ < >` all become their safe LaTeX
-  form. Do **not** escape values yourself in `schema.json`/fixtures; numbers
-  and booleans pass through unescaped.
-- **Branch on `enum` fields, and never print one.** There is exactly one
-  exception to the escaping above: a string leaf whose schema node pins it to
-  an `enum`, and whose value is one of those literals, reaches the template
-  **raw**. It has to — a value the template COMPARES is not text being
-  typeset, and escaping it first is what silently broke ФНО 300.00's closing
-  line and two whole `hr_order` kinds (`{% if balance_kind == "to_pay" %}`
-  was being evaluated against `to\_pay`). So:
-  - write control comparisons **only** against `enum`-constrained fields —
-    `{% if kind == "business_trip" %}` works because `hr_order`'s schema
-    pins `kind`; the same comparison against a free-text field would be
-    tested against the escaped value and is a bug;
-  - do **not** `{{ }}` an `enum` field into the document. `to_pay` typeset
-    raw is a LaTeX error (bare `_` in text mode), and a control identifier
-    is not something a reader should see — print a human label from the
-    branch instead. Declare each one `unprinted <path>` in `expected.txt`.
-    `ShippedTemplatesTest.NeverPrintAnEnumPinnedField`
-    (`tests/unit/test_template_registry.cpp`) fails if a template does.
+The one thing Typst demands in exchange: every key the schema declares must be
+present, because it hard-errors on a missing dictionary key where inja merely
+printed nothing. `TemplateRegistry::normalize_input` guarantees that before
+staging, filling each declared-but-absent optional with a type-appropriate zero
+value.
 
-  Nothing else stops being escaped: every free-text field — a counterparty
-  name, a line item, a director's name — still goes through `escape_latex`,
-  because none of them is `enum`-pinned. See `src/docgen/Renderer.hpp`'s file
-  header for the full argument, including why this adds no injection surface
-  (the only bytes that now reach the `.tex` unescaped are byte-exact copies of
-  literals this repo wrote in its own `schema.json`; a caller can select among
-  them, never contribute to them).
+- **Compare against the zero value, don't test truthiness.** A filled `""` is
+  indistinguishable from a caller-supplied empty string, so a block that should
+  appear only when a field has content is written `#if d.seller.address != ""`.
+- **Branch on `enum` fields, and never print one.** A field whose schema pins
+  it to an `enum` is a control value: compare it, never typeset it. A control
+  identifier (`to_pay`, `business_trip`) is not something a reader of a filed
+  document should ever see. Declare each one `unprinted <path>` in
+  `expected.txt`; `ShippedTemplatesTest.NeverPrintAnEnumPinnedField`
+  (`tests/unit/test_template_registry.cpp`) fails the build if a template
+  prints one.
+
+  Historical note worth keeping, because it cost two releases: the retired
+  pipeline escaped string leaves *before* inja saw them, so a template's own
+  control flow was evaluated against escaped data — `{% if balance_kind ==
+  "to_pay" %}` tested `to\_pay`, never matched, and every ФНО 300.00 shipped
+  without its closing line while two `hr_order` kinds shipped with no body at
+  all. Under Typst the question cannot arise: data never reaches a parser.
 - `schema.json` is the contract: `RenderJob` (and `render-templates.sh`)
   reject any input that doesn't satisfy it — required fields, types, string
   patterns (e.g. a `date` field constrained to `DD.MM.YYYY`) all belong
   there, not in ad-hoc template logic.
-- Fonts: LaTeX templates render under XeLaTeX with `polyglossia` + `fontspec`
-  for Cyrillic/Kazakh text (see `docker/Dockerfile`'s worker stage for the
-  installed TeX Live + font packages). Stick to `\setmainfont{Noto Sans}` (or
-  another font actually installed in the worker image) rather than assuming
-  a font is present. A Typst template asks for the same family
-  (`#set text(font: "Noto Sans")`), which Typst finds by scanning
-  `/usr/share/fonts`; neither engine ships fonts of its own, and Noto Sans is
+- Fonts: ask for `#set text(font: "Noto Sans")`, which Typst finds by scanning
+  `/usr/share/fonts` (`fonts-noto-core` in the worker image — see
+  `docker/Dockerfile`). Typst ships no fonts of its own, so stick to a family
+  actually installed there rather than assuming one is present; Noto Sans is
   the family with the Kazakh glyph coverage (ә ғ қ ң ө ұ ү һ і).
 
-### Tables start their own paragraph
+### Overflow has no warning — the gate reads the PDF
 
-A `\textwidth`-wide `tabularx`/`tabular` is a single unbreakable box. If the
-block of text above it has not ended its paragraph, LaTeX typesets that box
-**inline**, continuing the last line — and the box then hangs off the right
-edge of the page. XeLaTeX reports this only as `Overfull \hbox (...pt too
-wide)`, a *warning*: the compile still exits 0 and a PDF is still produced,
-just with the right-hand columns pushed off the paper. This shipped in v0.3.0
-(ФНО 910.00 printed `10 000` where the amount was `10 000 000,00`; the payslip
-lost its entire amounts column *and* the column's static header).
+v0.3.0 shipped ФНО 910.00 printing `10 000` where the amount was
+`10 000 000,00`, and a payslip that had lost its entire amounts column *and*
+that column's static header. Under XeLaTeX that was an `Overfull \hbox`: a
+*warning*, exit 0, a PDF still produced with the right-hand columns pushed off
+the paper. The fix at the time was to grep the engine transcript.
 
-So, above every full-width table:
-
-- Terminate the block with an **unconditional `\par`**, written immediately
-  before the table's own `\vspace`. Never put the terminator inside an
-  `{% if %}` — an optional field that is absent then takes the paragraph break
-  with it, which is exactly how `invoice`/`tax_invoice` acquired the same bug.
-- In a block whose **last** line is optional, end *every* line with `\par`
-  rather than `\\`. `\par` is idempotent, so the extra one contributed by a
-  skipped `{% if %}` line (a skipped block still leaves its newline behind, and
-  two newlines are a paragraph break) is a harmless no-op. `\\` is not
-  idempotent in either direction: a trailing `\\` immediately before a `\par`
-  emits a spurious blank line, and a leading `\\` right after one is the hard
-  error `There's no line here to end`.
-- Each `\par`-terminated line needs its own `\noindent`, since it is now a
-  paragraph rather than a `\\`-continuation.
-- Long Kazakh prose has no hyphenation patterns under polyglossia's `russian`
-  setup and can overhang by a few points on its own; `\emergencystretch=2em`
-  in the preamble (see `labor_contract`) lets TeX loosen the line instead.
-
-`scripts/render-templates.sh` still fails the `template-render` CI job on any
-overfull `\hbox` over `OVERFULL_MAX_PT` (default 1.0pt) — but that grep is no
-longer the gate, only a LaTeX-only tripwire for overflow in material that
-produces no extractable text (a `\hrulefill` signature rule, an `\hline`).
-The gate is "The render gate" below, which measures the PDF instead of the
-engine's opinion of it and would have caught the v0.3.0 defect even if XeLaTeX
-had reported nothing at all.
+Neither half of that survives. Typst does not warn: it CLIPS silently, exits 0
+and writes no log at all, so there is no transcript to grep and
+`scripts/render-templates.sh` no longer tries. "The render gate" below is the
+only check, and that is exactly why it measures the PDF — extracted text,
+word-box geometry against the declared margin box, leaked syntax by
+provenance, and a raster pass for rules drawn through text. It would have
+caught the v0.3.0 defect even if the engine had reported nothing at all, which
+is now literally the case.
 
 ## Testing a template
 
-- Unit tests (`tests/unit/test_template_registry.cpp`,
-  `tests/unit/test_latex_escape.cpp`) cover discovery, engine selection,
-  validation, LaTeX escaping and Typst staging without invoking an engine at
+- Unit tests (`tests/unit/test_template_registry.cpp`) cover discovery,
+  engine selection, validation and Typst staging without invoking an engine at
   all. `ShippedTemplatesTest` there runs a hostile counterparty name through
-  **every** shipped template on the path its own engine uses
-  (`TheInjectionPayloadStaysDataInEveryTemplateThroughItsOwnEngine`): escaped
-  into the `.tex` for a LaTeX one, and — for a Typst one — carried byte for
+  **every** shipped template
+  (`TheInjectionPayloadStaysDataInEveryTemplate`): it must be carried byte for
   byte into `input.json` beside a `main.typ` that is a verbatim copy of the
   template, so the payload can never become source.
 - `tests/integration/test_render_job.cpp` exercises the full `docgen.render`
-  job pipeline with a stubbed `DOCGEN_LATEX_CMD` (no real TeX Live needed).
+  job pipeline with a stubbed `DOCGEN_TYPST_CMD` (no real engine needed).
 - The **real** engine compile only runs via `./scripts/render-templates.sh`
   against every `fixtures/*.json` under this tree — locally on a machine with
-  TeX Live and/or typst 0.15.1 installed, or via the `template-render` CI job
+  typst 0.15.1 installed, or via the `template-render` CI job
   on the worker image. Add a fixture for every new template (and every new
   required/optional field combination worth covering) so a broken template
   fails there instead of in production. That script does far more than check
   the exit code — see below.
 - **`fixtures/special-chars.json` is required, and must stay hostile.** It is
   the only place the injection property gets tested against a real engine: its
-  data carries `% & # $ _ { } \ ^ ~` and, for a Typst template, `#panic(`,
-  `#read(`, `*`, `` ` `` and `@` as well. Layer 1 of the gate then demands
-  each of those values back out of the PDF's text and layer 3 demands that
-  nothing which *looks* like syntax lacks that provenance — i.e. the engine
-  typeset the payload rather than acting on it. **When you convert a template,
-  extend its special-chars fixture with the new engine's constructs**;
+  data carries `#panic(`, `#read(`, `*`, `` ` `` and `@`, plus the
+  `% & # $ _ { } \ ^ ~` the deleted escaper used to rewrite — those stay on
+  the list because the requirement was always that the engine PRINTS them.
+  Layer 1 of the gate then demands each of those values back out of the PDF's
+  text and layer 3 demands that nothing which *looks* like syntax lacks that
+  provenance — i.e. the engine typeset the payload rather than acting on it;
   `ShippedTemplatesTest.EveryTemplateShipsAHostileSpecialCharsFixture` fails
   the build if you don't, because a bland fixture disarms that gate silently.
 
@@ -237,8 +171,9 @@ survive the Typst migration unchanged — see
    0.01pt), 6.0pt vertically, which is the font-ascent artifact of a `\Large`
    title (measured: 3.92–4.15pt) and still far below a real overflow.
 3. **Syntax.** No extracted token may look like **template syntax** — a Typst
-   `#` sigil (`#let`, `#if`), a content-block bracket, an inja delimiter, a
-   LaTeX control sequence, a bare control keyword (`else`, `endif`, …) —
+   `#` sigil (`#let`, `#if`), a content-block bracket, a bare control keyword
+   (`else`, `endif`, …), and — still screened, so a stray one cannot creep
+   back in unnoticed — an inja delimiter or a LaTeX control sequence —
    unless something accounts for it: the token must occur inside a fixture
    value or inside a declared label. That is the whole point. The
    `special-chars` fixtures deliberately ship `#panic("x")`,
@@ -251,7 +186,7 @@ survive the Typst migration unchanged — see
    the word's own ink above **and** below it in the same pixel columns. The
    column test is what keeps this quiet: an underline, a `\midrule` under a
    header and a signature line all have ink on one side only. Measured across
-   all 22 fixtures and both engines: zero findings.
+   all 23 fixtures: zero findings.
 
 Layers 3 and 4 exist because layers 0–2 only ever ask whether something is
 **missing**. The two defects the labour-contract conversion rebuilt both ADD
@@ -259,8 +194,9 @@ ink and both passed with exit 0: `] else [` split across lines printed the
 word `else` and its entire branch into the contract body (291 word boxes
 instead of 280, all inside the margins), and a `line()` in a grid — which
 contributes no height — struck a signature rule through `БСН/БИН` and
-`ЖСН/ИИН`. Every remaining `template.tex` in this tree is a conversion still
-to come, and each one can rebuild either defect.
+`ЖСН/ИИН`. Both are carried as deliberate breakages by
+`scripts/check-render-selftest.sh`, because either is one edit away from
+coming back.
 
 `expected.txt` format, one directive per line:
 
@@ -275,11 +211,10 @@ known-defect <path|label>      # printed nowhere because of an open BUG:
                                # template uses one today.
 ```
 
-Every label must also occur **verbatim in the template source** — whichever of
-`template.typ` / `template.tex` the directory holds (`check-render.py`'s
-`template_source()` reads the one that is there); a label that does not is
-reported as `EXPECTATION ROT`, so the file cannot drift into asserting
-something the template stopped printing.
+Every label must also occur **verbatim in the template source**
+(`check-render.py`'s `template_source()` reads the directory's `template.typ`);
+a label that does not is reported as `EXPECTATION ROT`, so the file cannot
+drift into asserting something the template stopped printing.
 
 When you add or change a template, add its labels here — and when the gate
 fails, read the finding: it names the fixture, and the exact value, label or

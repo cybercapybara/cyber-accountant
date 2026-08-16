@@ -6,8 +6,7 @@
  *
  * Layout convention (design spec, Task 9's `templates/latex/invoice/v1/` is
  * the reference implementation): `templates/latex/<slug>/v<N>/` holding
- * `template.typ` (Typst) **or** `template.tex` (LaTeX, being retired)
- * + `schema.json` (+ one JSON fixture per case under
+ * `template.typ` + `schema.json` (+ one JSON fixture per case under
  * `fixtures/`, e.g. `fixtures/happy_path.json`, used by
  * `scripts/render-templates.sh`, not read by this class). `<N>` is a plain
  * non-negative integer — `latest(slug)` picks the directory with the
@@ -35,16 +34,20 @@ namespace Docgen {
 using json = nlohmann::json;
 
 /// Which document engine renders a template, decided by the source file that
-/// is on disk. The migration converts one template at a time
-/// (docs/superpowers/plans/2026-08-16-typst-migration.md), so both values are
-/// live simultaneously and the worker image carries both engines.
-enum class Engine { kLatex, kTypst };
+/// is on disk. `kLatex` went with the last `template.tex`, so there is one
+/// value today — but the CONCEPT stays: `document_versions.render_engine`
+/// records it on every rendered PDF (and still holds `xelatex` on rows
+/// rendered before the migration), `load()` below still has to decide it, and
+/// a future engine change should not have to reinvent the idea.
+enum class Engine { kTypst };
 
-/// The stable, storable name of an engine — this is the string a later task
-/// records alongside the document's template version, so it is decided in
-/// exactly one place and never re-derived at a call site.
-inline const char* engine_name(Engine e) {
-    return e == Engine::kTypst ? "typst" : "xelatex";
+/// The stable, storable name of an engine — this is the string recorded
+/// alongside the document's template version, so it is decided in exactly one
+/// place and never re-derived at a call site. One engine, so the parameter is
+/// unnamed rather than switched on; it stays in the signature because every
+/// call site passes the engine it resolved and should keep doing so.
+inline const char* engine_name(Engine /*engine*/) {
+    return "typst";
 }
 
 /// One resolved template version: where its source lives on disk, which
@@ -54,8 +57,8 @@ struct TemplateInfo {
     int version = 0;                    ///< Numeric part of the `vN` directory name.
     std::string version_str;            ///< The `vN` directory name as it appears on disk.
     std::filesystem::path dir;          ///< `templates/latex/<slug>/<vN>/`
-    std::filesystem::path source_path;  ///< `template.typ` (Typst) or `template.tex` (LaTeX)
-    Engine engine = Engine::kLatex;
+    std::filesystem::path source_path;  ///< `template.typ`
+    Engine engine = Engine::kTypst;
     json schema;
 };
 
@@ -80,10 +83,9 @@ public:
      * @return `std::nullopt` if @p slug fails the allowlist, the slug
      *         directory doesn't exist, or it contains no valid `vN`
      *         subdirectory.
-     * @throws std::runtime_error if the highest-version directory has
-     *         NEITHER `template.typ` nor `template.tex`, or is missing
-     *         `schema.json` (a malformed template ships as a hard error, not
-     *         a silent "not found").
+     * @throws std::runtime_error if the highest-version directory is missing
+     *         `template.typ` or `schema.json` (a malformed template ships as
+     *         a hard error, not a silent "not found").
      */
     std::optional<TemplateInfo> latest(const std::string& slug) const {
         namespace fs = std::filesystem;
@@ -193,32 +195,26 @@ public:
      *        declared properties. Values already present are never touched
      *        (except to recurse into an already-present nested object, so
      *        its OWN missing optional fields get filled too).
-     * @details Why this exists: `{{ }}`/`{% if %}` in a template dot into
-     *          paths like `seller.address` that a schema marks optional —
-     *          when the caller (correctly) omits an optional field, inja
-     *          throws `render_error: variable 'seller.address' not found`
-     *          on the bare reference, not a graceful "undefined" the way
-     *          Jinja2 treats a missing key. Call this AFTER a successful
-     *          `validate()` and BEFORE `render_tex()` — `RenderJob::
-     *          render_and_compile` (src/docgen/RenderJob.hpp) is the one
-     *          place both the render job and the `--render-template` CLI
-     *          mode funnel through, so this is wired in exactly once.
-     * @note inja's `truthy()` (vendored `inja.hpp`, confirmed by reading the
-     *       pinned v3.4.0 source) falls back to `!value.empty()` for any
-     *       type it doesn't special-case, and `nlohmann::json::empty()`
-     *       ONLY reports true for `null`/an empty `array`/an empty `object`
-     *       — a JSON **string** is never "json-empty" regardless of its
-     *       content, so `""` is TRUTHY in inja. Filling a missing optional
-     *       string with `""` therefore stops the "not found" crash but does
-     *       NOT make `{% if seller.address %}` skip — every shipped
-     *       template's `{% if %}` on an optional *string* field was
-     *       rewritten to `{% if X != "" %}` to compensate (safe only
-     *       because this function guarantees `X` exists by the time the
-     *       template runs). An optional *object* filled by this function
-     *       (e.g. reconciliation's `opening_balance`) is likewise never
-     *       "json-empty" once its declared properties are filled in — such
-     *       templates check a representative leaf value instead of the
-     *       whole object (see `templates/latex/reconciliation/v1/template.tex`).
+     * @details Why this exists, and why the Typst migration made it MORE
+     *          load-bearing rather than less: a template dots into paths like
+     *          `seller.address` that a schema marks optional, and when the
+     *          caller (correctly) omits one, Typst fails the whole compile
+     *          with "dictionary does not contain key". Under the retired inja
+     *          path the same omission merely printed nothing, so this
+     *          function was a nicety there and is a hard requirement here.
+     *          Call it AFTER a successful `validate()` and BEFORE
+     *          `write_typst_inputs()` — `RenderJob::render_and_compile`
+     *          (src/docgen/RenderJob.hpp) is the one place both the render
+     *          job and the `--render-template` CLI mode funnel through, so
+     *          this is wired in exactly once.
+     * @note The zero value is a real value, not a marker: a filled `""` is
+     *       indistinguishable from a caller-supplied empty string, so a
+     *       template that wants "print this block only when the field has
+     *       content" must compare (`if d.seller.address != ""`) rather than
+     *       test truthiness. Same for an optional *object* filled here (e.g.
+     *       reconciliation's `opening_balance`): such templates check a
+     *       representative leaf value instead of the whole dictionary — see
+     *       `templates/latex/reconciliation/v1/template.typ`.
      */
     static json normalize_input(const json& schema, json input) {
         if (!input.is_object())
@@ -351,20 +347,13 @@ private:
         info.version = version;
         info.version_str = version_str;
         info.dir = root_ / slug / version_str;
-        // template.typ wins: while a template is mid-conversion both files can
-        // exist for one commit, and the Typst source is the authoritative one.
-        const fs::path typ_path = info.dir / "template.typ";
-        const fs::path tex_path = info.dir / "template.tex";
-        if (fs::exists(typ_path)) {
-            info.source_path = typ_path;
-            info.engine = Engine::kTypst;
-        } else if (fs::exists(tex_path)) {
-            info.source_path = tex_path;
-            info.engine = Engine::kLatex;
-        } else {
-            throw std::runtime_error("template registry: missing template.typ/template.tex for " + slug + "/" +
-                                     version_str);
-        }
+        // One engine, but the decision still happens HERE, per version
+        // directory, and nowhere else — a caller and a payload may never
+        // choose it.
+        info.source_path = info.dir / "template.typ";
+        info.engine = Engine::kTypst;
+        if (!fs::exists(info.source_path))
+            throw std::runtime_error("template registry: missing template.typ for " + slug + "/" + version_str);
 
         const fs::path schema_path = info.dir / "schema.json";
         std::ifstream schema_file(schema_path);
