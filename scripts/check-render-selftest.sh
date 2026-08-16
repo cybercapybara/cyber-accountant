@@ -25,7 +25,7 @@
 # because the gate rejects everything.
 #
 # Needs the same environment as scripts/render-templates.sh (a real xelatex,
-# pdftotext and python3) — i.e. the worker-render-check image.
+# a real typst, pdftotext and python3) — i.e. the worker-render-check image.
 #
 # Usage:
 #   WORKER_BIN=/app/cyber_accountant_worker ./scripts/check-render-selftest.sh
@@ -55,8 +55,10 @@ failures=0
 # template in place. `sed -i` is avoided: its argument differs between GNU and
 # BSD sed and this script is run on both.
 #
-# THREE OF THE FOUR EDIT LaTeX SYNTAX (a `&` column, a `{{ }}` placeholder, a
-# `tabularx` width). Against a converted `template.typ` those patterns match
+# TWO OF THE FOUR EDIT LaTeX SYNTAX (a `{{ }}` placeholder, a `tabularx`
+# width) — payslip's was ported to Typst when payslip was converted, and the
+# rest follow their own templates. Against a converted `template.typ` a
+# LaTeX pattern matches
 # nothing and `sed` cheerfully copies the file through unchanged — the case
 # would then "pass" because the gate was handed an UNMUTATED template twice,
 # which is the green-rubber-stamp failure this whole script exists to prevent.
@@ -65,12 +67,26 @@ failures=0
 # NOTHING" branch below.
 
 # 1. The v0.3.0 symptom, reproduced exactly: the payslip's amounts column is
-#    emptied. Every money cell in the table body loses its placeholder while
-#    the column and its "Сомасы, ₸ / Сумма, ₸" header stay, so the document
-#    still looks like a payslip and still compiles cleanly.
+#    emptied. Every money cell in the table body loses its value while the
+#    column and its "Сомасы, ₸ / Сумма, ₸" header stay, so the document still
+#    looks like a payslip and still compiles cleanly (typst exit 0).
+#    python3, not sed: this MUST fail loudly if it matched nothing. A mutator
+#    that silently changes nothing turns its case into "the gate passed a
+#    healthy document", which reads as a gate failure and is not one.
 break_amounts_column() {
-    local tex="$1/payslip/v1/template.tex"
-    sed -E '/&/ s/\{\{ *[a-z_]+ *\}\} \\\\$/\\\\/' "$tex" >"$tex.new" && mv "$tex.new" "$tex"
+    python3 - "$1/payslip/v1/template.typ" <<'PY'
+import re, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+text, n1 = re.subn(r"money\(strong\(d\.[a-z_]+\)\)", "money(strong[])", text)
+text, n2 = re.subn(r"money\(d\.[a-z_]+\)", "money[]", text)
+if n1 + n2 < 5:
+    sys.exit("break_amounts_column: only %d amount cell(s) emptied in %s — the "
+             "template no longer uses the money(d.<field>) shape this case mutates" % (n1 + n2, path))
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(text)
+PY
 }
 
 # 2. One amount silently truncated: ФНО 910.00's income line prints a literal
@@ -211,7 +227,7 @@ run_case() {
     out="$tree/broken"
     if ! render "$tree" "$slug" "$fixture" "$out"; then
         echo "SELFTEST FAIL [$label]: the broken $slug/$fixture_name failed to COMPILE," >&2
-        echo "  so this case no longer tests the gate — it tests XeLaTeX. Pick a" >&2
+        echo "  so this case no longer tests the gate — it tests the engine. Pick a" >&2
         echo "  breakage that still compiles, the way the v0.3.0 defect did." >&2
         failures=$((failures + 1))
         return
