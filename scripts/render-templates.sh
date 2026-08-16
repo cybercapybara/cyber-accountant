@@ -29,7 +29,12 @@
 # The transcript grep is KEPT, demoted to a supplementary LaTeX-only tripwire.
 # It is not redundant: it is the only check here that sees overflow in
 # material `pdftotext` cannot report — a `\hrulefill` signature rule, a
-# `\hline`, an image — because those emit no words. It goes away with XeLaTeX.
+# `\hline`, an image — because those emit no words. It goes away with XeLaTeX:
+# it runs only for a version directory that still has a `template.tex`, and a
+# `template.typ` one is gated by check-render.py alone, by design. The
+# converse is also an error and is reported: a directory with no
+# `template.tex` that nevertheless left a XeLaTeX transcript means the engine
+# selection (src/docgen, per-template) and the template tree disagree.
 #
 # Needs a real `xelatex`, `pdftotext` and `python3` on PATH — run this on the
 # worker-render-check image (docker/Dockerfile), not on a bare checkout. The
@@ -101,6 +106,12 @@ overall=0
 count=0
 overfull=0
 lost=0
+# Per-engine tallies, printed in the summary. During the Typst migration the
+# split is the one number that says which engine each fixture actually went
+# through — a template that was converted but still renders through XeLaTeX
+# (or the reverse) shows up here before anyone squints at a PDF.
+latex_count=0
+typst_count=0
 
 shopt -s nullglob
 for fixture in "$TEMPLATES_ROOT"/*/v*/fixtures/*.json; do
@@ -132,20 +143,38 @@ for fixture in "$TEMPLATES_ROOT"/*/v*/fixtures/*.json; do
         continue
     fi
 
-    # Compiled. render_and_compile() writes main.tex into $outdir and runs
-    # XeLaTeX there, so the transcript is $outdir/main.log. No transcript means
-    # the tripwire could not run at all, which is a failure rather than a pass.
-    if [[ ! -f "$outdir/main.log" ]]; then
-        echo "FAIL $slug $fixture: no XeLaTeX transcript at $outdir/main.log" >&2
-        overall=1
-        continue
-    fi
-    offenders="$(overfull_offenders "$outdir/main.log")"
-    if [[ -n "$offenders" ]]; then
-        overfull=$((overfull + 1))
-        overall=1
-        echo "FAIL $slug $fixture: content overhangs the page (> ${OVERFULL_MAX_PT}pt)" >&2
-        echo "$offenders" >&2
+    # Compiled. For a LaTeX template render_and_compile() writes main.tex into
+    # $outdir and runs XeLaTeX there, so the transcript is $outdir/main.log,
+    # and no transcript means the tripwire could not run at all — a failure
+    # rather than a pass.
+    #
+    # The overfull-\hbox grep is a LaTeX-ONLY tripwire, kept for overflow in
+    # material that produces no extractable text (a \hrulefill rule, an
+    # \hline). A Typst template writes no transcript at all — the engine exits
+    # 0 and logs nothing even when it clips — so for those the gate proper
+    # (check-render.py, which reads the PDF) is the only check, by design.
+    if [[ -f "$version_dir/template.tex" ]]; then
+        latex_count=$((latex_count + 1))
+        if [[ ! -f "$outdir/main.log" ]]; then
+            echo "FAIL $slug $fixture: no XeLaTeX transcript at $outdir/main.log" >&2
+            overall=1
+            continue
+        fi
+        offenders="$(overfull_offenders "$outdir/main.log")"
+        if [[ -n "$offenders" ]]; then
+            overfull=$((overfull + 1))
+            overall=1
+            echo "FAIL $slug $fixture: content overhangs the page (> ${OVERFULL_MAX_PT}pt)" >&2
+            echo "$offenders" >&2
+        fi
+    else
+        typst_count=$((typst_count + 1))
+        if [[ -f "$outdir/main.log" ]]; then
+            echo "FAIL $slug $fixture: $version_dir has no template.tex but the render left a" >&2
+            echo "  XeLaTeX transcript — the engine selection and the tree disagree" >&2
+            overall=1
+            continue
+        fi
     fi
 
     # The gate proper: does the PDF still say everything the fixture and the
@@ -177,5 +206,8 @@ if [[ "$lost" -gt 0 ]]; then
     echo "  See scripts/check-render.py and templates/latex/README.md." >&2
 fi
 
-echo "render-templates: $count fixture(s) checked"
+echo "render-templates: $count fixture(s) checked ($latex_count via XeLaTeX, $typst_count via Typst)"
+if [[ -n "${KEEP_RENDERS:-}" ]]; then
+    echo "render-templates: rendered documents kept under $WORKDIR"
+fi
 exit "$overall"

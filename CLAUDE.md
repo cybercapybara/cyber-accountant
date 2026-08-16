@@ -76,10 +76,15 @@ below), then runs three steps:
 
 1. `scripts/render-templates.sh` — compiles every
    `templates/latex/*/v*/fixtures/*.json` through the worker's
-   `--render-template` mode, i.e. the real render pipeline. A nonzero XeLaTeX
+   `--render-template` mode, i.e. the real render pipeline. A nonzero engine
    exit fails the job; so does an overfull `\hbox` over `OVERFULL_MAX_PT`
    (1.0pt), kept as a LaTeX-only tripwire for overflow in material that
-   produces no text (a `\hrulefill` rule, an `\hline`).
+   produces no text (a `\hrulefill` rule, an `\hline`). That tripwire is
+   **engine-conditional**: mandatory (missing `main.log` = failure) for a
+   version directory that still has a `template.tex`, skipped for a
+   `template.typ` one, which writes no transcript — and a `template.typ`
+   directory that *did* leave a `main.log` fails as an engine/tree
+   disagreement. The summary line reports the per-engine split.
 2. `scripts/check-render.py` — the gate proper, engine-agnostic, run per
    fixture. **Oracle:** every printed amount is DERIVED from an integer
    declared `amount <path> <tiyn>` in the per-fixture expectation file, by the
@@ -93,11 +98,25 @@ below), then runs three steps:
    `12 345,67`), never as a raw integer, and an amount that survives only
    broken across a line break counts as lost. **Geometry:** every word box
    from `pdftotext -bbox` must lie inside the declared margin box (0.5pt of
-   slack sideways, 6.0pt vertically for font ascent).
+   slack sideways, 6.0pt vertically for font ascent). The `margin <N>mm` in
+   `expected.txt` is cross-checked against the template's own page setup in
+   either engine — `\usepackage[margin=18mm]{geometry}` or Typst's
+   `#set page(..., margin: 18mm)`.
 3. `scripts/check-render-selftest.sh` — breaks payslip, fno_910, tax_invoice
    and fno_300 on purpose and fails unless the gate catches all four and names
    what was lost. The fno_300 case breaks the FIXTURE, not the template, and
    is the regression test for the gate's own fixture-as-oracle blind spot.
+   **A mutation that changes nothing is itself a failure:** three of the four
+   mutators edit LaTeX syntax and would silently no-op against a converted
+   `template.typ`, so the script fingerprints the template tree around every
+   mutator and fails loudly ("changed NOTHING") rather than re-testing the
+   healthy document and reporting OK.
+
+The job keeps every rendered PDF and uploads it as the **`rendered-documents`**
+artifact (`render-out/<mangled-fixture-path>/main.pdf`, 14-day retention). Text
+extraction cannot see a rule drawn *through* the text or a collapsed signature
+block, so every template conversion gets one human look at the raster:
+`gh run download --name rendered-documents`.
 
 It triggers on changes under `templates/**`, `src/docgen/**`,
 `docker/Dockerfile` or the three gate scripts.

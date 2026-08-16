@@ -167,6 +167,10 @@ PAGE_RE = re.compile(r'<page width="([0-9.]+)" height="([0-9.]+)"')
 # wrap; an amount that wraps has been mangled.
 UNBREAKABLE_RE = re.compile(r"^\d[\d ,.]*$")
 GEOMETRY_MARGIN_RE = re.compile(r"\\usepackage\[[^]]*?margin=([0-9.]+)mm[^]]*?\]\{geometry\}")
+# The Typst equivalent of \usepackage[margin=18mm]{geometry}: the margin in
+# `#set page(..., margin: 18mm)`. Same purpose — an expected.txt that claims a
+# margin the template does not set would gate against the wrong box.
+TYPST_MARGIN_RE = re.compile(r"#set\s+page\((?:[^()]|\([^()]*\))*?margin:\s*([0-9.]+)mm")
 # A fixture scalar that is nothing but an amount in the form the templates
 # print (`money()` below). Anything matching this MUST carry an `amount`
 # directive — that is what stops a hand-written expected form from creeping
@@ -542,10 +546,9 @@ def main(argv):
      margin_pt, margin_src) = read_expectations(expectation_files)
     template_path, source = template_source(template_dir)
 
-    # Cross-check the declared margin against the LaTeX geometry package when
-    # the source is LaTeX. A Typst template simply has no such line and the
-    # declaration in expected.txt stands on its own.
-    declared = GEOMETRY_MARGIN_RE.search(source)
+    # Cross-check the declared margin against the template's own page setup,
+    # whichever engine it is written for.
+    declared = GEOMETRY_MARGIN_RE.search(source) or TYPST_MARGIN_RE.search(source)
     if declared and abs(float(declared.group(1)) * MM_TO_PT - margin_pt) > 0.01:
         die("%s declares margin=%smm but %s says %s — fix the expectation file"
             % (template_path, declared.group(1), margin_src,

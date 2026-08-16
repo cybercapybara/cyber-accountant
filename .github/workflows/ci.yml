@@ -344,9 +344,14 @@ jobs:
     # as a *warning* with exit code 0. So this job then reads the PDF it just
     # produced (scripts/check-render.py): every fixture value and every static
     # label must be in the extracted text, and every word box must sit inside
-    # the page's margin box. The third step breaks three templates on purpose
-    # and requires the gate to catch all three, so it cannot rot into a green
+    # the page's margin box. The last step breaks four things on purpose and
+    # requires the gate to catch all four, so it cannot rot into a green
     # rubber stamp. See the rationale block in scripts/render-templates.sh.
+    #
+    # The PDFs themselves are kept and uploaded as the `rendered-documents`
+    # artifact: text extraction cannot see a rule drawn through the text or a
+    # collapsed signature block, so every template conversion in the Typst
+    # migration gets one human look at the raster before it is signed off.
     #
     # Path-scoped via dorny/paths-filter (a workflow-level `on.paths` would
     # gate every OTHER job in this file too) — only runs the (slow) docker
@@ -431,20 +436,40 @@ jobs:
       - name: Render every fixture and gate the PDF (content + geometry)
         if: steps.changes.outputs.docgen == 'true'
         run: |
+          mkdir -p render-out && chmod 777 render-out
           docker run --rm \
             -v "$PWD/scripts:/scripts:ro" \
+            -v "$PWD/render-out:/render-out" \
+            -e KEEP_RENDERS=/render-out \
             -w /app \
             --entrypoint /bin/bash \
             cyber-accountant-template:worker-render \
             /scripts/render-templates.sh
 
-      - name: Prove the gate bites (three deliberate breakages)
+      - name: Upload the rendered documents for human review
+        # Not decoration. The text gate cannot see a rule drawn THROUGH the
+        # party names, or a signature block whose rules collapsed onto them —
+        # the Typst migration spike hit exactly that, and it was visible only
+        # in a raster. Every converted template gets one human look at these
+        # PDFs before its task is signed off.
+        if: steps.changes.outputs.docgen == 'true' && always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rendered-documents
+          path: render-out/**/main.pdf
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Prove the gate bites (four deliberate breakages)
         if: steps.changes.outputs.docgen == 'true'
-        # Breaks payslip, fno_910 and tax_invoice on purpose — amounts column
-        # emptied, one amount truncated, table widened past the page — and
+        # Breaks payslip, fno_910, tax_invoice and the fno_300 FIXTURE on
+        # purpose — amounts column emptied, one amount truncated, table widened
+        # past the page, amounts rewritten into the machine money form — and
         # fails unless the gate catches each one AND names what was lost. A
         # gate only ever run against healthy input is indistinguishable from
-        # `exit 0`.
+        # `exit 0`. The self-test also fingerprints the template tree around
+        # each mutation and fails loudly if a mutator changed nothing, which is
+        # what a LaTeX-syntax mutator does once its template becomes Typst.
         run: |
           docker run --rm \
             -v "$PWD/scripts:/scripts:ro" \
