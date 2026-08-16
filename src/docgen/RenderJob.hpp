@@ -1,12 +1,12 @@
 /**
  * @file RenderJob.hpp
  * @brief Background job handler for `docgen.render`: validates a document's
- *        input against its template's JSON Schema, renders LaTeX via inja
- *        (auto-escaped), compiles it to PDF with XeLaTeX, stores the PDF,
- *        and marks the document `final`.
+ *        input against its template's JSON Schema, compiles it to PDF with
+ *        the engine that template selects, stores the PDF, and marks the
+ *        document `final`.
  *
  * Payload: `{org_id, document_id, version_id, slug, input}`. On ANY failure
- * (schema rejection, missing template, XeLaTeX exit != 0, storage/DB error)
+ * (schema rejection, missing template, engine exit != 0, storage/DB error)
  * this throws — the job framework's retry/DLQ machinery takes over
  * (src/jobs/Dispatcher.hpp) and the document is left exactly as it was
  * (typically `draft`): `set_version_file`/`set_current_version`/
@@ -31,11 +31,24 @@
  *     renders of identical input produce DIFFERENT bytes and "did someone
  *     re-render this?" is not answerable from a digest.
  *
- * The XeLaTeX invocation (`docgen.latex_cmd` / `DOCGEN_LATEX_CMD`, default
- * `xelatex`) runs twice under `/usr/bin/timeout 60` — once for content, once
- * more so a future template's `\ref`/`\pageref`/totals that depend on a
- * first pass resolve (the shipped invoice template needs none, but the
- * two-pass contract is cheap insurance for templates that do). Unit/
+ * TWO ENGINES, one per template directory (see TemplateRegistry::load). The
+ * migration converts one template at a time, so both are live:
+ *
+ *   * Typst (`docgen.typst_cmd` / `DOCGEN_TYPST_CMD`, default `typst`) —
+ *     `write_typst_inputs` writes the normalized input to `input.json` and
+ *     copies the template to `main.typ` in the same ScopedTempDir, then one
+ *     `typst compile --root <dir> main.typ main.pdf` pass. The template reads
+ *     the data itself (`#let d = json("input.json")`), so there is no
+ *     templating layer and nothing to escape — a value is content, never
+ *     source. The JSON goes in a FILE, not on the command line via
+ *     `--input`: an unbounded document has no business on an argv;
+ *   * XeLaTeX (`docgen.latex_cmd` / `DOCGEN_LATEX_CMD`, default `xelatex`),
+ *     described next, for the templates not yet converted.
+ *
+ * The XeLaTeX invocation runs twice under `/usr/bin/timeout 60` — once for
+ * content, once more so a future template's `\ref`/`\pageref`/totals that
+ * depend on a first pass resolve (the shipped invoice template needs none,
+ * but the two-pass contract is cheap insurance for templates that do). Unit/
  * integration tests never invoke the real xelatex: DOCGEN_LATEX_CMD points
  * at a stub script that copies a canned PDF — see
  * tests/integration/test_render_job.cpp. The real XeLaTeX only runs in the
@@ -80,7 +93,10 @@ inline constexpr const char* kJobType = "docgen.render";
  * @brief RAII scratch directory. Created via `mkdtemp` under the system temp
  *        root; removed recursively on every exit path (success, exception,
  *        early return) so a failed render never leaks a `main.tex`/`main.pdf`
- *        pair — or, worse, the input JSON snapshot baked into `main.tex`.
+ *        pair — or, worse, the input JSON snapshot, baked into `main.tex` on
+ *        the LaTeX path and sitting there verbatim as `input.json` on the
+ *        Typst one. That directory is also the Typst sandbox: `--root` points
+ *        at it, so it is the entire filesystem a template can read.
  */
 class ScopedTempDir {
 public:
@@ -116,6 +132,18 @@ inline std::string latex_cmd() {
     if (const char* env = std::getenv("DOCGEN_LATEX_CMD"))
         return env;
     return "xelatex";
+}
+
+/// Resolve the configured Typst command: `docgen.typst_cmd` /
+/// `DOCGEN_TYPST_CMD`, default `typst`. Same Config-optional shape as
+/// latex_cmd() so the worker's `--render-template` CLI mode (no
+/// Core::initialize) can use it too.
+inline std::string typst_cmd() {
+    if (Config::is_initialized())
+        return Config::get().get<std::string>("docgen.typst_cmd", "DOCGEN_TYPST_CMD", "typst");
+    if (const char* env = std::getenv("DOCGEN_TYPST_CMD"))
+        return env;
+    return "typst";
 }
 
 /**
@@ -171,8 +199,46 @@ inline void compile_pdf(const std::filesystem::path& tex_dir, const std::string&
 }
 
 /**
+ * @brief Compile `<dir>/main.typ` to `<dir>/main.pdf` with one `typst
+ *        compile` pass under a 60s timeout.
+ * @details `--root <dir>` confines every `read`/`include` the template can
+ *          perform to the scratch directory that holds only main.typ and
+ *          input.json. Verified against typst 0.15.1: an ABSOLUTE path is
+ *          resolved relative to the root (`#read("/etc/passwd")` fails with
+ *          "file not found (searched at <dir>/etc/passwd)") and a relative
+ *          climb errors with "path would escape the project root". One pass,
+ *          not two — Typst has no aux-file fixpoint to converge.
+ * @note Typst exits 0 and writes NO log when content overflows the page: it
+ *       clips or draws past the margin silently. There is deliberately
+ *       nothing here that greps a transcript, because there is no transcript.
+ *       Overflow is caught downstream by scripts/check-render.py, which reads
+ *       the PDF instead of the engine's opinion of it.
+ * @note A genuine failure IS loud: Typst writes its diagnostic (with source
+ *       line and caret) to stderr and produces no PDF at all, so the nonzero
+ *       exit below carries the engine's own message — which is what a
+ *       developer needs, since the most common failure is a template dotting
+ *       into a key the input does not have. `run_command` merges stderr into
+ *       the captured output for exactly this reason. A hang is bounded by
+ *       `timeout 60`: exit 124, or a signal, which `run_command` reports as
+ *       -1 — both nonzero, both throw.
+ * @throws std::runtime_error on a nonzero exit, or if it reports success but
+ *         `main.pdf` is missing.
+ */
+inline void compile_typst(const std::filesystem::path& dir, const std::string& cmd) {
+    const std::string full_cmd = "cd " + dir.string() + " && /usr/bin/timeout 60 " + cmd + " compile --root " +
+                                 dir.string() + " main.typ main.pdf";
+    std::string output;
+    const int rc = run_command(full_cmd, &output);
+    if (rc != 0)
+        throw std::runtime_error("docgen: typst compile failed (exit " + std::to_string(rc) + "): " + output);
+    if (!std::filesystem::exists(dir / "main.pdf"))
+        throw std::runtime_error("docgen: typst reported success but main.pdf is missing");
+}
+
+/**
  * @brief Validate, render and compile @p slug's latest template against
- *        @p input into `<out_dir>/main.tex` / `<out_dir>/main.pdf`.
+ *        @p input, producing `<out_dir>/main.pdf` whichever engine the
+ *        template selects.
  * @details Shared by the render job and the worker's `--render-template`
  *          CLI smoke-test mode (src/worker_main.cpp), so both paths exercise
  *          the exact same validate -> normalize -> render -> compile
@@ -183,6 +249,12 @@ inline void compile_pdf(const std::filesystem::path& tex_dir, const std::string&
  *          error) — see that function's doc comment for why templates
  *          additionally had to switch `{% if X %}` to `{% if X != "" %}` on
  *          optional string fields.
+ *
+ *          The engine is `info->engine`, decided by the template directory
+ *          (TemplateRegistry::load), never by a caller or a payload field:
+ *          - `kTypst`  -> `write_typst_inputs` + `compile_typst`, leaving
+ *            `main.typ` and `input.json` beside the PDF;
+ *          - `kLatex`  -> `render_tex` + `compile_pdf`, leaving `main.tex`.
  * @throws std::runtime_error on a missing template, schema-validation
  *         failure, or compile failure.
  */
@@ -195,6 +267,17 @@ inline void render_and_compile(const std::string& slug, const json& input, const
         throw std::runtime_error("docgen: schema validation failed: " + *err);
 
     const json normalized = TemplateRegistry::normalize_input(info->schema, input);
+
+    // Everything above is shared by both engines — the template lookup, the
+    // schema validation, and the default-fill. normalize_input is MORE
+    // load-bearing for Typst, not less: inja printed nothing for a missing
+    // optional, Typst hard-errors with "dictionary does not contain key".
+    if (info->engine == Engine::kTypst) {
+        write_typst_inputs(*info, normalized, out_dir);
+        compile_typst(out_dir, typst_cmd());
+        return;
+    }
+
     const std::string tex = render_tex(*info, normalized);
     std::ofstream out(out_dir / "main.tex", std::ios::binary | std::ios::trunc);
     if (!out)

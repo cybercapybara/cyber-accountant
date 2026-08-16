@@ -1,7 +1,14 @@
 /**
  * @file Renderer.hpp
- * @brief inja-based rendering of a docgen template against input JSON, with
- *        automatic LaTeX escaping of the string leaves that are TEXT.
+ * @brief Turning a docgen template plus its input JSON into something an
+ *        engine can compile — one function per engine.
+ *
+ * `write_typst_inputs` (Typst, at the bottom of this file) copies the
+ * template and writes the input beside it; Typst reads the JSON itself, so
+ * there is NO templating pass and nothing to escape. `render_tex` (XeLaTeX,
+ * being retired) is everything else here: inja substitution with automatic
+ * LaTeX escaping of the string leaves that are TEXT. The rest of this header
+ * documents that LaTeX path and applies only to it.
  *
  * Mirrors `Email::Templates::render` (src/email/Templates.hpp) — same
  * `inja::Environment env; env.render(tpl, ctx);` shape — but the context is
@@ -64,10 +71,12 @@
 
 #pragma once
 
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 
 #include <inja/inja.hpp>
 #include <nlohmann/json.hpp>
@@ -196,6 +205,47 @@ inline std::string render_tex(const TemplateInfo& info, const json& input) {
         throw std::runtime_error("render_tex: inja render failed for " + info.slug + "/" + info.version_str + ": " +
                                  e.what());
     }
+}
+
+/**
+ * @brief Stage a Typst render in @p out_dir: `main.typ` (a copy of the
+ *        template) + `input.json` (the normalized input).
+ * @details There is no templating layer here and nothing to escape. Typst
+ *          reads the JSON itself (`#let d = json("input.json")`), so a value
+ *          is content and never source: the literal string
+ *          `#panic("x") *bold* #read("/etc/passwd")` is typeset character for
+ *          character. That is why `escape_latex` is deleted rather than
+ *          ported once the last LaTeX template is gone — there is nothing for
+ *          a Typst equivalent to do. Everything above in this file — the
+ *          per-leaf escape/control-literal walk, the remapped inja comment
+ *          markers — belongs to `render_tex` and the retiring LaTeX path
+ *          alone; none of it runs here.
+ * @param normalized_input MUST be the output of
+ *        `TemplateRegistry::normalize_input` — Typst raises a hard error
+ *        ("dictionary does not contain key") on a declared-but-absent
+ *        optional key, where inja merely printed nothing. Verified against
+ *        typst 0.15.1.
+ * @throws std::runtime_error if either file cannot be written (a missing
+ *         @p out_dir included — the copy is where that surfaces, named,
+ *         rather than as a puzzling "file not found" out of the engine).
+ */
+inline void write_typst_inputs(const TemplateInfo& info,
+                               const json& normalized_input,
+                               const std::filesystem::path& out_dir) {
+    std::error_code ec;
+    std::filesystem::copy_file(
+        info.source_path, out_dir / "main.typ", std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec)
+        throw std::runtime_error("write_typst_inputs: cannot copy " + info.source_path.string() + " to " +
+                                 (out_dir / "main.typ").string() + ": " + ec.message());
+
+    std::ofstream data(out_dir / "input.json", std::ios::binary | std::ios::trunc);
+    if (!data)
+        throw std::runtime_error("write_typst_inputs: cannot write input.json to " + out_dir.string());
+    data << normalized_input.dump();
+    data.close();
+    if (!data)
+        throw std::runtime_error("write_typst_inputs: failed writing input.json to " + out_dir.string());
 }
 
 }  // namespace Docgen

@@ -58,7 +58,8 @@
     "brpop_timeout": 5
   },
   "docgen": {
-    "latex_cmd": "${DOCGEN_LATEX_CMD:-xelatex}"
+    "latex_cmd": "${DOCGEN_LATEX_CMD:-xelatex}",
+    "typst_cmd": "${DOCGEN_TYPST_CMD:-typst}"
   },
   "mail": {
     "enabled": "${MAIL_ENABLED:-false}",

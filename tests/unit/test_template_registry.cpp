@@ -2,17 +2,19 @@
  * @file test_template_registry.cpp
  * @brief Unit tests for Docgen::TemplateRegistry — discovery + schema
  *        validation against a fixture tree under a temp directory — and for
- *        Docgen::render_tex (Renderer.hpp), which operates on the same
- *        TemplateInfo this registry resolves. No Config, no network, no
- *        sidecars, no XeLaTeX.
+ *        Docgen::render_tex / Docgen::write_typst_inputs (Renderer.hpp),
+ *        which operate on the same TemplateInfo this registry resolves. No
+ *        Config, no network, no sidecars, no XeLaTeX, no Typst.
  */
 
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -696,6 +698,112 @@ TEST_F(TemplateRegistryTest, RenderTexEscapesAStringLeafAgainstANonStringEnum) {
     ASSERT_TRUE(info.has_value());
 
     EXPECT_EQ(Docgen::render_tex(*info, json{{"n", 2}, {"s", "a_b"}}), "[2][a\\_b]");
+}
+
+// ── write_typst_inputs (Renderer.hpp) ────────────────────────────────────
+// The Typst staging step: copy the template to main.typ, write the
+// normalized input to input.json beside it. No templating layer, no
+// escaping — Typst reads the JSON itself, so a value is content and never
+// source. These need no engine binary; the compile itself is exercised on
+// the worker image by the `template-render` CI job.
+
+TEST_F(TemplateRegistryTest, WriteTypstInputsCopiesTemplateAndWritesNormalizedJson) {
+    const json schema = json::parse(R"({
+        "type": "object",
+        "properties": {
+            "employer": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "address": {"type": "string"}}
+            }
+        }
+    })");
+    write_typst_version("payslip", "v1", "#let d = json(\"input.json\")\n#d.employer.name", schema);
+    Docgen::TemplateRegistry registry(root_);
+    auto info = registry.latest("payslip");
+    ASSERT_TRUE(info.has_value());
+
+    const json input = {{"employer", {{"name", "ТОО \"Ромашка\""}}}};
+    const json normalized = Docgen::TemplateRegistry::normalize_input(info->schema, input);
+
+    const auto out = root_ / "out";
+    fs::create_directories(out);
+    Docgen::write_typst_inputs(*info, normalized, out);
+
+    std::ifstream typ(out / "main.typ", std::ios::binary);
+    ASSERT_TRUE(typ.good());
+    const std::string typ_body((std::istreambuf_iterator<char>(typ)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(typ_body, "#let d = json(\"input.json\")\n#d.employer.name");
+
+    std::ifstream data(out / "input.json", std::ios::binary);
+    ASSERT_TRUE(data.good());
+    json written;
+    data >> written;
+    EXPECT_EQ(written.at("employer").at("name"), "ТОО \"Ромашка\"");
+    // normalize_input filled the declared-but-absent optional; Typst hard-errors
+    // on a missing key ("dictionary does not contain key"), where inja merely
+    // printed nothing — so this is load-bearing, not cosmetic.
+    EXPECT_EQ(written.at("employer").at("address"), "");
+}
+
+// The whole security argument in one test: a value that looks like Typst code
+// reaches the engine as DATA, byte for byte, with no escaping applied.
+TEST_F(TemplateRegistryTest, WriteTypstInputsNeverTransformsValues) {
+    const json schema = json::parse(R"({"type": "object", "properties": {"note": {"type": "string"}}})");
+    write_typst_version("payslip", "v1", "#let d = json(\"input.json\")", schema);
+    Docgen::TemplateRegistry registry(root_);
+    auto info = registry.latest("payslip");
+    ASSERT_TRUE(info.has_value());
+
+    const std::string payload = R"(#panic("pwned") *bold* $x^2$ #read("/etc/passwd") @l _it_)";
+    const auto out = root_ / "out2";
+    fs::create_directories(out);
+    Docgen::write_typst_inputs(*info, json{{"note", payload}}, out);
+
+    std::ifstream data(out / "input.json", std::ios::binary);
+    ASSERT_TRUE(data.good());
+    json written;
+    data >> written;
+    EXPECT_EQ(written.at("note").get<std::string>(), payload);
+}
+
+// Overwrites rather than appends: a ScopedTempDir is fresh per render, but a
+// stale main.typ/input.json pair must never survive into a second staging in
+// the same directory (the `--render-template` CLI mode reuses one out_dir).
+TEST_F(TemplateRegistryTest, WriteTypstInputsOverwritesAPreviousStaging) {
+    const json schema = json::parse(R"({"type": "object", "properties": {"note": {"type": "string"}}})");
+    write_typst_version("payslip", "v1", "#let d = json(\"input.json\")", schema);
+    Docgen::TemplateRegistry registry(root_);
+    auto info = registry.latest("payslip");
+    ASSERT_TRUE(info.has_value());
+
+    const auto out = root_ / "out3";
+    fs::create_directories(out);
+    std::ofstream(out / "main.typ") << "stale template that is much longer than the real one";
+    std::ofstream(out / "input.json") << R"({"note":"stale","extra":"gone"})";
+
+    Docgen::write_typst_inputs(*info, json{{"note", "fresh"}}, out);
+
+    std::ifstream typ(out / "main.typ", std::ios::binary);
+    const std::string typ_body((std::istreambuf_iterator<char>(typ)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(typ_body, "#let d = json(\"input.json\")");
+
+    std::ifstream data(out / "input.json", std::ios::binary);
+    json written;
+    data >> written;
+    EXPECT_EQ(written.at("note").get<std::string>(), "fresh");
+    EXPECT_FALSE(written.contains("extra"));
+}
+
+// A staging directory that does not exist is a hard, named error — not a
+// silently skipped copy that would leave compile_typst to fail with a
+// confusing "main.typ not found" from the engine instead.
+TEST_F(TemplateRegistryTest, WriteTypstInputsThrowsWhenTheOutputDirIsMissing) {
+    write_typst_version("payslip", "v1");
+    Docgen::TemplateRegistry registry(root_);
+    auto info = registry.latest("payslip");
+    ASSERT_TRUE(info.has_value());
+
+    EXPECT_THROW(Docgen::write_typst_inputs(*info, json::object(), root_ / "nope" / "missing"), std::runtime_error);
 }
 
 // ── the shipped templates ────────────────────────────────────────────────
