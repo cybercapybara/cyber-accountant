@@ -30,6 +30,7 @@
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalEntry.hpp"
 #include "ledger/JournalService.hpp"
+#include "repo_templates.hpp"
 #include "repositories/RoleRepository.hpp"
 #include "repositories/UserRepository.hpp"
 #include "security/Auth.hpp"
@@ -64,8 +65,7 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        if (!fs::exists("templates/latex/invoice/v1/schema.json"))
-            GTEST_SKIP() << "repo templates not reachable from this working directory";
+        REQUIRE_REPO_TEMPLATE("invoice");
 
         // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
         // test_helpers.hpp) — see its Doxygen comment for why the journal/
@@ -489,11 +489,11 @@ TEST_F(DocgenApiTest, GenerateFormatsAllThreeTaxInvoiceTotalsFromIntegers) {
               "Сто четыре тысячи четыреста тенге 00 тиын");
 }
 
-// The invoice VAT hole, end to end. templates/latex/invoice/v1/template.tex
-// prints «НДС ({{ vat_rate }}): {{ vat_amount }} ₸» on line 30 and
-// «Итого к оплате: {{ total }} ₸» on line 31 — adjacent lines of the SAME
-// issued PDF. While vat_amount was client-authored, those two lines could be
-// made to contradict each other outright.
+// The invoice VAT hole, end to end. templates/latex/invoice/v1's template
+// prints «НДС (<vat_rate>): <vat_amount> ₸» directly above «Итого к оплате:
+// <total> ₸» — adjacent lines of the SAME issued PDF, in either engine's
+// spelling of them. While vat_amount was client-authored, those two lines
+// could be made to contradict each other outright.
 TEST_F(DocgenApiTest, GenerateRejectsAClientSuppliedInvoiceVatAmount) {
     auto org = seed_org("444260000016", "Invoice Vat Org LLP");
     auto accountant = member("invoice-vat@example.com", org.id, "accountant");

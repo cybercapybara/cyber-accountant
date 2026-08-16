@@ -25,6 +25,7 @@
 
 #include "docgen/Renderer.hpp"
 #include "docgen/TemplateRegistry.hpp"
+#include "repo_templates.hpp"
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -435,9 +436,9 @@ TEST(NormalizeInputTest, FillsMissingFieldsOfAPartiallyProvidedNestedObject) {
 // Same fill, against the REAL invoice/v1 schema (the one every shipped
 // docgen schema shapes its $ref-based "party" definition after).
 TEST(NormalizeInputTest, FillsMissingOptionalFieldsOfRealInvoiceSchema) {
-    std::ifstream schema_file("templates/latex/invoice/v1/schema.json");
-    if (!schema_file)
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE("invoice");
+    std::ifstream schema_file(TestTemplates::version_dir("invoice") / "schema.json");
+    ASSERT_TRUE(static_cast<bool>(schema_file));
     json schema;
     schema_file >> schema;
 
@@ -468,14 +469,26 @@ TEST(NormalizeInputTest, FillsMissingOptionalFieldsOfRealInvoiceSchema) {
 }
 
 // End-to-end against the REAL shipped invoice template: an input missing
-// every optional field must render WITHOUT throwing, and — because the
-// template's `{% if %}` conditions were rewritten to `!= ""` to match
-// normalize_input's fill (see TemplateRegistry::normalize_input's doc
-// comment on why "" is truthy in inja) — must not leave any of the
-// conditional blocks' label text in the output either.
-TEST(NormalizeInputTest, RenderTexOfRealInvoiceTemplateOmitsEmptyConditionalBlocks) {
-    if (!fs::exists("templates/latex/invoice/v1/template.tex"))
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+// every optional field must reach the engine WITHOUT throwing, and must not
+// make the template print any of its conditional blocks' labels. Both engines
+// spell the condition the same way — inja `{% if seller.iik != "" %}` and
+// Typst `#if d.seller.iik != ""` — because both are matched to
+// normalize_input's fill (see TemplateRegistry::normalize_input's doc comment
+// on why "" is truthy in inja), so the property is one property, checked
+// through whichever engine the directory currently selects.
+//
+// It was `RenderTexOfRealInvoiceTemplateOmitsEmptyConditionalBlocks`, guarded
+// by a probe for `invoice/v1/template.tex` — so the invoice conversion
+// (3c77b1e) both deleted the file it probed and invalidated what it asserted,
+// and the test went quiet instead of red. Under Typst there is no rendered
+// source to search: the branch is taken inside the engine, and what is
+// observable here is the input the engine is handed. The label-absence half
+// then lives in the PDF, and in the render gate that reads it
+// (scripts/check-render.py: every label declared in a fixture's
+// `.expected.txt` must appear, and its syntax layer refuses a `[`/`else`
+// typeset as body text by a broken branch).
+TEST(NormalizeInputTest, RealInvoiceTemplateGetsEmptyOptionalsForItsConditionalBlocks) {
+    REQUIRE_REPO_TEMPLATE("invoice");
 
     Docgen::TemplateRegistry registry;  // default root: "templates/latex"
     auto info = registry.latest("invoice");
@@ -492,11 +505,43 @@ TEST(NormalizeInputTest, RenderTexOfRealInvoiceTemplateOmitsEmptyConditionalBloc
     };
     const json normalized = Docgen::TemplateRegistry::normalize_input(info->schema, input);
 
-    std::string out;
-    EXPECT_NO_THROW(out = Docgen::render_tex(*info, normalized));
-    EXPECT_EQ(out.find("ИИК"), std::string::npos);
-    EXPECT_EQ(out.find("Основание"), std::string::npos);
-    EXPECT_EQ(out.find("НДС"), std::string::npos);
+    if (info->engine == Docgen::Engine::kLatex) {
+        std::string out;
+        EXPECT_NO_THROW(out = Docgen::render_tex(*info, normalized));
+        EXPECT_EQ(out.find("ИИК"), std::string::npos);
+        EXPECT_EQ(out.find("Основание"), std::string::npos);
+        EXPECT_EQ(out.find("НДС"), std::string::npos);
+        return;
+    }
+
+    // Typst: the fill is what the template's `!= ""` guards compare against,
+    // and it has to survive the trip to the engine as the EMPTY STRING — a
+    // missing key is a hard engine error, and any other value prints a label
+    // with nothing after it.
+    const fs::path staging = fs::temp_directory_path() / "docgen_invoice_optionals";
+    std::error_code ec;
+    fs::remove_all(staging, ec);
+    fs::create_directories(staging);
+    ASSERT_NO_THROW(Docgen::write_typst_inputs(*info, normalized, staging));
+
+    json written;
+    std::ifstream staged_input(staging / "input.json");
+    ASSERT_TRUE(static_cast<bool>(staged_input));
+    ASSERT_NO_THROW(staged_input >> written);
+
+    ASSERT_TRUE(written.contains("seller"));
+    const json& seller = written.at("seller");
+    const std::vector<std::string> seller_optionals = {"iik", "bank", "bik", "kbe"};
+    for (const auto& key : seller_optionals) {
+        ASSERT_TRUE(seller.contains(key)) << "seller." << key << " is absent — Typst hard-errors on a missing key";
+        EXPECT_EQ(seller.at(key), "") << "seller." << key;
+    }
+    const std::vector<std::string> top_level_optionals = {"contract", "vat_rate", "vat_amount"};
+    for (const auto& key : top_level_optionals) {
+        ASSERT_TRUE(written.contains(key)) << key << " is absent — Typst hard-errors on a missing key";
+        EXPECT_EQ(written.at(key), "") << key;
+    }
+    fs::remove_all(staging, ec);
 }
 
 // ── escaping vs. templating: WHEN a string leaf is escaped ───────────────
@@ -624,14 +669,6 @@ std::vector<std::string> printed_expressions(const std::string& source) {
     for (std::sregex_iterator it(source.begin(), source.end(), kTypst), end; it != end; ++it)
         out.push_back((*it)[1].str());
     return out;
-}
-
-/// Skip guard shared by the tests that read the repo's real templates.
-/// Deliberately probes the DIRECTORY, not `invoice/v1/template.tex` — the
-/// point is "am I running from the repo root", and the source file's name
-/// changes under every template as the Typst migration proceeds.
-bool repo_templates_reachable() {
-    return fs::is_directory("templates/latex/invoice/v1");
 }
 
 // THE defect, in miniature: an enum-pinned control value whose literal
@@ -842,12 +879,48 @@ TEST_F(TemplateRegistryTest, WriteTypstInputsThrowsWhenTheOutputDirIsMissing) {
 
 // ── the shipped templates ────────────────────────────────────────────────
 
+// The alarm for every skip below, and for the ones in tests/integration:
+// each of them steps aside when the repo's template tree is not reachable
+// from the working directory, and that tolerance is exactly how three
+// regression pins ran nothing for months while reporting success (see
+// tests/repo_templates.hpp for the post-mortem). This test does NOT step
+// aside. Every CI run of this binary has the repo root as its working
+// directory — /app in docker/Dockerfile's test-runner stage, and the `cd
+// /app` in the sanitizer and TSan jobs — so an unreachable template tree
+// there is a broken assumption about the environment, not an environment to
+// accommodate. One loud red test that names the cause beats a screenful of
+// quiet green skips.
+//
+// Running the binary from somewhere else (`ctest` from the build directory,
+// say) fails HERE and only here; the message says what to do about it.
+TEST(ShippedTemplatesTest, TheRepoTemplateTreeIsReachableFromTheWorkingDirectory) {
+    ASSERT_TRUE(TestTemplates::tree_reachable())
+        << "'" << TestTemplates::kRoot << "' is not reachable from the working directory "
+        << fs::current_path().string()
+        << ". Run the test binary from the repo root (CI runs it from /app). Every template-backed test in this "
+           "binary just skipped, and skips are not failures — this one is.";
+
+    // ... and it is a template tree, not merely a directory with that name.
+    // A probe that is happy with the directory alone would survive a checkout
+    // whose templates never landed.
+    std::size_t with_schema = 0;
+    for (const auto& entry : fs::directory_iterator(TestTemplates::kRoot)) {
+        if (!entry.is_directory())
+            continue;
+        const std::string slug = entry.path().filename().string();
+        EXPECT_TRUE(TestTemplates::has_template(slug)) << TestTemplates::missing_template_reason(slug);
+        if (TestTemplates::has_template(slug))
+            ++with_schema;
+    }
+    EXPECT_GE(with_schema, 10U) << "the shipped catalogue is ten document types; only " << with_schema
+                                << " resolved a v1/schema.json";
+}
+
 // The engine a shipped template reports must be the one its source file on
 // disk implies, with that file actually present. Self-maintaining: it keeps
 // holding as templates convert one at a time.
 TEST(ShippedTemplatesTest, EveryShippedTemplateReportsTheEngineOfItsSourceFile) {
-    if (!repo_templates_reachable())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE_TREE();
 
     Docgen::TemplateRegistry registry;
     const auto templates = registry.list();
@@ -876,8 +949,7 @@ TEST(ShippedTemplatesTest, EveryShippedTemplateReportsTheEngineOfItsSourceFile) 
 // render. A conversion changes a template's source file, never its slug, so
 // this list only moves when a document type is genuinely added or retired.
 TEST(ShippedTemplatesTest, TheSameTenDocumentTypesShipUnderEitherEngine) {
-    if (!repo_templates_reachable())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE_TREE();
 
     Docgen::TemplateRegistry registry;
     const auto templates = registry.list();
@@ -946,8 +1018,7 @@ TEST(ShippedTemplatesTest, TheSameTenDocumentTypesShipUnderEitherEngine) {
 // `special-chars.json`, and the test below keeps them hostile so that gate
 // cannot quietly lose its teeth.
 TEST(ShippedTemplatesTest, TheInjectionPayloadStaysDataInEveryTemplateThroughItsOwnEngine) {
-    if (!repo_templates_reachable())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE_TREE();
 
     Docgen::TemplateRegistry registry;  // default root: "templates/latex"
     const auto templates = registry.list();
@@ -1040,8 +1111,7 @@ TEST(ShippedTemplatesTest, TheInjectionPayloadStaysDataInEveryTemplateThroughIts
 // Converting a template therefore means extending its special-chars fixture
 // with the Typst constructs as well — see templates/latex/README.md.
 TEST(ShippedTemplatesTest, EveryTemplateShipsAHostileSpecialCharsFixture) {
-    if (!repo_templates_reachable())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE_TREE();
 
     // Weapons of the LaTeX escaper (LatexEscape.hpp) — every one of them must
     // arrive in the PDF as a printed character.
@@ -1088,8 +1158,7 @@ TEST(ShippedTemplatesTest, EveryTemplateShipsAHostileSpecialCharsFixture) {
 // identifier is not something a reader should ever see. Statically checked
 // against every shipped template so it cannot be forgotten.
 TEST(ShippedTemplatesTest, NeverPrintAnEnumPinnedField) {
-    if (!repo_templates_reachable())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE_TREE();
 
     Docgen::TemplateRegistry registry;
     const auto templates = registry.list();
@@ -1118,49 +1187,31 @@ TEST(ShippedTemplatesTest, NeverPrintAnEnumPinnedField) {
     EXPECT_GT(enum_fields, 0u);
 }
 
-// The production symptom, on the real template: BOTH closing blocks of ФНО
-// 300.00 must render, each with its sentence and balance_words. Before the
-// fix neither did, for any input.
-TEST(ShippedTemplatesTest, Fno300PrintsItsClosingLineForBothBalanceKinds) {
-    if (!repo_templates_reachable())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
-
-    Docgen::TemplateRegistry registry;
-    auto info = registry.latest("fno_300");
-    ASSERT_TRUE(info.has_value());
-
-    json input = {{"org", {{"bin", "104332181962"}, {"name", "Cyber Capybara ТОО"}}},
-                  {"period", {{"year", "2026"}, {"quarter", "2"}}},
-                  {"sales_tenge", "5 000 000,00"},
-                  {"vat_charged_tenge", "800 000,00"},
-                  {"vat_credited_tenge", "350 000,00"},
-                  {"balance_tenge", "450 000,00"},
-                  {"balance_kind", "to_pay"},
-                  {"balance_words", "Четыреста пятьдесят тысяч тенге 00 тиын"},
-                  {"signed_on", "14.08.2026"},
-                  {"director", "Ахметов Ерлан Серикович"},
-                  {"accountant", "Серикбаева Айгерим Кайратовна"}};
-
-    ASSERT_FALSE(Docgen::TemplateRegistry::validate(*info, input).has_value());
-    std::string out = Docgen::render_tex(*info, Docgen::TemplateRegistry::normalize_input(info->schema, input));
-    EXPECT_NE(out.find("подлежащая уплате в бюджет"), std::string::npos);
-    EXPECT_NE(out.find("Четыреста пятьдесят тысяч тенге 00 тиын"), std::string::npos);
-    EXPECT_EQ(out.find("подлежащая возврату из бюджета"), std::string::npos);
-
-    input["balance_kind"] = "to_refund";
-    ASSERT_FALSE(Docgen::TemplateRegistry::validate(*info, input).has_value());
-    out = Docgen::render_tex(*info, Docgen::TemplateRegistry::normalize_input(info->schema, input));
-    EXPECT_NE(out.find("подлежащая возврату из бюджета"), std::string::npos);
-    EXPECT_NE(out.find("Четыреста пятьдесят тысяч тенге 00 тиын"), std::string::npos);
-    EXPECT_EQ(out.find("подлежащая уплате в бюджет"), std::string::npos);
-}
+// Fno300PrintsItsClosingLineForBothBalanceKinds was deleted with the ФНО
+// 300.00 LaTeX source: under Typst the branch is taken inside the engine, so
+// there is no intermediate source to assert on. The property did NOT go
+// unguarded — it moved to scripts/check-render.py, which renders
+// fno_300/v1/fixtures/basic.json (balance_kind "to_pay") and
+// special-chars.json ("to_refund") and requires each fixture's own
+// .expected.txt closing label to be present in the PDF.
+//
+// Two of that gate's layers hold the two halves. CONTENT: the closing line
+// and its balance_words must be found in the PDF's extracted text, per
+// fixture, so a branch that prints nothing (the v0.4.1 symptom — every ФНО
+// 300.00 filed without its closing line) fails. LEAKED TEMPLATE SYNTAX: the
+// gate screens every extracted token that looks like template syntax by
+// PROVENANCE — a `#` sigil, a content-block bracket, a bare `else` that no
+// fixture value and no declared label accounts for — so a branch typeset as
+// body text instead of taken fails too. That second one is the failure Typst
+// makes possible and LaTeX did not, and the gate's own self-test
+// (scripts/check-render-selftest.sh) carries it as a deliberate breakage: a
+// `] else [` split across lines.
 
 // The other production symptom: an hr_order of every kind must print a body.
 // `business_trip` and `salary_change` — the two kinds whose literal carries
 // an underscore — printed a header, signature lines and nothing in between.
 TEST(ShippedTemplatesTest, HrOrderPrintsABodyForEveryKind) {
-    if (!repo_templates_reachable())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE_TREE();
 
     Docgen::TemplateRegistry registry;
     auto info = registry.latest("hr_order");

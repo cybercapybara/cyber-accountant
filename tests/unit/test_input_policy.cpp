@@ -129,8 +129,10 @@ TEST(InputPolicy, ApplyDerivedAmountRejectsClientSuppliedAmountAndWords) {
 
 // The defect that survived the first pass of P3: `vat_amount` was neither
 // derived nor rejected on invoice/avr, while both templates print it on the
-// line directly ABOVE the server-derived total (invoice template.tex:30-31,
-// avr:32-33). The exploit below issued a PDF reading «НДС (12%): 999 999,00 ₸»
+// line directly ABOVE the server-derived total (in whichever source file the
+// invoice and avr directories currently hold — the pair of adjacent lines
+// survived both conversions). The exploit below issued a PDF reading
+// «НДС (12%): 999 999,00 ₸»
 // over «Итого к оплате: 1 120,00 ₸» — one document contradicting itself.
 TEST(InputPolicy, InvoiceRejectsAClientSuppliedVatAmount) {
     std::string field, code, message;

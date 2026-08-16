@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include "email/Templates.hpp"
+#include "repo_templates.hpp"
 #include "test_helpers.hpp"
 
 using json = nlohmann::json;
@@ -75,8 +76,11 @@ TEST_F(TemplatesTest, defaultContextWithoutConfigHasAppFields) {
 // The repo's real templates: every shipped pair must render against the
 // context AccountEmails builds, with the link placeholder substituted.
 TEST_F(TemplatesTest, shippedTemplatesRenderWithAccountContext) {
-    if (!fs::exists("templates/email"))
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    // Skips only when there is no repo checkout under the working directory
+    // at all; a checkout that has lost templates/email is a hard failure. See
+    // tests/repo_templates.hpp — a probe that cannot tell those two apart is
+    // what let three docgen tests report success while running nothing.
+    REQUIRE_REPO_PATH("templates/email");
     dir_env_ = std::make_unique<TestHelpers::ScopedEnv>("MAIL_TEMPLATES_DIR", "templates/email");
 
     json ctx = {{"app_name", "App"},

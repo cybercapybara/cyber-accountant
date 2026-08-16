@@ -31,6 +31,7 @@
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalService.hpp"
 #include "money/MoneyFormat.hpp"
+#include "repo_templates.hpp"
 #include "repositories/RoleRepository.hpp"
 #include "repositories/UserRepository.hpp"
 #include "security/Auth.hpp"
@@ -65,8 +66,7 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        if (!fs::exists("templates/latex/hr_order/v1/schema.json"))
-            GTEST_SKIP() << "repo templates not reachable from this working directory";
+        REQUIRE_REPO_TEMPLATE("hr_order");
 
         TestHelpers::wipe_org_data();
         Database::get().execute_write([](auto& txn) {

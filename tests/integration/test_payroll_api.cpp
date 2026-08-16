@@ -42,6 +42,7 @@
 #include "money/MoneyFormat.hpp"
 #include "payroll/PayrollRepository.hpp"
 #include "payroll/PayrollService.hpp"
+#include "repo_templates.hpp"
 #include "repositories/RoleRepository.hpp"
 #include "repositories/UserRepository.hpp"
 #include "security/Auth.hpp"
@@ -76,8 +77,7 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        if (!fs::exists("templates/latex/payslip/v1/schema.json"))
-            GTEST_SKIP() << "repo templates not reachable from this working directory";
+        REQUIRE_REPO_TEMPLATE("payslip");
 
         TestHelpers::wipe_org_data();
         Database::get().execute_write([](auto& txn) {
