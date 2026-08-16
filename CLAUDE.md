@@ -45,7 +45,14 @@ gates by construction. Hand-rolled versions usually don't.
    `templates/latex/<slug>/v<N>/` needs an `expected.txt` listing the static
    labels it prints and its `margin <N>mm`, plus optional per-fixture
    `fixtures/<name>.expected.txt`. `scripts/check-render.py` fails if it is
-   missing — a template with no declared expectations cannot be gated.
+   missing — a template with no declared expectations cannot be gated. It
+   also needs a `fixtures/special-chars.json` whose data carries the hostile
+   payload **in the syntax of the engine that compiles it** (a Typst template
+   adds `#panic(`, `#read(`, `*`, `` ` ``, `@` to the LaTeX weapons): that
+   fixture is what makes `template-render` an injection guard, and
+   `ShippedTemplatesTest.EveryTemplateShipsAHostileSpecialCharsFixture`
+   (`tests/unit/test_template_registry.cpp`) fails if a conversion leaves it
+   behind.
 10. **Printed money is `Money::format_tiyn_ru`; stored/served/filed money is
    `Ledger::format_tiyn`.** The rule is by DESTINATION, not by module. Every
    `input` handed to a docgen template — the ФНО forms (TaxController), the
@@ -141,10 +148,19 @@ It triggers on changes under `templates/**`, `src/docgen/**`,
 
 The worker image (`docker/Dockerfile`, stage `worker-runtime`) is the only
 image with a document engine, and it currently carries **two**: TeX Live
-(XeLaTeX, what all ten templates render through today) and **Typst, pinned to
-0.15.1** at `/usr/local/bin/typst`. Both stay until the last template is
-converted (`.superpowers/sdd/typst-migration-spike.md`); do not drop a TeX
-package before then.
+(XeLaTeX) and **Typst, pinned to 0.15.1** at `/usr/local/bin/typst`. Both stay
+until the last template is converted
+(`.superpowers/sdd/typst-migration-spike.md`); do not drop a TeX package
+before then.
+
+- **Which engine a template uses is a property of its directory, not a list
+  anywhere.** `TemplateRegistry::load()` decides it per version directory —
+  `template.typ` ⇒ Typst, `template.tex` ⇒ XeLaTeX — and `engine_name()`
+  produces the string stored on the document version. The migration converts
+  one template at a time, so the split moves; ask the tree
+  (`ls templates/latex/*/v*/template.*`) rather than any prose, here or
+  elsewhere. When no `template.tex` is left, the XeLaTeX pipeline,
+  `escape_latex` and the TeX Live layer of the worker image can go.
 
 - The Typst pin is not decorative. Typst is pre-1.0 and every minor release
   changes layout, so the version is a build arg (`TYPST_VERSION`), the

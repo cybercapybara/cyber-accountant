@@ -519,6 +519,15 @@ const char* const kInjection = "ТОО \"Алма & Ко\" \\textbf{x} $x^2$ #re
 const char* const kInjectionEscaped =
     "ТОО \"Алма \\& Ко\" \\textbackslash{}textbf\\{x\\} \\$x\\textasciicircum{}2\\$ \\#read(\"/etc/passwd\")";
 
+/// The Typst-engine sibling of kInjection: the same hostile counterparty
+/// name, carrying the constructs TYPST would act on — a code sigil, a call
+/// that reads the filesystem, a binding, strong/emphasis markers, math mode,
+/// a label and a raw block. There is no escaped counterpart because there is
+/// no escaping on that path: the value travels to the engine inside
+/// `input.json` and must arrive byte for byte, unchanged and unspliced.
+const char* const kTypstInjection =
+    "ТОО \"Алма & Ко\" #panic(\"pwned\") #read(\"/etc/passwd\") #let x = 1 *bold* _it_ $x^2$ @lbl `code`";
+
 /// Does @p needle occur in @p haystack NOT preceded by a backslash? The
 /// escaped forms of the payload legitimately contain their own raw needle as
 /// a substring (`\#read(` contains `#read(`), so a plain find() would report
@@ -547,6 +556,31 @@ void overwrite_strings(json& node, const std::string& value) {
         for (auto& element : node)
             overwrite_strings(element, value);
     }
+}
+
+/// Every string leaf of @p node as (dotted path, value) — the paths make a
+/// failure name the field, not just the template.
+void collect_string_leaves(const json& node,
+                           const std::string& prefix,
+                           std::vector<std::pair<std::string, std::string>>& out) {
+    if (node.is_string()) {
+        out.emplace_back(prefix, node.get<std::string>());
+    } else if (node.is_object()) {
+        for (const auto& item : node.items())
+            collect_string_leaves(item.value(), prefix.empty() ? item.key() : prefix + "." + item.key(), out);
+    } else if (node.is_array()) {
+        for (std::size_t i = 0; i < node.size(); ++i)
+            collect_string_leaves(node[i], prefix + "." + std::to_string(i), out);
+    }
+}
+
+/// The bytes of @p path (empty if it cannot be read — the callers assert on
+/// the content, so an unreadable file fails there rather than throwing here).
+std::string read_file(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    return buf.str();
 }
 
 /// Every dotted path a schema pins to an `enum` — the control values.
@@ -833,49 +867,85 @@ TEST(ShippedTemplatesTest, EveryShippedTemplateReportsTheEngineOfItsSourceFile) 
     }
 }
 
-// The migration's scoreboard. Ten templates ship and ALL TEN still render
-// through XeLaTeX — per-template engine discovery landed without converting
-// anything. Each conversion commit moves one slug from the LaTeX list to the
-// Typst one here; when the LaTeX list is empty the XeLaTeX pipeline and the
-// TeX Live layer of the worker image can go.
-TEST(ShippedTemplatesTest, AllTenShippedTemplatesStillRenderThroughXelatex) {
+// The shipped catalogue: ten document types, and every one of them claimed by
+// an engine. Deliberately says NOTHING about which engine any given slug uses
+// — that is what the Typst migration moves, one commit at a time, and it is
+// asserted against the file on disk by the test above instead of against a
+// list here that would go stale on every conversion. What this pins is the
+// thing a conversion must never change: the set of documents the service can
+// render. A conversion changes a template's source file, never its slug, so
+// this list only moves when a document type is genuinely added or retired.
+TEST(ShippedTemplatesTest, TheSameTenDocumentTypesShipUnderEitherEngine) {
     if (!repo_templates_reachable())
         GTEST_SKIP() << "repo templates not reachable from this working directory";
 
     Docgen::TemplateRegistry registry;
     const auto templates = registry.list();
 
-    std::vector<std::string> latex_slugs;
-    std::vector<std::string> typst_slugs;
-    for (const auto& info : templates) {
-        if (info.engine == Docgen::Engine::kTypst)
-            typst_slugs.push_back(info.slug);
-        else
-            latex_slugs.push_back(info.slug);
-    }
+    std::vector<std::string> slugs;
+    for (const auto& info : templates)
+        slugs.push_back(info.slug);
 
-    const std::vector<std::string> kExpectedLatex = {"avr",
-                                                     "fno_300",
-                                                     "fno_910",
-                                                     "hr_order",
-                                                     "invoice",
-                                                     "labor_contract",
-                                                     "payslip",
-                                                     "reconciliation",
-                                                     "tax_invoice",
-                                                     "waybill"};
-    const std::vector<std::string> kNoTypstYet;
-    EXPECT_EQ(latex_slugs, kExpectedLatex);
-    EXPECT_EQ(typst_slugs, kNoTypstYet);
+    // Every slug directory on disk must have produced a TemplateInfo. A
+    // directory that lost its `vN` subdirectory (a botched rebase, a
+    // conversion committed one level too high) is dropped by list() in
+    // silence, and would otherwise show up only as a 404 in production.
+    std::size_t slug_dirs = 0;
+    for (const auto& entry : fs::directory_iterator("templates/latex")) {
+        if (entry.is_directory())
+            ++slug_dirs;
+    }
+    EXPECT_EQ(templates.size(), slug_dirs) << "a template directory on disk resolved to no template";
+
+    const std::vector<std::string> kShippedSlugs = {"avr",
+                                                    "fno_300",
+                                                    "fno_910",
+                                                    "hr_order",
+                                                    "invoice",
+                                                    "labor_contract",
+                                                    "payslip",
+                                                    "reconciliation",
+                                                    "tax_invoice",
+                                                    "waybill"};
+    EXPECT_EQ(slugs, kShippedSlugs);
 }
 
-// The blast-radius test the fix owes: a counterparty name carrying every
-// LaTeX weapon at once, substituted into EVERY string leaf of EVERY shipped
-// template's fixture, must come out as literal text in every one of them.
-// (Every leaf includes the enum-pinned ones — which is the point: the
-// payload is not one of the schema's literals, so it is escaped like any
+// The blast-radius test the fix owes: a hostile counterparty name,
+// substituted into EVERY string leaf of EVERY shipped template's fixture,
+// must reach the document as literal text — never as something the engine
+// executes. (Every leaf includes the enum-pinned ones — which is the point:
+// the payload is not one of the schema's literals, so it is treated like any
 // other string and the control branches simply do not fire.)
-TEST(ShippedTemplatesTest, RenderTheInjectionPayloadAsLiteralTextInEveryTemplate) {
+//
+// Each template is exercised through ITS OWN engine, chosen from the same
+// TemplateInfo the render pipeline uses, so this keeps holding as templates
+// convert one at a time — no list of slugs to update:
+//
+//   * XeLaTeX — `render_tex`, whose whole job is the escaping. The property
+//     is checked on the `.tex` it produces: the payload present in its
+//     escaped form, and none of its raw forms present at all.
+//   * Typst — `write_typst_inputs`, which does NOT escape, because there is
+//     nothing to escape: the payload travels beside the template in
+//     `input.json` and the template reads it as data. The property that
+//     replaces escaping is separation, and that is what is checked here —
+//     `main.typ` is a byte-exact copy of the template (the payload never
+//     becomes source) and every value arrives byte for byte (nothing on the
+//     way to the engine transformed it into something else).
+//
+// The Typst half's remaining claim — that the engine then TYPESETS those
+// bytes rather than running them — needs the real binary, which no C++ test
+// bucket has (tests/unit takes no services; tests/integration stubs
+// DOCGEN_LATEX_CMD and never invokes an engine; typst 0.15.1 exists only on
+// the worker image). It runs in the `template-render` CI job instead, which
+// compiles every `fixtures/*.json` with the real engine and then gates the
+// PDF: layer 1 (content) requires every fixture scalar to appear in the
+// extracted text — so a `#panic("x")` that Typst EXECUTED fails the compile
+// and one it interpreted goes missing from the text — and layer 3 (syntax)
+// requires every syntax-looking token in the PDF to be accounted for by the
+// fixture or a declared label. Those fixtures are the shipped
+// `special-chars.json`, and the test below keeps them hostile so that gate
+// cannot quietly lose its teeth.
+TEST(ShippedTemplatesTest, TheInjectionPayloadStaysDataInEveryTemplateThroughItsOwnEngine) {
     if (!repo_templates_reachable())
         GTEST_SKIP() << "repo templates not reachable from this working directory";
 
@@ -883,27 +953,132 @@ TEST(ShippedTemplatesTest, RenderTheInjectionPayloadAsLiteralTextInEveryTemplate
     const auto templates = registry.list();
     ASSERT_FALSE(templates.empty());
 
+    std::size_t latex_checked = 0;
+    std::size_t typst_checked = 0;
     for (const auto& info : templates) {
         const fs::path fixture_path = info.dir / "fixtures" / "basic.json";
         ASSERT_TRUE(fs::exists(fixture_path)) << info.slug << " has no fixtures/basic.json";
         json fixture;
         std::ifstream(fixture_path) >> fixture;
-        overwrite_strings(fixture, kInjection);
 
-        std::string out;
+        if (info.engine == Docgen::Engine::kLatex) {
+            overwrite_strings(fixture, kInjection);
+            const json normalized = Docgen::TemplateRegistry::normalize_input(info.schema, fixture);
+
+            std::string out;
+            ASSERT_NO_THROW(out = Docgen::render_tex(info, normalized)) << info.slug;
+
+            EXPECT_NE(out.find(kInjectionEscaped), std::string::npos)
+                << info.slug << ": the payload is not present in its escaped form";
+            // None of the raw forms may appear. `\textbf{#1}` occurs in these
+            // templates as a macro DEFINITION, so the needles below are the
+            // payload's own byte sequences, which no template source contains.
+            EXPECT_FALSE(contains_unescaped(out, "\\textbf{x}")) << info.slug << ": raw \\textbf{x} reached the .tex";
+            EXPECT_FALSE(contains_unescaped(out, "$x^2$")) << info.slug << ": raw math mode reached the .tex";
+            EXPECT_FALSE(contains_unescaped(out, "#read(")) << info.slug << ": raw macro parameter reached the .tex";
+            EXPECT_FALSE(contains_unescaped(out, "& Ко\"")) << info.slug << ": raw & reached the .tex";
+            EXPECT_FALSE(contains_unescaped(out, "^2")) << info.slug << ": raw superscript reached the .tex";
+            ++latex_checked;
+            continue;
+        }
+
+        overwrite_strings(fixture, kTypstInjection);
         const json normalized = Docgen::TemplateRegistry::normalize_input(info.schema, fixture);
-        ASSERT_NO_THROW(out = Docgen::render_tex(info, normalized)) << info.slug;
 
-        EXPECT_NE(out.find(kInjectionEscaped), std::string::npos)
-            << info.slug << ": the payload is not present in its escaped form";
-        // None of the raw forms may appear. `\textbf{#1}` occurs in these
-        // templates as a macro DEFINITION, so the needles below are the
-        // payload's own byte sequences, which no template source contains.
-        EXPECT_FALSE(contains_unescaped(out, "\\textbf{x}")) << info.slug << ": raw \\textbf{x} reached the .tex";
-        EXPECT_FALSE(contains_unescaped(out, "$x^2$")) << info.slug << ": raw math mode reached the .tex";
-        EXPECT_FALSE(contains_unescaped(out, "#read(")) << info.slug << ": raw macro parameter reached the .tex";
-        EXPECT_FALSE(contains_unescaped(out, "& Ко\"")) << info.slug << ": raw & reached the .tex";
-        EXPECT_FALSE(contains_unescaped(out, "^2")) << info.slug << ": raw superscript reached the .tex";
+        const fs::path staging = fs::temp_directory_path() / ("docgen_injection_" + info.slug);
+        std::error_code ec;
+        fs::remove_all(staging, ec);
+        fs::create_directories(staging);
+        ASSERT_NO_THROW(Docgen::write_typst_inputs(info, normalized, staging)) << info.slug;
+
+        // The template is copied, not templated: byte for byte the file on
+        // disk, with none of the payload spliced into it. This is the whole
+        // reason the Typst path needs no escaping.
+        const std::string staged = read_file(staging / "main.typ");
+        EXPECT_FALSE(staged.empty()) << info.slug << ": main.typ was not staged";
+        EXPECT_EQ(staged, read_file(info.source_path)) << info.slug << ": main.typ is not a copy of the template";
+        EXPECT_EQ(staged.find(kTypstInjection), std::string::npos)
+            << info.slug << ": the payload was spliced into the Typst source";
+
+        // ... and every value reaches the engine unchanged. The only string
+        // leaves that may differ are the empty ones normalize_input added for
+        // declared-but-absent optionals (Typst hard-errors on a missing key).
+        json written;
+        ASSERT_NO_THROW(written = json::parse(read_file(staging / "input.json"))) << info.slug;
+        std::vector<std::pair<std::string, std::string>> leaves;
+        collect_string_leaves(written, "", leaves);
+        std::size_t carried = 0;
+        for (const auto& leaf : leaves) {
+            if (leaf.second.empty())
+                continue;
+            EXPECT_EQ(leaf.second, kTypstInjection)
+                << info.slug << ": " << leaf.first << " was transformed on the way to the engine";
+            if (leaf.second == kTypstInjection)
+                ++carried;
+        }
+        EXPECT_GT(carried, 0u) << info.slug << ": the payload reached input.json nowhere";
+        fs::remove_all(staging, ec);
+        ++typst_checked;
+    }
+
+    // Every shipped template went through exactly one of the two branches —
+    // the guard cannot silently stop covering a template because its engine
+    // changed under it.
+    EXPECT_EQ(latex_checked + typst_checked, templates.size());
+}
+
+// The other half of the injection guard, and the reason the CI job that runs
+// it has anything hostile to render: every template must SHIP a fixture whose
+// data carries the weapons of the engine that will compile it. Without this,
+// converting a template and rewriting its `special-chars.json` into something
+// bland would disarm `template-render`'s real-engine check silently — the job
+// would stay green while proving nothing about injection.
+//
+// Checked statically here (no engine, no services) because the fixture is a
+// file in the repo; the compile that turns it into evidence happens in
+// `template-render` (scripts/render-templates.sh + scripts/check-render.py).
+// Converting a template therefore means extending its special-chars fixture
+// with the Typst constructs as well — see templates/latex/README.md.
+TEST(ShippedTemplatesTest, EveryTemplateShipsAHostileSpecialCharsFixture) {
+    if (!repo_templates_reachable())
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+
+    // Weapons of the LaTeX escaper (LatexEscape.hpp) — every one of them must
+    // arrive in the PDF as a printed character.
+    const std::vector<std::string> kAnyEngine = {"%", "&", "#", "$", "_", "{", "}", "\\", "^", "~"};
+    // ... plus the constructs Typst itself would act on: code sigil calls, a
+    // strong marker, a raw block, a label.
+    const std::vector<std::string> kTypstOnly = {"*", "`", "@", "#panic(", "#read("};
+
+    Docgen::TemplateRegistry registry;
+    const auto templates = registry.list();
+    ASSERT_FALSE(templates.empty());
+
+    for (const auto& info : templates) {
+        const fs::path fixture_path = info.dir / "fixtures" / "special-chars.json";
+        ASSERT_TRUE(fs::exists(fixture_path))
+            << info.slug << " ships no fixtures/special-chars.json, so the real engine never sees a hostile value";
+        json fixture;
+        std::ifstream(fixture_path) >> fixture;
+        std::vector<std::pair<std::string, std::string>> leaves;
+        collect_string_leaves(fixture, "", leaves);
+
+        std::vector<std::string> required = kAnyEngine;
+        if (info.engine == Docgen::Engine::kTypst)
+            required.insert(required.end(), kTypstOnly.begin(), kTypstOnly.end());
+
+        for (const auto& token : required) {
+            bool carried = false;
+            for (const auto& leaf : leaves) {
+                if (leaf.second.find(token) != std::string::npos) {
+                    carried = true;
+                    break;
+                }
+            }
+            EXPECT_TRUE(carried) << info.slug << " (" << Docgen::engine_name(info.engine)
+                                 << "): no special-chars fixture value carries '" << token
+                                 << "', so nothing proves the engine typesets it instead of acting on it";
+        }
     }
 }
 

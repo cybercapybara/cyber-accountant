@@ -67,8 +67,9 @@ BOTH of them:
     word boxes to the PAGE MARGIN and never to other ink. Same 280 word
     boxes as the healthy document.
 
-Both are the defect class this migration produces, eight templates are still
-to convert, and until now the only defence was a human looking at the raster.
+Both are the defect class this migration produces, every template still
+holding a `template.tex` is a conversion that can rebuild one of them, and
+until now the only defence was a human looking at the raster.
 
 The hard part of layer 3 is that a fixture may legitimately CARRY template
 syntax as data — the `special-chars` fixtures deliberately ship `#panic("x")`,

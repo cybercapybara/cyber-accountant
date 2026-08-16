@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #
 # The `template-render` CI job: renders every
-# templates/latex/<slug>/v<N>/fixtures/*.json through XeLaTeX via the worker
-# binary's `--render-template <slug> <fixture> <outdir>` CLI mode
-# (src/worker_main.cpp) — the exact same validate -> normalize -> render_tex ->
-# compile_pdf pipeline the "docgen.render" job runs (src/docgen/RenderJob.hpp)
+# templates/latex/<slug>/v<N>/fixtures/*.json through the engine that
+# template's own directory declares — XeLaTeX for a `template.tex`, Typst for
+# a `template.typ` — via the worker binary's
+# `--render-template <slug> <fixture> <outdir>` CLI mode (src/worker_main.cpp),
+# i.e. the exact same validate -> normalize -> (render_tex | write_typst_inputs)
+# -> compile pipeline the "docgen.render" job runs (src/docgen/RenderJob.hpp)
 # — and then GATES THE PDF IT PRODUCED.
 #
 # "It compiled" has never been enough, and "the engine didn't complain" is not
@@ -38,10 +40,17 @@
 # `template.tex` that nevertheless left a XeLaTeX transcript means the engine
 # selection (src/docgen, per-template) and the template tree disagree.
 #
-# Needs a real `xelatex`, `pdftotext`, `pdftoppm` and `python3` on PATH — run
-# this on the worker-render-check image (docker/Dockerfile), not on a bare
-# checkout. The unit/integration suites never invoke real XeLaTeX
-# (DOCGEN_LATEX_CMD is stubbed there); this script is the one place that does.
+# Needs a real `xelatex` AND a real `typst`, plus `pdftotext`, `pdftoppm` and
+# `python3` on PATH — run this on the worker-render-check image
+# (docker/Dockerfile), not on a bare checkout. No C++ test bucket ever invokes
+# a real engine (tests/unit takes no services at all; tests/integration stubs
+# DOCGEN_LATEX_CMD), so this script is the only place a template is actually
+# compiled — including the one property that needs a live engine to mean
+# anything: that the hostile values in every `special-chars.json` are TYPESET
+# and not executed. The unit suite pins everything up to the engine's door
+# (Docgen::render_tex escaping for LaTeX, byte-exact `input.json` staging for
+# Typst) and keeps those fixtures hostile — see
+# tests/unit/test_template_registry.cpp, ShippedTemplatesTest.
 #
 # Usage:
 #   WORKER_BIN=/app/cyber_accountant_worker ./scripts/render-templates.sh
