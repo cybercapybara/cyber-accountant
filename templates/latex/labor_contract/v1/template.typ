@@ -64,10 +64,14 @@
 // word "else" and the whole second branch as literal body text — exit 0, no
 // error, no warning, a labour contract that reads "…и действует до 17.08.2027
 // else [и заключён на неопределённый срок]" — brackets and all. Spike defect 2.
-// Reproduced against this file: typst exits 0 and scripts/check-render.py
-// reports PASS on the broken PDF (every declared label and value is still
-// there; the leak only ADDS eleven words). The gate cannot catch this. The
-// raster review is what catches it.
+// Reproduced against this file: typst exits 0, and the gate USED to report
+// PASS on the broken PDF (every declared label and value is still there; the
+// leak only ADDS eleven words, 291 boxes instead of 280). It no longer does —
+// scripts/check-render.py's LAYER 3 refuses a printed token that looks like
+// template syntax and that neither the fixture nor a declared label accounts
+// for, and check-render-selftest.sh's `leaked-control-syntax` case rebuilds
+// exactly this break on every CI run. Keep the line joined anyway: the gate
+// is the net, not the design.
 Шарт #d.starts_on жылдан бастап күшіне енеді #if d.ends_on != "" [және #d.ends_on дейін қолданылады] else [және белгісіз мерзімге жасалады]. \
 Договор вступает в силу с #d.starts_on #if d.ends_on != "" [и действует до #d.ends_on] else [и заключён на неопределённый срок].
 #if d.probation_months != "" [
@@ -100,9 +104,13 @@
 // Spike defect 3. Reproduced against this file at 200dpi: with `line` the rule
 // lands at y=551.9pt, dead through the ink of "БСН/БИН 104332181962" and
 // "ЖСН/ИИН 900112350487"; with this box it lands at y=574.9pt, in white space,
-// 1.1pt above the director line. check-render.py reports PASS on BOTH — same
-// 280 word boxes, all inside the margin. Invisible to pdftotext by
-// construction; only a raster shows it.
+// 1.1pt above the director line. check-render.py used to report PASS on BOTH —
+// same 280 word boxes, all inside the margin, invisible to pdftotext by
+// construction. Its LAYER 4 now rasterises the page at that same 200dpi and
+// fails a word with a full-width rule through it, and
+// check-render-selftest.sh's `rule-through-text` case rebuilds this exact
+// break on every CI run. A `line` in a grid still contributes no height, so
+// the stroked box with an explicit height is still the right way to write it.
 #let sigrule = box(width: 1fr, height: 8mm, stroke: (bottom: 0.4pt))
 #grid(
   columns: (45%, 45%),

@@ -343,15 +343,19 @@ jobs:
     # amounts table hung off the right edge of the page, which XeLaTeX reports
     # as a *warning* with exit code 0. So this job then reads the PDF it just
     # produced (scripts/check-render.py): every fixture value and every static
-    # label must be in the extracted text, and every word box must sit inside
-    # the page's margin box. The last step breaks four things on purpose and
-    # requires the gate to catch all four, so it cannot rot into a green
-    # rubber stamp. See the rationale block in scripts/render-templates.sh.
+    # label must be in the extracted text, every word box must sit inside the
+    # page's margin box, no token may look like template syntax the fixture
+    # cannot account for, and the page is rasterised (pdftoppm) so that a rule
+    # drawn THROUGH a word — which text extraction is blind to — fails too.
+    # The last step breaks six things on purpose and requires the gate to
+    # catch all six, so it cannot rot into a green rubber stamp. See the
+    # rationale block in scripts/render-templates.sh.
     #
     # The PDFs themselves are kept and uploaded as the `rendered-documents`
-    # artifact: text extraction cannot see a rule drawn through the text or a
-    # collapsed signature block, so every template conversion in the Typst
-    # migration gets one human look at the raster before it is signed off.
+    # artifact, so every template conversion in the Typst migration can still
+    # get a human look at the raster. It is no longer the only defence: the
+    # two defects that made it load-bearing — a rule struck through the party
+    # identifiers, an `else` branch typeset as body text — are gated above.
     #
     # Path-scoped via dorny/paths-filter (a workflow-level `on.paths` would
     # gate every OTHER job in this file too) — only runs the (slow) docker

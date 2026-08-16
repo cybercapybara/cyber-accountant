@@ -101,22 +101,38 @@ below), then runs three steps:
    slack sideways, 6.0pt vertically for font ascent). The `margin <N>mm` in
    `expected.txt` is cross-checked against the template's own page setup in
    either engine — `\usepackage[margin=18mm]{geometry}` or Typst's
-   `#set page(..., margin: 18mm)`.
-3. `scripts/check-render-selftest.sh` — breaks payslip, fno_910, tax_invoice
-   and fno_300 on purpose and fails unless the gate catches all four and names
-   what was lost. The fno_300 case breaks the FIXTURE, not the template, and
-   is the regression test for the gate's own fixture-as-oracle blind spot.
-   **A mutation that changes nothing is itself a failure:** three of the four
-   mutators edit LaTeX syntax and would silently no-op against a converted
-   `template.typ`, so the script fingerprints the template tree around every
-   mutator and fails loudly ("changed NOTHING") rather than re-testing the
-   healthy document and reporting OK.
+   `#set page(..., margin: 18mm)`. **Syntax:** no extracted token may look
+   like template syntax (a Typst `#` sigil, a content-block bracket, an inja
+   delimiter, a LaTeX control sequence, a bare `else`/`endif`) unless the
+   fixture or a declared label contains it — the `special-chars` fixtures
+   ship `#panic("x")` and `#read("/etc/passwd")` as DATA and must keep
+   passing, so the test is provenance, not appearance. **Ink:** the page is
+   rasterised (`pdftoppm`, 200dpi) and no word may have a rule drawn through
+   it — a solid band spanning the word box and past both sides, with the
+   word's own ink above AND below it in the same pixel columns. An underline,
+   a `\midrule` or a signature line has ink on one side only; measured over
+   all 22 fixtures, zero findings.
+3. `scripts/check-render-selftest.sh` — breaks payslip, fno_910, tax_invoice,
+   fno_300 and labor_contract on purpose and fails unless the gate catches all
+   six and names what went wrong. The fno_300 case breaks the FIXTURE, not the
+   template, and is the regression test for the gate's own fixture-as-oracle
+   blind spot; the two labor_contract cases (`] else [` split across lines so
+   the branch is typeset as body text, and the signature rules turned back
+   into a zero-height `line()`) are the regression tests for the two blind
+   spots that were measured PASSING at exit 0 before the syntax and ink
+   layers existed. **A mutation that changes nothing is itself a failure:**
+   several mutators edit engine-specific syntax and would silently no-op
+   against a template converted to the other engine, so the script
+   fingerprints the template tree around every mutator and fails loudly
+   ("changed NOTHING") rather than re-testing the healthy document and
+   reporting OK.
 
 The job keeps every rendered PDF and uploads it as the **`rendered-documents`**
-artifact (`render-out/<mangled-fixture-path>/main.pdf`, 14-day retention). Text
-extraction cannot see a rule drawn *through* the text or a collapsed signature
-block, so every template conversion gets one human look at the raster:
-`gh run download --name rendered-documents`.
+artifact (`render-out/<mangled-fixture-path>/main.pdf`, 14-day retention), so
+every template conversion can still get one human look at the raster:
+`gh run download --name rendered-documents`. The two defects that used to make
+that review load-bearing — a rule drawn *through* the text, a control construct
+typeset as body text — are now gated by layers 3 and 4 above.
 
 It triggers on changes under `templates/**`, `src/docgen/**`,
 `docker/Dockerfile` or the three gate scripts.

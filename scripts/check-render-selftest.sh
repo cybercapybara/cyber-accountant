@@ -5,12 +5,13 @@
 # A gate that only ever runs against healthy input is indistinguishable from a
 # gate that returns 0 unconditionally, and this repo has already shipped tests
 # named for mechanisms they did not exercise. So: take the real templates,
-# break them four different ways — the amounts column emptied, one amount
+# break them six different ways — the amounts column emptied, one amount
 # silently truncated, a table widened until its right-hand columns fall off
-# the page, and every amount of a ФНО 300.00 rewritten into the machine money
-# form — render each through the SAME worker pipeline the real job uses, and
-# require that scripts/check-render.py fails on each one AND says what was
-# lost.
+# the page, every amount of a ФНО 300.00 rewritten into the machine money
+# form, a Typst control construct typeset as body text, and a signature rule
+# drawn through the party identifiers — render each through the SAME worker
+# pipeline the real job uses, and require that scripts/check-render.py fails
+# on each one AND says what went wrong.
 #
 # The fourth case is not like the first three. Those break the TEMPLATE and
 # the gate notices the PDF no longer matches the fixture. The fourth breaks
@@ -18,6 +19,18 @@
 # and PDF agree perfectly, and both are wrong, because the fixture hand-wrote
 # the printed form of an amount. It is the regression test for the gate's own
 # blind spot, and it must fail at LAYER 0 — before any pixel is compared.
+#
+# The fifth and sixth are the two blind spots the labour-contract conversion
+# proved by experiment: the gate reported PASS, exit 0, on BOTH of them, and
+# both are the defect class the Typst migration produces. They ADD ink rather
+# than lose it, which is precisely what layers 0-2 were built not to notice —
+# every declared label and value is still there in each. Case 5 must fail at
+# LAYER 3 (the `else` and its whole branch typeset as literal text) and case 6
+# at LAYER 4 (a rule struck through "БСН/БИН 104332181962" and "ЖСН/ИИН
+# 900112350487", invisible to text extraction by construction). Eight
+# templates are still to convert; if either mutator stops mutating, or either
+# layer stops biting, the migration goes back to being guarded by a human
+# squinting at a raster.
 #
 # Every case also renders the UNMUTATED copy of the same template first and
 # requires a PASS. That control is the point: without it, a case could "pass"
@@ -128,6 +141,60 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
 }
 
+# 5. Spike defect 2, reproduced exactly: `] else [` is broken across two
+#    physical lines in the labour contract's clause 2. Typst closes the
+#    if-expression at the `]` and then TYPESETS the word `else` and its entire
+#    second branch as literal body text — exit 0, no error, no warning, and a
+#    contract that reads "…и действует до 17.08.2027 else [и заключён на
+#    неопределённый срок]", brackets and all. Measured on the real template:
+#    291 word boxes instead of 280, every one inside the margins, every
+#    declared label and value present. LAYER 3 is the only thing that sees it.
+#    python3, not sed, and it counts: this must fail loudly rather than hand
+#    the gate an unmutated template.
+break_leaked_control_syntax() {
+    python3 - "$1/labor_contract/v1/template.typ" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    lines = fh.read().split("\n")
+hits = 0
+for i, line in enumerate(lines):
+    # Clause 2's two parallel sentences, Kazakh then Russian.
+    if "] else [" in line and line.startswith(("Шарт ", "Договор ")):
+        lines[i] = line.replace("] else [", "]\nelse [", 1)
+        hits += 1
+if hits != 2:
+    sys.exit("break_leaked_control_syntax: split %d of the expected 2 `] else [` "
+             "constructs in %s — clause 2 no longer has the shape this case "
+             "mutates" % (hits, path))
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(lines))
+PY
+}
+
+# 6. Spike defect 3, reproduced exactly: the labour contract's signature rules
+#    go back to a bare `line()`. `line` contributes no height, so the grid row
+#    collapses to zero and the rule is drawn THROUGH the two rows above it,
+#    striking out both party identifiers. Text extraction cannot see it — same
+#    280 word boxes as the healthy document, all inside the margins — so LAYER
+#    4 rasterises and looks for ink instead.
+break_rule_through_text() {
+    python3 - "$1/labor_contract/v1/template.typ" <<'PY'
+import re, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+text, n = re.subn(r"box\(width: 1fr, height: [0-9.]+mm, stroke: \(bottom: [0-9.]+pt\)\)",
+                  "line(length: 100%)", text)
+if n != 1:
+    sys.exit("break_rule_through_text: replaced %d of the expected 1 stroked "
+             "signature box in %s — the \\hrulefill equivalent no longer has the "
+             "shape this case mutates" % (n, path))
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(text)
+PY
+}
+
 # --- driver ------------------------------------------------------------------
 
 # render <tree> <slug> <fixture> <outdir> — run the real pipeline with the
@@ -215,8 +282,10 @@ run_case() {
         echo "  re-tested the healthy document and reported OK. A mutator that" >&2
         echo "  stops mutating is a gate that stops gating." >&2
         if [[ -f "$vdir/template.typ" ]]; then
-            echo "  $slug is now a Typst template ($vdir/template.typ): the mutator" >&2
-            echo "  still edits LaTeX syntax. Port it to the Typst source." >&2
+            echo "  $slug is a Typst template ($vdir/template.typ). Either the mutator" >&2
+            echo "  still edits LaTeX syntax and needs porting to the Typst source, or" >&2
+            echo "  the Typst construct it targets was rewritten — find the shape it" >&2
+            echo "  now has and mutate THAT. Do not delete the case." >&2
         else
             echo "  $vdir still holds a template.tex — the mutator's pattern no" >&2
             echo "  longer matches the template it was written against." >&2
@@ -276,9 +345,20 @@ run_case machine-money-form fno_300 basic.json break_machine_money_form \
     'FIXTURE FORMAT' \
     'declares 45000000 tiyn'
 
+run_case leaked-control-syntax labor_contract basic.json break_leaked_control_syntax \
+    'LEAKED SYNTAX' \
+    '"else" is printed in the PDF and is a control keyword' \
+    'is a content-block bracket'
+
+run_case rule-through-text labor_contract basic.json break_rule_through_text \
+    'RULE THROUGH TEXT' \
+    'word "104332181962"' \
+    'word "900112350487"' \
+    "ink above AND below"
+
 if [[ "$failures" -gt 0 ]]; then
     echo "check-render-selftest: $failures case(s) failed — the render gate is NOT" >&2
     echo "  proven to catch anything. Fix it before trusting a green template-render." >&2
     exit 1
 fi
-echo "check-render-selftest: 4 deliberate breakages, all applied, all caught, all named"
+echo "check-render-selftest: 6 deliberate breakages, all applied, all caught, all named"

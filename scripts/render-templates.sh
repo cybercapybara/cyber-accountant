@@ -22,9 +22,11 @@
 #     at all.
 #
 # So the gate proper is scripts/check-render.py, which reads the PDF: every
-# fixture value and every static label must be in its extracted text, and
-# every word box must sit inside the page's margin box. It knows nothing about
-# which engine produced the PDF and survives the migration unchanged.
+# fixture value and every static label must be in its extracted text, every
+# word box must sit inside the page's margin box, no token may look like
+# template syntax the fixture cannot account for, and no word may have a rule
+# rasterised through it. It knows nothing about which engine produced the PDF
+# and survives the migration unchanged.
 #
 # The transcript grep is KEPT, demoted to a supplementary LaTeX-only tripwire.
 # It is not redundant: it is the only check here that sees overflow in
@@ -36,10 +38,10 @@
 # `template.tex` that nevertheless left a XeLaTeX transcript means the engine
 # selection (src/docgen, per-template) and the template tree disagree.
 #
-# Needs a real `xelatex`, `pdftotext` and `python3` on PATH — run this on the
-# worker-render-check image (docker/Dockerfile), not on a bare checkout. The
-# unit/integration suites never invoke real XeLaTeX (DOCGEN_LATEX_CMD is
-# stubbed there); this script is the one place that does.
+# Needs a real `xelatex`, `pdftotext`, `pdftoppm` and `python3` on PATH — run
+# this on the worker-render-check image (docker/Dockerfile), not on a bare
+# checkout. The unit/integration suites never invoke real XeLaTeX
+# (DOCGEN_LATEX_CMD is stubbed there); this script is the one place that does.
 #
 # Usage:
 #   WORKER_BIN=/app/cyber_accountant_worker ./scripts/render-templates.sh
@@ -91,6 +93,14 @@ if ! command -v python3 >/dev/null 2>&1; then
     echo "render-templates: no python3 on PATH — scripts/check-render.py cannot run," >&2
     echo "  and skipping the content/geometry gate is how a lost amounts column" >&2
     echo "  reached production once already. Use the worker-render-check image." >&2
+    exit 1
+fi
+if ! command -v pdftoppm >/dev/null 2>&1; then
+    echo "render-templates: no pdftoppm on PATH — scripts/check-render.py's ink layer" >&2
+    echo "  cannot rasterise the page, and that is the ONLY check that sees a rule" >&2
+    echo "  drawn through the text (text extraction is blind to it by construction)." >&2
+    echo "  It ships in poppler-utils, next to pdftotext. Use the worker-render-check" >&2
+    echo "  image." >&2
     exit 1
 fi
 

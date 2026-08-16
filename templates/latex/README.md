@@ -160,7 +160,7 @@ had reported nothing at all.
 `scripts/check-render.py` runs once per fixture, on the PDF the render just
 produced, and knows nothing about which engine produced it (it is written to
 survive the Typst migration unchanged — see
-`.superpowers/sdd/typst-migration-spike.md`). Three layers:
+`.superpowers/sdd/typst-migration-spike.md`). Five layers:
 
 0. **Oracle.** Every printed amount is **derived from an integer number of
    tiyn**, declared `amount <path> <tiyn>`, using the same algorithm as
@@ -184,6 +184,30 @@ survive the Typst migration unchanged — see
    (measured: the worst healthy overshoot across all twenty renders is
    0.01pt), 6.0pt vertically, which is the font-ascent artifact of a `\Large`
    title (measured: 3.92–4.15pt) and still far below a real overflow.
+3. **Syntax.** No extracted token may look like **template syntax** — a Typst
+   `#` sigil (`#let`, `#if`), a content-block bracket, an inja delimiter, a
+   LaTeX control sequence, a bare control keyword (`else`, `endif`, …) —
+   unless something accounts for it: the token must occur inside a fixture
+   value or inside a declared label. That is the whole point. The
+   `special-chars` fixtures deliberately ship `#panic("x")`,
+   `#read("/etc/passwd")`, `\б` and `{б}` **as data**, and they must keep
+   passing; syntax with provenance is fine, syntax with none escaped from the
+   template. Catches a control construct that got typeset instead of run.
+4. **Ink.** No word may have a rule drawn **through** it. The page is
+   rasterised at 200dpi and a word fails when a solid band runs the full
+   width of its box and past both sides (so it is a rule, not a glyph) with
+   the word's own ink above **and** below it in the same pixel columns. The
+   column test is what keeps this quiet: an underline, a `\midrule` under a
+   header and a signature line all have ink on one side only. Measured across
+   all 22 fixtures and both engines: zero findings.
+
+Layers 3 and 4 exist because layers 0–2 only ever ask whether something is
+**missing**. The two defects the labour-contract conversion rebuilt both ADD
+ink and both passed with exit 0: `] else [` split across lines printed the
+word `else` and its entire branch into the contract body (291 word boxes
+instead of 280, all inside the margins), and a `line()` in a grid — which
+contributes no height — struck a signature rule through `БСН/БИН` and
+`ЖСН/ИИН`. Eight templates are still to convert.
 
 `expected.txt` format, one directive per line:
 
@@ -241,12 +265,19 @@ not and cannot pin what an API caller sends.
 ### The self-test
 
 `scripts/check-render-selftest.sh` (a separate step of the same CI job) breaks
-`payslip`, `fno_910`, `tax_invoice` and `fno_300` on purpose — amounts column
-emptied, one amount truncated to `10 000`, a table widened until its VAT
-columns fall off the page, and every amount of a ФНО 300.00 rewritten into the
-machine money form — renders each through the same pipeline and fails unless
-the gate catches all four *and* names what was lost. Each case renders the
-unmutated template first and requires a PASS, so a case cannot go green for
-the wrong reason. The fourth case is the regression test for the gate's own
-blind spot: it breaks the FIXTURE, not the template, and must be caught by
-layer 0 before a pixel is compared.
+`payslip`, `fno_910`, `tax_invoice`, `fno_300` and `labor_contract` on purpose
+— amounts column emptied, one amount truncated to `10 000`, a table widened
+until its VAT columns fall off the page, every amount of a ФНО 300.00
+rewritten into the machine money form, `] else [` broken across two lines so
+the branch is typeset as body text, and the signature rules turned back into a
+zero-height `line()` that strikes through the party identifiers — renders each
+through the same pipeline and fails unless the gate catches all six *and*
+names what went wrong. Each case renders the unmutated template first and
+requires a PASS, so a case cannot go green for the wrong reason, and a mutator
+whose pattern stops matching fails the case loudly ("changed NOTHING") rather
+than re-testing the healthy document.
+
+Three cases are regression tests for blind spots the gate actually had. The
+fourth breaks the FIXTURE, not the template, and must be caught by layer 0
+before a pixel is compared. The fifth and sixth ADD ink rather than lose it —
+both were measured passing with exit 0 — and must be caught by layers 3 and 4.

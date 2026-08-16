@@ -301,10 +301,12 @@ CMD ["config/config.json"]
 #
 # The gate that job runs (scripts/render-templates.sh -> scripts/check-render.py)
 # reads the PDF the worker just produced: it needs `pdftotext` (poppler) to
-# extract the text and the word boxes, and a `python3` to do the comparing.
-# Neither belongs in the shipped worker — the render job itself never reads a
-# PDF back — so they are added HERE, in a stage layered on top of the real
-# worker image, leaving worker-runtime byte-identical to what production runs.
+# extract the text and the word boxes, `pdftoppm` (same package) to rasterise
+# the page for the ink layer — the one that catches a rule drawn THROUGH the
+# text, which text extraction cannot see — and a `python3` to do the comparing.
+# None of them belongs in the shipped worker — the render job itself never
+# reads a PDF back — so they are added HERE, in a stage layered on top of the
+# real worker image, leaving worker-runtime byte-identical to production.
 # `python3`, not `python3-minimal`: the gate imports `unicodedata`, which
 # lives in libpython3-stdlib and is absent from the minimal subset.
 FROM worker-runtime AS worker-render-check

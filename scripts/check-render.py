@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Content-and-geometry gate over ONE rendered document PDF.
+"""Content, geometry and ink gate over ONE rendered document PDF.
 
 Why this exists
 ---------------
@@ -14,7 +14,7 @@ and only catches one failure shape — the Typst migration spike
 (.superpowers/sdd/typst-migration-spike.md) measured that the intended
 replacement engine clips silently with exit 0 and no transcript at all.
 
-So this gate reads the **artifact** instead of the engine's log, in two
+So this gate reads the **artifact** instead of the engine's log, in five
 layers, and knows nothing about which engine produced the PDF:
 
   LAYER 0 (oracle)    every printed amount in the fixture must be DERIVED
@@ -33,9 +33,59 @@ layers, and knows nothing about which engine produced the PDF:
   LAYER 2 (geometry)  every word's bounding box from `pdftotext -bbox` must
                       lie inside the page's margin box. Catches content that
                       survives extraction but is drawn off the paper.
+  LAYER 3 (syntax)    no word in the extracted text may look like TEMPLATE
+                      SYNTAX unless the fixture or an expectation file
+                      accounts for it. Catches a control construct that got
+                      typeset as body text instead of being executed.
+  LAYER 4 (ink)       no word may have a drawn rule crossing it. The page is
+                      rasterised and a word is failed when a full-width dark
+                      band runs through its box with the word's OWN ink both
+                      above and below it. Catches ink that text extraction is
+                      blind to by construction.
 
-All three layers name what went wrong: which fixture, which value or label,
-which word crossed which margin by how much.
+Every layer names what went wrong: which fixture, which value or label,
+which word crossed which margin by how much, which token leaked, which rule
+struck through which word.
+
+Why layers 3 and 4 exist
+------------------------
+The Typst conversion of the labour contract rebuilt, and re-measured, the two
+defects the migration spike had hit. Layers 0-2 reported PASS, exit 0, on
+BOTH of them:
+
+  * `] else [` broken across two physical lines. Typst closes the
+    if-expression at the `]` and then TYPESETS the word `else` and its whole
+    second branch as literal body text — exit 0, no warning. The contract read
+    "…и действует до 17.08.2027 else [и заключён на неопределённый срок]".
+    291 word boxes instead of 280, all inside the margins, every declared
+    label and value present: the leak only ADDS words, and layers 0-2 only
+    ever ask whether something is missing.
+  * `line()` used for a signature rule inside a grid. `line` contributes no
+    height, so the row collapsed to zero and the rule was drawn THROUGH the
+    party identifiers — "БСН/БИН 104332181962" and "ЖСН/ИИН 900112350487"
+    struck through. The glyphs extract perfectly; the geometry layer compares
+    word boxes to the PAGE MARGIN and never to other ink. Same 280 word
+    boxes as the healthy document.
+
+Both are the defect class this migration produces, eight templates are still
+to convert, and until now the only defence was a human looking at the raster.
+
+The hard part of layer 3 is that a fixture may legitimately CARRY template
+syntax as data — the `special-chars` fixtures deliberately ship `#panic("x")`,
+`#read("/etc/passwd")`, `\б`, `{б}`, backticks and tildes, and those must
+still pass. So the layer does not ask "does this look like syntax", it asks
+"does this look like syntax that NOTHING accounted for": every extracted
+token that matches a syntax signature must occur inside a fixture value or
+inside a declared label. Syntax that arrived as data is attributable; syntax
+that leaked out of the template is not. See `check_leaked_syntax`.
+
+The hard part of layer 4 is that healthy documents are full of rules very
+close to glyphs — an underline, a `\\midrule` immediately below a header row,
+a signature line under a name. The discriminator is not distance, it is
+which side the ink is on: a rule that is UNDER text has the word's ink only
+above it, a rule ABOVE text only below it, and a rule THROUGH text has the
+same glyph columns inked on both sides. Measured over all 22 shipped
+fixtures, both engines: zero findings. See `check_struck_through`.
 
 Why amounts are derived
 -----------------------
@@ -81,10 +131,11 @@ Usage
     check-render.py templates/latex/payslip/v1 \\
         templates/latex/payslip/v1/fixtures/basic.json /tmp/out/main.pdf
 
-Exit status: 0 = PASS, 1 = the render lost content or overran the page,
-2 = the gate itself could not run (missing expectation file, no `pdftotext`,
-unreadable PDF). 2 is a failure too — silently skipping the check is how this
-class of defect reached production once already.
+Exit status: 0 = PASS, 1 = the render lost content, leaked template syntax,
+drew a rule through its own text or overran the page, 2 = the gate itself
+could not run (missing expectation file, no `pdftotext`/`pdftoppm`, unreadable
+PDF). 2 is a failure too — silently skipping the check is how this class of
+defect reached production once already.
 
 Expectation files
 -----------------
@@ -121,6 +172,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unicodedata
 
 # --- Tolerances --------------------------------------------------------------
@@ -182,6 +234,61 @@ PRINTED_MONEY_RE = re.compile(r"^\d{1,3}( \d{3})*,\d{2}$")
 # wherever it appears in a fixture, declared or not.
 MACHINE_MONEY_RE = re.compile(r"^-?\d+\.\d{2}$")
 AMOUNT_DIRECTIVE_RE = re.compile(r"^amount\s+(\S+)\s+(-?\d+)$")
+
+# --- LAYER 3: what "template syntax" looks like once it is on the page -------
+# Applied to whole extracted TOKENS (whitespace-separated), never to raw
+# characters, because a token is the unit that can be attributed back to a
+# fixture value. Each entry is (what to call it, pattern).
+#
+# The list is deliberately short and shape-based rather than a keyword
+# dictionary: these are the sequences that CANNOT be produced by typesetting
+# Kazakh/Russian business prose, in either engine.
+SYNTAX_SIGNATURES = (
+    # Typst's `#` sigil followed by an identifier: `#let`, `#if`, `#d.employer`,
+    # `#panic`. `#1` (a LaTeX macro parameter, and a special-chars payload)
+    # deliberately does NOT match — a digit cannot start an identifier.
+    ("a Typst `#` sigil", re.compile(r"#[A-Za-z_][A-Za-z0-9_-]*")),
+    # A Typst content block `[...]`. No shipped template prints a square
+    # bracket and no shipped fixture carries one; the `] else [` leak prints
+    # four of them.
+    ("a content-block bracket", re.compile(r"[\[\]]")),
+    # inja's delimiters, for the templates still on LaTeX.
+    ("an inja delimiter", re.compile(r"\{\{|\}\}|\{%|%\}")),
+    # A LaTeX control sequence that reached the page instead of being run.
+    # `{2,}` and `[A-Za-z]` together spare the special-chars fixtures' `\б`
+    # (Cyrillic) and a lone trailing backslash.
+    ("a LaTeX control sequence", re.compile(r"\\[A-Za-z]{2,}")),
+)
+# Control words that leak WITHOUT a sigil, because the engine consumed the
+# sigil before deciding the construct was over — `] else [` is exactly this.
+# Kept narrow on purpose: `if`, `for`, `in` and `set` are ordinary English
+# words, they buy nothing (a leaked `#if` already carries its sigil) and they
+# would put the check one English-language line item away from crying wolf.
+SYNTAX_KEYWORDS = frozenset((
+    "else", "elif", "endif", "endfor", "endwhile",
+    "let", "show", "import", "include", "context",
+))
+# Punctuation a leaked keyword may pick up from the text around it.
+KEYWORD_TRIM = "[](){}.,;:!?\"'-/\\ "
+
+# --- LAYER 4: rasterisation ---------------------------------------------------
+# 200dpi is what the labour-contract conversion measured both variants of the
+# signature rule at (551.9pt through the ink vs 574.9pt in white space), and it
+# puts ~2.8px under a 1pt rule — thick enough that antialiasing cannot dissolve
+# it, cheap enough that all 22 fixtures rasterise in well under a second.
+RASTER_DPI = 200
+# "Not white". A hairline rule antialiases to mid-grey rather than black, and a
+# glyph's edge pixels do the same, so the threshold is generous; the check does
+# not rely on it being tight, it relies on the ink being on BOTH sides.
+INK_LEVEL = 200
+# How far past the word box a band must reach on BOTH sides before it counts as
+# a rule rather than as part of a glyph. An em dash is the widest single mark
+# in this corpus and it still lives inside its own word box, so any overhang at
+# all is disqualifying for glyph ink; 2pt is margin against rounding.
+RULE_OVERHANG_PT = 2.0
+# A struck-through line hits every word on it. Report enough to identify the
+# rule and stop — a hundred identical findings are not a hundred defects.
+MAX_STRIKE_FINDINGS = 8
 
 
 def die(msg):
@@ -490,36 +597,236 @@ def check_content(pdf, fixture_path, scalars, labels, unprinted, defect_labels,
     return failures, len(labels), checked
 
 
-def check_geometry(pdf, margin_pt, margin_src):
-    """LAYER 2. Returns (failures, words seen)."""
-    failures, words, page = [], 0, None
-    page_no = 0
+def word_boxes(pdf):
+    """`pdftotext -bbox`, parsed once: a list of (page width, page height,
+    [(xMin, yMin, xMax, yMax, word), ...]) in page order.
+
+    Layers 2 and 4 both need it, and running poppler twice over the same PDF
+    to build the same list twice is how the two would drift apart."""
+    pages = []
     for line in pdf_text(pdf, "-bbox").splitlines():
         found = PAGE_RE.search(line)
         if found:
-            page = (float(found.group(1)), float(found.group(2)))
-            page_no += 1
+            pages.append((float(found.group(1)), float(found.group(2)), []))
             continue
         found = WORD_RE.search(line)
-        if not found or page is None:
+        if not found or not pages:
             continue
-        words += 1
-        x_min, y_min, x_max, y_max = (float(found.group(i)) for i in range(1, 5))
-        word = found.group(5)
-        page_w, page_h = page
-        for edge, over, limit, slack in (
-                ("LEFT", margin_pt - x_min, margin_pt, SIDE_SLACK_PT),
-                ("RIGHT", x_max - (page_w - margin_pt), page_w - margin_pt, SIDE_SLACK_PT),
-                ("TOP", margin_pt - y_min, margin_pt, VERT_SLACK_PT),
-                ("BOTTOM", y_max - (page_h - margin_pt), page_h - margin_pt, VERT_SLACK_PT)):
-            if over > slack:
-                failures.append(
-                    'OFF-MARGIN  word "%s" on page %d crosses the %s margin by %.2fpt '
-                    "(box x=[%.1f,%.1f] y=[%.1f,%.1f], %s limit %.1fpt on a %.1fx%.1fpt page, "
-                    "margin %.1fpt declared at %s, tolerance %.1fpt)"
-                    % (word, page_no, edge, over, x_min, x_max, y_min, y_max, edge.lower(),
-                       limit, page_w, page_h, margin_pt, margin_src, slack))
+        pages[-1][2].append(tuple(float(found.group(i)) for i in range(1, 5))
+                            + (found.group(5),))
+    return pages
+
+
+def check_geometry(pages, margin_pt, margin_src):
+    """LAYER 2. Returns (failures, words seen)."""
+    failures, words = [], 0
+    for page_no, (page_w, page_h, page_words) in enumerate(pages, 1):
+        for x_min, y_min, x_max, y_max, word in page_words:
+            words += 1
+            for edge, over, limit, slack in (
+                    ("LEFT", margin_pt - x_min, margin_pt, SIDE_SLACK_PT),
+                    ("RIGHT", x_max - (page_w - margin_pt), page_w - margin_pt, SIDE_SLACK_PT),
+                    ("TOP", margin_pt - y_min, margin_pt, VERT_SLACK_PT),
+                    ("BOTTOM", y_max - (page_h - margin_pt), page_h - margin_pt, VERT_SLACK_PT)):
+                if over > slack:
+                    failures.append(
+                        'OFF-MARGIN  word "%s" on page %d crosses the %s margin by %.2fpt '
+                        "(box x=[%.1f,%.1f] y=[%.1f,%.1f], %s limit %.1fpt on a %.1fx%.1fpt page, "
+                        "margin %.1fpt declared at %s, tolerance %.1fpt)"
+                        % (word, page_no, edge, over, x_min, x_max, y_min, y_max, edge.lower(),
+                           limit, page_w, page_h, margin_pt, margin_src, slack))
     return failures, words
+
+
+def check_leaked_syntax(pdf, fixture_path, scalars, labels, defect_labels):
+    """LAYER 3. Returns (failures, tokens screened).
+
+    Every whitespace-separated token of the extracted text is matched against
+    SYNTAX_SIGNATURES / SYNTAX_KEYWORDS. A token that matches is a finding
+    ONLY if nothing accounts for it, where "accounts for it" means the token
+    occurs inside a fixture value or inside a declared static label.
+
+    That attribution rule is the whole design. `#panic("x")` and
+    `#read("/etc/passwd")` are shipped on purpose in every `special-chars`
+    fixture — they are the test that a value is DATA and never source — so a
+    check that flagged Typst syntax on sight would fail six healthy documents
+    on day one and be switched off by the end of the week. It is not the
+    characters that are wrong, it is characters with no provenance.
+
+    Values are joined with NUL so a token cannot be attributed to two
+    different fixture values it happens to straddle.
+
+    The escape hatch is the same one the rest of this file uses and it is
+    deliberately not a new one: a template that genuinely prints a bracket
+    declares that text in `expected.txt`, where it is ALSO cross-checked
+    against the template source by LAYER 1. Nothing can be silenced without
+    writing down, in a tracked file, what is being silenced."""
+    corpus = "\x00".join(
+        [re.sub(r"\s+", " ", fold(v)) for _p, v in scalars if isinstance(v, str)]
+        + [re.sub(r"\s+", " ", fold(text)) for text, _w in labels + defect_labels])
+
+    tokens = set()
+    lines = []
+    for mode in ("-layout", "-raw"):
+        text = fold(pdf_text(pdf, mode))
+        tokens.update(text.split())
+        lines.extend(ln.strip() for ln in text.split("\n") if ln.strip())
+
+    failures = []
+    for token in sorted(tokens):
+        kind = None
+        for name, pattern in SYNTAX_SIGNATURES:
+            if pattern.search(token):
+                kind = name
+                break
+        if kind is None and token.strip(KEYWORD_TRIM).lower() in SYNTAX_KEYWORDS:
+            kind = "a control keyword"
+        if kind is None:
+            continue
+        # `token[:-1]` is the second chance for a value the typesetter
+        # hyphenated at a line break: the fragment that reached the page is
+        # then the start of a fixture value plus a hyphen the fixture never
+        # had. Attribution must survive line breaking or it would fail
+        # documents for being long.
+        if token in corpus or (token.endswith("-") and token[:-1] in corpus):
+            continue
+        context = next((ln for ln in lines if token in ln), token)
+        if len(context) > 110:
+            at = context.find(token)
+            context = "..." + context[max(0, at - 40):at + 70] + "..."
+        failures.append(
+            'LEAKED SYNTAX  "%s" is printed in the PDF and is %s, but nothing in %s '
+            "or in the expectation files contains it — so it did not arrive as DATA, "
+            "it escaped from the template and got typeset. On the page: %r. If the "
+            "template really is meant to print it, declare it as a static label; if "
+            "a fixture value really carries it, the value is what has to say so"
+            % (token, kind, fixture_path, context))
+    return failures, len(tokens)
+
+
+def read_pgm(data, source):
+    """Parse a binary PGM (`P5`) — what `pdftoppm -gray` writes — into
+    (width, height, pixels). One byte per pixel, 0 = black, 255 = white."""
+    if data[:2] != b"P5":
+        die("%s did not produce a binary PGM (got %r)" % (source, data[:16]))
+    fields, pos = [], 2
+    while len(fields) < 3:
+        if data[pos:pos + 1] == b"#":            # PGM comments run to EOL
+            pos = data.index(b"\n", pos) + 1
+        elif data[pos:pos + 1].isspace():
+            pos += 1
+        else:
+            end = pos
+            while not data[end:end + 1].isspace():
+                end += 1
+            fields.append(int(data[pos:end]))
+            pos = end
+    pos += 1                                      # exactly one whitespace byte
+    width, height, maxval = fields
+    if maxval != 255:
+        die("%s wrote a %d-level PGM; this reader assumes 8-bit" % (source, maxval))
+    if len(data) - pos < width * height:
+        die("%s wrote a truncated PGM (%d bytes for %dx%d)"
+            % (source, len(data) - pos, width, height))
+    return width, height, data[pos:pos + width * height]
+
+
+def rasterize(pdf, page_no, workdir):
+    """One page of @p pdf as an 8-bit greyscale raster at RASTER_DPI."""
+    prefix = os.path.join(workdir, "page")
+    cmd = ["pdftoppm", "-gray", "-r", str(RASTER_DPI),
+           "-f", str(page_no), "-l", str(page_no), "-singlefile", pdf, prefix]
+    try:
+        done = subprocess.run(cmd, capture_output=True, check=False)
+    except OSError as exc:
+        die("cannot run %s: %s — the ink check cannot be skipped, install "
+            "poppler-utils (the worker-render-check image has it)"
+            % (" ".join(cmd), exc))
+    if done.returncode != 0:
+        die("%s failed (exit %d): %s" % (" ".join(cmd), done.returncode,
+                                         done.stderr.decode("utf-8", "replace").strip()))
+    with open(prefix + ".pgm", "rb") as handle:
+        return read_pgm(handle.read(), " ".join(cmd))
+
+
+def check_struck_through(pdf, pages):
+    """LAYER 4. Returns a list of human-readable failures.
+
+    A word is struck through when some row inside its box is INK all the way
+    across the box AND at least RULE_OVERHANG_PT past both of its sides — a
+    rule, since no glyph reaches outside its own word box — and the word's own
+    ink appears both above and below that band IN THE SAME PIXEL COLUMNS.
+
+    The column condition is what keeps this quiet on healthy documents. A
+    signature line under a name, a `\\midrule` under a table header and an
+    underline all have ink on one side of the rule only. Requiring the SAME
+    columns to be inked above and below additionally rejects the case where
+    the ink "above" is really the descender of the previous line clipping into
+    this word's ascent box, which is common in tight tables. Measured over all
+    22 shipped fixtures (10 templates, both engines): zero findings."""
+    failures = []
+    with tempfile.TemporaryDirectory() as workdir:
+        for page_no, (page_w, page_h, page_words) in enumerate(pages, 1):
+            if not page_words:
+                continue
+            width, height, px = rasterize(pdf, page_no, workdir)
+            scale_x, scale_y = width / page_w, height / page_h
+            overhang = max(1, int(round(RULE_OVERHANG_PT * scale_x)))
+            for x_min, y_min, x_max, y_max, word in page_words:
+                x0 = max(0, int(x_min * scale_x))
+                x1 = min(width - 1, int(x_max * scale_x + 0.999))
+                y0 = max(0, int(y_min * scale_y))
+                y1 = min(height - 1, int(y_max * scale_y + 0.999))
+                if x1 <= x0 or y1 <= y0:
+                    continue
+                ex0, ex1 = max(0, x0 - overhang), min(width - 1, x1 + overhang)
+                # The word box, row by row, and the rows a rule could be in.
+                rows = {y: px[y * width + x0:y * width + x1 + 1]
+                        for y in range(y0, y1 + 1)}
+                seed = next((y for y in range(y0, y1 + 1)
+                             if max(px[y * width + ex0:y * width + ex1 + 1]) < INK_LEVEL),
+                            None)
+                if seed is None:
+                    continue
+                # Grow the seed row into the rule's full thickness, including
+                # the antialiased rows that flank it, so they are not mistaken
+                # for the word's own ink.
+                top = seed
+                while top - 1 >= y0 and max(rows[top - 1]) < INK_LEVEL:
+                    top -= 1
+                bottom = seed
+                while bottom + 1 <= y1 and max(rows[bottom + 1]) < INK_LEVEL:
+                    bottom += 1
+                above = set()
+                for y in range(y0, top):
+                    above.update(i for i, v in enumerate(rows[y]) if v < INK_LEVEL)
+                if not above:
+                    continue
+                below = set()
+                for y in range(bottom + 1, y1 + 1):
+                    below.update(i for i, v in enumerate(rows[y]) if v < INK_LEVEL)
+                shared = above & below
+                if not shared:
+                    continue
+                if len(failures) >= MAX_STRIKE_FINDINGS:
+                    failures.append(
+                        "RULE THROUGH TEXT  ... and more words on page %d; only the "
+                        "first %d are listed, one rule strikes every word on its line"
+                        % (page_no, MAX_STRIKE_FINDINGS))
+                    return failures
+                failures.append(
+                    'RULE THROUGH TEXT  word "%s" on page %d has a rule drawn THROUGH '
+                    "it: a solid band %.2fpt thick at y=%.1f..%.1fpt runs the full "
+                    "width of the word box (x=[%.1f,%.1f] y=[%.1f,%.1f]) and past both "
+                    "sides of it, with the word's own ink above AND below it in %d "
+                    "shared pixel column(s). `pdftotext` cannot see this — the glyphs "
+                    "extract perfectly and every other layer passes. Rasterised at "
+                    "%ddpi. In Typst a `line()` inside a grid or table contributes NO "
+                    "height, so its row collapses and the rule lands on the rows above"
+                    % (word, page_no, (bottom - top + 1) / scale_y, top / scale_y,
+                       (bottom + 1) / scale_y, x_min, x_max, y_min, y_max,
+                       len(shared), RASTER_DPI))
+    return failures
 
 
 def main(argv):
@@ -570,8 +877,15 @@ def main(argv):
     content, label_count, value_count = check_content(
         pdf, fixture_path, scalars, labels, unprinted, defect_labels,
         declared_tiyn, template_path, source)
-    content = oracle + content
-    geometry, words = check_geometry(pdf, margin_pt, margin_src)
+    # LAYER 3 sits with the content findings: a construct that leaked into the
+    # body is a defect in what the page SAYS, not in where it sits.
+    syntax, tokens = check_leaked_syntax(
+        pdf, fixture_path, scalars, labels, defect_labels)
+    content = oracle + content + syntax
+    pages = word_boxes(pdf)
+    geometry, words = check_geometry(pages, margin_pt, margin_src)
+    # LAYER 4 needs the same word boxes and a raster of the same pages.
+    geometry += check_struck_through(pdf, pages)
     if words == 0:
         content.append("EMPTY PDF  pdftotext extracted no words at all from %s" % pdf)
 
@@ -587,8 +901,9 @@ def main(argv):
             print("  " + failure, file=sys.stderr)
         return 1
     print("PASS %s — %d label(s), %d value(s) (%d amount(s) derived from tiyn), "
-          "%d word box(es) inside the %.1fpt margin box%s"
-          % (name, label_count, value_count, len(amounts), words, margin_pt,
+          "%d token(s) screened for leaked template syntax, %d word box(es) inside "
+          "the %.1fpt margin box and none struck through by a rule%s"
+          % (name, label_count, value_count, len(amounts), tokens, words, margin_pt,
              ", %d known defect(s) NOT checked" % len(defects) if defects else ""))
     return 0
 
