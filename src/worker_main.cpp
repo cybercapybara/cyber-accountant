@@ -253,7 +253,7 @@ void worker_loop(const std::string& worker_id, const std::vector<std::string>& t
  *        scripts/render-templates.sh, which the `template-render` CI job
  *        runs against the worker image (the only place a document engine
  *        lives — see docker/Dockerfile) for every fixture under every
- *        template version directory in templates/latex.
+ *        template version directory in templates/docs.
  * @return 0 and prints "PASS ..." on success; 1 and prints "FAIL ...: <why>"
  *         to stderr otherwise.
  */

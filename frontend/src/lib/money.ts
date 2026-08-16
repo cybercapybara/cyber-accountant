@@ -39,7 +39,7 @@ export function formatTiyn(tiyn: number): string {
 /**
  * Render a signed tiyn integer as a "12 345,67"-style string — the money
  * format the docgen LaTeX templates expect for `price`/`amount`/`total`/etc
- * (see the schema.json and basic.json fixtures under templates/latex/ for
+ * (see the schema.json and basic.json fixtures under templates/docs/ for
  * each template version: space-grouped thousands, comma decimal separator).
  * Manual digit-grouping
  * rather than `toLocaleString('ru-RU')` — Intl's ru-RU grouping separator is

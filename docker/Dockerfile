@@ -278,7 +278,7 @@ COPY --from=builder --chown=appuser:appuser /app/build/${WORKER_BINARY} /app/
 COPY --from=builder --chown=appuser:appuser /app/config /app/config/
 COPY --from=builder --chown=appuser:appuser /app/migrations /app/migrations/
 # Worker jobs can send mail too — same templates as the API runtime. Also
-# carries templates/latex (docgen) — the templates the worker actually
+# carries templates/docs (docgen) — the templates the worker actually
 # compiles PDFs from.
 COPY --from=builder --chown=appuser:appuser /app/templates /app/templates/
 

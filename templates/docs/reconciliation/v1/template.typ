@@ -72,7 +72,7 @@
 // false on one fixture and true on the other.
 // `\par`/`\noindent` have NO counterpart here and are simply gone: a Typst
 // table is block-level and cannot be typeset inline, so the whole "tables
-// start their own paragraph" discipline (templates/latex/README.md) that the
+// start their own paragraph" discipline (templates/docs/README.md) that the
 // LaTeX original needed two comment blocks to explain does not exist.
 *Сторона А:* #d.party_a.name, БИН/ИИН #d.party_a.identifier \
 #if d.party_a.address != "" [#phantom[*Сторона А:* ]#d.party_a.address \ ]

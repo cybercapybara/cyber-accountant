@@ -42,7 +42,7 @@ gates by construction. Hand-rolled versions usually don't.
    table). gitleaks gates CI; `make prod-check` gates the prod profile.
 8. **Commits:** conventional commits, no AI-attribution trailers.
 9. **Document templates carry their own expectations:** every
-   `templates/latex/<slug>/v<N>/` needs an `expected.txt` listing the static
+   `templates/docs/<slug>/v<N>/` needs an `expected.txt` listing the static
    labels it prints and its `margin <N>mm`, plus optional per-fixture
    `fixtures/<name>.expected.txt`. `scripts/check-render.py` fails if it is
    missing — a template with no declared expectations cannot be gated. It
@@ -62,7 +62,7 @@ gates by construction. Hand-rolled versions usually don't.
    .amount`, API responses and the ФНО XML (which uses neither formatter:
    `FnoXml::tenge_amount`, whole tenge) keep `1234.56`. In a fixture a printed
    amount is never written out at all — it is declared `amount <path> <tiyn>`
-   and derived (invariant 9, and `templates/latex/README.md`).
+   and derived (invariant 9, and `templates/docs/README.md`).
 
 ## Gate sequence — run cheapest-first before pushing
 
@@ -83,7 +83,7 @@ it produced**. It first asserts the pinned engine (see "Document engines"
 below), then runs three steps:
 
 1. `scripts/render-templates.sh` — compiles every
-   `templates/latex/*/v*/fixtures/*.json` through the worker's
+   `templates/docs/*/v*/fixtures/*.json` through the worker's
    `--render-template` mode, i.e. the real render pipeline. A nonzero engine
    exit fails the job, and that is **all** it can catch: Typst clips silently,
    exits 0 and writes no transcript, so there is nothing to grep. The

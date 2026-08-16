@@ -327,7 +327,7 @@ export function buildVacationCreate(values: VacationValues): VacationCreate {
 // ── generate-document free-text extras ──────────────────────────────────────
 
 /**
- * templates/latex/hr_order/v1/schema.json requires `director` on top of
+ * templates/docs/hr_order/v1/schema.json requires `director` on top of
  * everything the server derives; `reason` and `details` are optional.
  */
 export const hrOrderDocumentSchema = z.object({
@@ -348,7 +348,7 @@ export function buildHrOrderDocumentExtra(values: HrOrderDocumentValues): Record
 }
 
 /**
- * templates/latex/labor_contract/v1/schema.json requires `work_schedule`
+ * templates/docs/labor_contract/v1/schema.json requires `work_schedule`
  * and `employer.director`; `probation_months` and the two addresses are
  * optional. `employer`/`employee` are sent as partial objects — the merge
  * patch fills in name/БИН and ФИО/ИИН/должность underneath, and re-sending

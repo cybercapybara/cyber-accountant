@@ -107,7 +107,7 @@ std::vector<std::string> split_path(const std::string& path) {
 ///    machine form coming back, and the explicit shape check below names it.
 ///
 /// It ran nothing at all between the ФНО 300 conversion and this commit: the
-/// guard probed `templates/latex/fno_300/v1/template.tex`, which that
+/// guard probed `templates/docs/fno_300/v1/template.tex`, which that
 /// conversion deleted, so the whole sweep skipped — silently, repo-wide, on
 /// the one test that stands between the printed form and the machine form.
 /// The guard now asks the template TREE (tests/repo_templates.hpp), which no

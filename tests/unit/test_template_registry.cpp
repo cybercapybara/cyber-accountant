@@ -368,7 +368,7 @@ TEST(NormalizeInputTest, FillsMissingOptionalFieldsOfRealInvoiceSchema) {
 TEST(NormalizeInputTest, RealInvoiceTemplateGetsEmptyOptionalsForItsConditionalBlocks) {
     REQUIRE_REPO_TEMPLATE("invoice");
 
-    Docgen::TemplateRegistry registry;  // default root: "templates/latex"
+    Docgen::TemplateRegistry registry;  // default root: "templates/docs"
     auto info = registry.latest("invoice");
     ASSERT_TRUE(info.has_value());
 
@@ -681,7 +681,7 @@ TEST(ShippedTemplatesTest, TheSameTenDocumentTypesShip) {
     // conversion committed one level too high) is dropped by list() in
     // silence, and would otherwise show up only as a 404 in production.
     std::size_t slug_dirs = 0;
-    for (const auto& entry : fs::directory_iterator("templates/latex")) {
+    for (const auto& entry : fs::directory_iterator("templates/docs")) {
         if (entry.is_directory())
             ++slug_dirs;
     }
@@ -731,7 +731,7 @@ TEST(ShippedTemplatesTest, TheSameTenDocumentTypesShip) {
 TEST(ShippedTemplatesTest, TheInjectionPayloadStaysDataInEveryTemplate) {
     REQUIRE_REPO_TEMPLATE_TREE();
 
-    Docgen::TemplateRegistry registry;  // default root: "templates/latex"
+    Docgen::TemplateRegistry registry;  // default root: "templates/docs"
     const auto templates = registry.list();
     ASSERT_FALSE(templates.empty());
 
@@ -798,7 +798,7 @@ TEST(ShippedTemplatesTest, TheInjectionPayloadStaysDataInEveryTemplate) {
 // Checked statically here (no engine, no services) because the fixture is a
 // file in the repo; the compile that turns it into evidence happens in
 // `template-render` (scripts/render-templates.sh + scripts/check-render.py).
-// See templates/latex/README.md.
+// See templates/docs/README.md.
 TEST(ShippedTemplatesTest, EveryTemplateShipsAHostileSpecialCharsFixture) {
     REQUIRE_REPO_TEMPLATE_TREE();
 

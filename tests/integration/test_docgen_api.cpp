@@ -129,7 +129,7 @@ protected:
         return TestHelpers::authed_json(p, body, method);
     }
 
-    /// A valid REQUEST input for templates/latex/invoice/v1's schema.json.
+    /// A valid REQUEST input for templates/docs/invoice/v1's schema.json.
     /// P3: the caller supplies the integer `total_tiyn` ONLY — `total` and
     /// `total_words` are derived by the server, and sending either is a 422
     /// (GenerateRejectsClientSuppliedTotalWords). What the document ends up
@@ -160,7 +160,7 @@ protected:
         return input;
     }
 
-    /// A valid REQUEST input for templates/latex/tax_invoice/v1 minus its
+    /// A valid REQUEST input for templates/docs/tax_invoice/v1 minus its
     /// `totals` object, which each test supplies itself — the three integer
     /// totals are the subject of those tests.
     static json tax_invoice_input_without_totals() {
@@ -489,7 +489,7 @@ TEST_F(DocgenApiTest, GenerateFormatsAllThreeTaxInvoiceTotalsFromIntegers) {
               "Сто четыре тысячи четыреста тенге 00 тиын");
 }
 
-// The invoice VAT hole, end to end. templates/latex/invoice/v1's template
+// The invoice VAT hole, end to end. templates/docs/invoice/v1's template
 // prints «НДС (<vat_rate>): <vat_amount> ₸» directly above «Итого к оплате:
 // <total> ₸» — adjacent lines of the SAME issued PDF, in either engine's
 // spelling of them. While vat_amount was client-authored, those two lines

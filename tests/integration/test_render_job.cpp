@@ -152,7 +152,7 @@ protected:
         return created.id;
     }
 
-    /// A valid input for templates/latex/invoice/v1's schema.json.
+    /// A valid input for templates/docs/invoice/v1's schema.json.
     static json valid_invoice_input() {
         return json{
             {"number", "1"},
@@ -165,7 +165,7 @@ protected:
                                {"unit", "шт"},
                                {"price", "1000.00"},
                                {"amount", "1000.00"}}})},
-            // total_tiyn is REQUIRED by templates/latex/invoice/v1/schema.json
+            // total_tiyn is REQUIRED by templates/docs/invoice/v1/schema.json
             // since P3, and render_and_compile() runs
             // TemplateRegistry::validate() strictly BEFORE normalize_input()
             // — so a missing integer is a hard failure here, never a
@@ -322,7 +322,7 @@ TEST_F(RenderJobTest, RenderJobEngineFailureFails) {
 // primitive if unchecked). TemplateRegistry::latest()'s allowlist must
 // reject it before any filesystem access, and the job must throw (document
 // stays draft) exactly like any other "no such template" failure — not
-// silently succeed, and not read/write outside templates/latex.
+// silently succeed, and not read/write outside templates/docs.
 TEST_F(RenderJobTest, RenderJobRejectsTraversalSlug) {
     use_succeeding_engine_stub();  // never reached — slug is rejected first
     auto org_id = make_org("111280000004");

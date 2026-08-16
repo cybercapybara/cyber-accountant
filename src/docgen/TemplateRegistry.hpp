@@ -4,8 +4,8 @@
  *        compiles each one, and validates input JSON against their JSON
  *        Schema.
  *
- * Layout convention (design spec, Task 9's `templates/latex/invoice/v1/` is
- * the reference implementation): `templates/latex/<slug>/v<N>/` holding
+ * Layout convention (design spec, Task 9's `templates/docs/invoice/v1/` is
+ * the reference implementation): `templates/docs/<slug>/v<N>/` holding
  * `template.typ` + `schema.json` (+ one JSON fixture per case under
  * `fixtures/`, e.g. `fixtures/happy_path.json`, used by
  * `scripts/render-templates.sh`, not read by this class). `<N>` is a plain
@@ -56,17 +56,17 @@ struct TemplateInfo {
     std::string slug;
     int version = 0;                    ///< Numeric part of the `vN` directory name.
     std::string version_str;            ///< The `vN` directory name as it appears on disk.
-    std::filesystem::path dir;          ///< `templates/latex/<slug>/<vN>/`
+    std::filesystem::path dir;          ///< `templates/docs/<slug>/<vN>/`
     std::filesystem::path source_path;  ///< `template.typ`
     Engine engine = Engine::kTypst;
     json schema;
 };
 
-/// Scans a `templates/latex/` tree (default root, overridable for tests) for
+/// Scans a `templates/docs/` tree (default root, overridable for tests) for
 /// `<slug>/v<N>/` directories.
 class TemplateRegistry {
 public:
-    explicit TemplateRegistry(std::filesystem::path root = "templates/latex") : root_(std::move(root)) {}
+    explicit TemplateRegistry(std::filesystem::path root = "templates/docs") : root_(std::move(root)) {}
 
     /**
      * @brief Resolve the highest-version template for @p slug.
@@ -214,7 +214,7 @@ public:
      *       test truthiness. Same for an optional *object* filled here (e.g.
      *       reconciliation's `opening_balance`): such templates check a
      *       representative leaf value instead of the whole dictionary — see
-     *       `templates/latex/reconciliation/v1/template.typ`.
+     *       `templates/docs/reconciliation/v1/template.typ`.
      */
     static json normalize_input(const json& schema, json input) {
         if (!input.is_object())

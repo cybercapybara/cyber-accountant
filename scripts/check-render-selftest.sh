@@ -49,7 +49,7 @@
 set -uo pipefail
 
 WORKER_BIN="${WORKER_BIN:-/app/cyber_accountant_worker}"
-TEMPLATES_ROOT="${TEMPLATES_ROOT:-templates/latex}"
+TEMPLATES_ROOT="${TEMPLATES_ROOT:-templates/docs}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CHECK_RENDER="${CHECK_RENDER:-$SCRIPT_DIR/check-render.py}"
 
@@ -248,7 +248,7 @@ PY
 # --- driver ------------------------------------------------------------------
 
 # render <tree> <slug> <fixture> <outdir> — run the real pipeline with the
-# tree's own templates/latex (TemplateRegistry resolves it relative to cwd).
+# tree's own templates/docs (TemplateRegistry resolves it relative to cwd).
 render() {
     local tree="$1" slug="$2" fixture="$3" outdir="$4"
     mkdir -p "$outdir"
@@ -297,7 +297,7 @@ run_case() {
     local label="$1" slug="$2" fixture_name="$3" mutator="$4"
     shift 4
     local tree="$TMP/$label"
-    local latex="$tree/templates/latex"
+    local latex="$tree/templates/docs"
     mkdir -p "$tree/templates"
     cp -R "$TEMPLATES_ABS" "$latex"
     local vdir fixture out output status

@@ -5,7 +5,7 @@
  *
  * THE DEFECT. Three separate regression pins died the same silent death: each
  * decided whether it could run by probing for ONE ENGINE'S SOURCE FILE —
- * `templates/latex/<slug>/v1/template.tex`. The Typst migration deletes that
+ * `templates/docs/<slug>/v1/template.tex`. The Typst migration deletes that
  * file per template, so the probe stopped finding it and the test skipped.
  * `GTEST_SKIP` is not a failure: the suite stayed green while the test ran
  * nothing. The worst of the three was
@@ -26,7 +26,7 @@
  *
  * A SKIP IS LOUD, AND NARROW. The only environment that genuinely cannot run
  * these tests is one with no repo checkout under the working directory at all
- * — `templates/latex` simply is not there. That skips, with the working
+ * — `templates/docs` simply is not there. That skips, with the working
  * directory named so the message is actionable instead of decorative. A
  * checkout that IS reachable but has lost the template asked for is a HARD
  * FAILURE: a renamed slug, a conversion committed one directory too high, a
@@ -54,7 +54,7 @@ namespace TestTemplates {
 /// The docgen template root, relative to the working directory. Still named
 /// `latex` though nothing under it is LaTeX any more — it is a path in the
 /// repo, not an engine claim, and renaming it is its own task.
-inline constexpr const char* kRoot = "templates/latex";
+inline constexpr const char* kRoot = "templates/docs";
 
 /// Is a repo checkout reachable from the working directory at all? This is
 /// the ONE question a skip may be based on.
@@ -70,7 +70,7 @@ inline bool tree_reachable() {
     return std::filesystem::is_directory(kRoot, ec);
 }
 
-/// `templates/latex/<slug>/<version>` — the directory a probe must ask about,
+/// `templates/docs/<slug>/<version>` — the directory a probe must ask about,
 /// never a file inside it.
 inline std::filesystem::path version_dir(const std::string& slug, const std::string& version = "v1") {
     return std::filesystem::path(kRoot) / slug / version;

@@ -332,7 +332,7 @@ jobs:
 
   template-render:
     runs-on: ubuntu-latest
-    # Actually compiles every templates/latex/*/v*/fixtures/*.json through
+    # Actually compiles every templates/docs/*/v*/fixtures/*.json through
     # Typst on the worker image — the only stage carrying a document engine
     # (docker/Dockerfile's worker-runtime stage). The unit/integration
     # buckets stub DOCGEN_TYPST_CMD (tests/integration/test_render_job.cpp),
@@ -474,7 +474,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Prove the gate bites (four deliberate breakages)
+      - name: Prove the gate bites (six deliberate breakages)
         if: steps.changes.outputs.docgen == 'true'
         # Breaks payslip, fno_910, tax_invoice and the fno_300 FIXTURE on
         # purpose — amounts column emptied, one amount truncated, table widened

@@ -8,7 +8,7 @@
  * content and never source: the literal string
  * `#panic("x") *bold* #read("/etc/passwd")` is typeset character for
  * character (verified in .superpowers/sdd/typst-migration-spike.md §3 and
- * pinned by templates/latex/<slug>/v1/fixtures/special-chars.json, whose
+ * pinned by templates/docs/<slug>/v1/fixtures/special-chars.json, whose
  * values carry exactly that payload and must appear verbatim in the rendered
  * PDF). The slug is spelled out rather than globbed on purpose: a literal
  * `*` before the `/` would close this comment block.

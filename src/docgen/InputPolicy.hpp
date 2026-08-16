@@ -108,7 +108,7 @@ struct DerivedAmount {
 
 inline std::optional<DerivedAmount> derived_amount_for(const std::string& slug) {
     // Счёт и АВР печатают строку НДС над строкой итога (см.
-    // templates/latex/invoice/v1/template.typ и тот же блок у avr) — поэтому у
+    // templates/docs/invoice/v1/template.typ и тот же блок у avr) — поэтому у
     // них есть необязательная часть. Накладная НДС не печатает вовсе, и её
     // схема поля НДС не объявляет.
     if (slug == "invoice" || slug == "avr")

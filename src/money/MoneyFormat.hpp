@@ -1,7 +1,7 @@
 /**
  * @file MoneyFormat.hpp
  * @brief Целые тиыны -> «12 345,67»: тот денежный формат, который ждут
- *        docgen-шаблоны (см. schema.json и фикстуры под templates/latex/).
+ *        docgen-шаблоны (см. schema.json и фикстуры под templates/docs/).
  * @details Это НЕ Ledger::format_tiyn (src/ledger/JournalService.hpp): та
  *          даёт машинную «1234.56» для journal_lines.amount и API, эта —
  *          человеческую строку для печати. Разделитель тысяч — обычный

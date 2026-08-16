@@ -2,7 +2,7 @@
 
 Every template here is **Typst**. The XeLaTeX path, the inja templating layer
 and the LaTeX escaper were deleted once the last `template.tex` was converted.
-The directory name `templates/latex/` is historical — it is a path stored in
+The directory name `templates/docs/` is historical — it is a path stored in
 nothing but this repo's scripts, and it is renamed in its own commit.
 
 Each subdirectory is one **template slug** (a document type: `invoice`,
@@ -14,7 +14,7 @@ just adding files in the right layout.
 ## Layout
 
 ```
-templates/latex/<slug>/v<N>/
+templates/docs/<slug>/v<N>/
 ├── template.typ         # Typst source, reads its data from input.json
 ├── schema.json          # JSON Schema (draft-07) the input JSON must satisfy
 ├── expected.txt         # page margin + the static labels this template prints
@@ -50,7 +50,7 @@ silently skipped template.
   static labels the template prints. Without it the gate refuses to run, since
   it cannot tell a lost column from a template that never had one.
 
-Reference implementation: `templates/latex/invoice/v1/`.
+Reference implementation: `templates/docs/invoice/v1/`.
 
 ## Writing a template
 

@@ -129,8 +129,8 @@ Usage
 -----
     check-render.py <template-dir> <fixture.json> <rendered.pdf>
 
-    check-render.py templates/latex/payslip/v1 \\
-        templates/latex/payslip/v1/fixtures/basic.json /tmp/out/main.pdf
+    check-render.py templates/docs/payslip/v1 \\
+        templates/docs/payslip/v1/fixtures/basic.json /tmp/out/main.pdf
 
 Exit status: 0 = PASS, 1 = the render lost content, leaked template syntax,
 drew a rule through its own text or overran the page, 2 = the gate itself

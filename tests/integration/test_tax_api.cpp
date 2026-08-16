@@ -544,7 +544,7 @@ protected:
         return static_cast<long>(Cache::get().get_client().llen(Jobs::queue_key(kRenderJobType)));
     }
 
-    /// The free-text fields templates/latex/fno_910/v1/schema.json requires
+    /// The free-text fields templates/docs/fno_910/v1/schema.json requires
     /// and the database cannot hold (see TaxController.hpp's header).
     /// `tax_words` is NOT among them since P3: the amount in words is
     /// derived from the calculation's own total_tiyn, and supplying it is a

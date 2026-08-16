@@ -3421,7 +3421,7 @@ export interface paths {
         };
         /**
          * List registered docgen templates (slug, version, schema)
-         * @description Scans templates/latex/ (Docgen::TemplateRegistry::list()). Read-only, but NOT ungated: the template registry is the shape of the primary documents a role may not see, and "—" in the §5.3 matrix means invisible, not read-only — so this requires `documents`/read and answers 403 org_role_denied without it (the `hr` role, for one).
+         * @description Scans templates/docs/ (Docgen::TemplateRegistry::list()). Read-only, but NOT ungated: the template registry is the shape of the primary documents a role may not see, and "—" in the §5.3 matrix means invisible, not read-only — so this requires `documents`/read and answers 403 org_role_denied without it (the `hr` role, for one).
          */
         get: {
             parameters: {

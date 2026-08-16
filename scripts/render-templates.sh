@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # The `template-render` CI job: renders every
-# templates/latex/<slug>/v<N>/fixtures/*.json through the worker binary's
+# templates/docs/<slug>/v<N>/fixtures/*.json through the worker binary's
 # `--render-template <slug> <fixture> <outdir>` CLI mode (src/worker_main.cpp),
 # i.e. the exact same validate -> normalize -> write_typst_inputs -> compile
 # pipeline the "docgen.render" job runs (src/docgen/RenderJob.hpp) — and then
@@ -45,14 +45,14 @@
 # Env overrides:
 #   WORKER_BIN       path to the worker binary (default: /app/cyber_accountant_worker,
 #                     matching the worker image's layout)
-#   TEMPLATES_ROOT   templates root to scan (default: templates/latex, relative to cwd)
+#   TEMPLATES_ROOT   templates root to scan (default: templates/docs, relative to cwd)
 #   CHECK_RENDER     path to the PDF gate (default: alongside this script)
 #   KEEP_RENDERS     directory to keep every rendered main.typ/json/pdf in
 #                     (default: a temp dir, deleted on exit)
 set -uo pipefail
 
 WORKER_BIN="${WORKER_BIN:-/app/cyber_accountant_worker}"
-TEMPLATES_ROOT="${TEMPLATES_ROOT:-templates/latex}"
+TEMPLATES_ROOT="${TEMPLATES_ROOT:-templates/docs}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CHECK_RENDER="${CHECK_RENDER:-$SCRIPT_DIR/check-render.py}"
 
@@ -95,7 +95,7 @@ lost=0
 shopt -s nullglob
 for fixture in "$TEMPLATES_ROOT"/*/v*/fixtures/*.json; do
     count=$((count + 1))
-    # fixture = templates/latex/<slug>/v<N>/fixtures/<name>.json
+    # fixture = templates/docs/<slug>/v<N>/fixtures/<name>.json
     version_dir="$(dirname "$(dirname "$fixture")")"
     slug="$(basename "$(dirname "$version_dir")")"
     outdir="$WORKDIR/${fixture//\//_}"
@@ -141,7 +141,7 @@ if [[ "$lost" -gt 0 ]]; then
     echo "  Each finding above names the fixture and the exact value, label or word." >&2
     echo "  A value that is in the fixture but not in the PDF is a document that would" >&2
     echo "  have been handed to an employee or the КГД with a number missing from it." >&2
-    echo "  See scripts/check-render.py and templates/latex/README.md." >&2
+    echo "  See scripts/check-render.py and templates/docs/README.md." >&2
 fi
 
 echo "render-templates: $count fixture(s) checked"

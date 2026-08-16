@@ -9,7 +9,7 @@ import { toTiyn } from '@/lib/money';
  * P1 deliberately skips a generic JSON-Schema-driven form engine (YAGNI,
  * per the task brief): GET /api/v1/doc-templates returns each template's
  * draft-07 JSON Schema, but there are only five registered slugs
- * (templates/latex/{invoice,avr,waybill,tax_invoice,reconciliation}/v1/
+ * (templates/docs/{invoice,avr,waybill,tax_invoice,reconciliation}/v1/
  * schema.json) and their shapes are stable, so each gets its own typed
  * zod schema + form component in pages/GenerateDocument.tsx instead.
  *
@@ -51,7 +51,7 @@ const dateDmySchema = z
 /**
  * VAT rate as entered, e.g. "16" or "16%" — parsed by parseVatRatePercent
  * below. The shape mirrors the `vat_rate` pattern in
- * templates/latex/{invoice,avr}/v1/schema.json exactly, so a rate this form
+ * templates/docs/{invoice,avr}/v1/schema.json exactly, so a rate this form
  * accepts is never one the server answers with a 422: at most two digits, an
  * optional one-or-two-place decimal part, an optional percent sign, and
  * NOTHING else. The narrowness is a security property, not tidiness — the
