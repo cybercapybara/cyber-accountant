@@ -71,7 +71,8 @@ CI additionally runs clang-tidy, ASan+UBSan (+TSAN), gitleaks, Trivy,
 helm-render and the OpenAPI-drift gate. `template-render` renders every
 template fixture on the worker image (`worker-render-check` target — the
 production worker image plus `pdftotext`/`python3`) and then **gates the PDF
-it produced**, in three steps:
+it produced**. It first asserts the pinned engine (see "Document engines"
+below), then runs three steps:
 
 1. `scripts/render-templates.sh` — compiles every
    `templates/latex/*/v*/fixtures/*.json` through the worker's
@@ -100,6 +101,25 @@ it produced**, in three steps:
 
 It triggers on changes under `templates/**`, `src/docgen/**`,
 `docker/Dockerfile` or the three gate scripts.
+
+## Document engines
+
+The worker image (`docker/Dockerfile`, stage `worker-runtime`) is the only
+image with a document engine, and it currently carries **two**: TeX Live
+(XeLaTeX, what all ten templates render through today) and **Typst, pinned to
+0.15.1** at `/usr/local/bin/typst`. Both stay until the last template is
+converted (`.superpowers/sdd/typst-migration-spike.md`); do not drop a TeX
+package before then.
+
+- The Typst pin is not decorative. Typst is pre-1.0 and every minor release
+  changes layout, so the version is a build arg (`TYPST_VERSION`), the
+  download is checksum-verified against `TYPST_SHA256`, and `template-render`
+  fails if `typst --version` on the built image is not 0.15.1. Bumping it is a
+  deliberate act with a template-version consequence, never a drive-by.
+- Neither engine ships fonts. Both find **Noto Sans** — the family with the
+  Kazakh glyph coverage (ә ғ қ ң ө ұ ү һ і) — from `fonts-noto-core` in
+  `/usr/share/fonts`, XeLaTeX via fontspec and Typst by scanning that
+  directory. The same CI step asserts `typst fonts` still lists it.
 
 ## Don'ts
 

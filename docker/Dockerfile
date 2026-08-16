@@ -232,6 +232,53 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-core \
     && rm -rf /var/lib/apt/lists/*
 
+# Typst — the document engine the docgen templates are migrating to
+# (.superpowers/sdd/typst-migration-spike.md). Installed ALONGSIDE TeX Live
+# for the duration of the migration: TemplateRegistry picks the engine per
+# template directory (template.typ -> typst, template.tex -> xelatex), so
+# both must exist until the tenth template is converted. TeX Live is removed
+# in its own commit once none remains.
+#
+# Pinned, never `latest`: Typst is pre-1.0 and every minor release carries
+# breaking changes and removals. A document rendered from v1 must still
+# re-render for an audit years from now, so the engine version is recorded on
+# every rendered document version (document_versions.render_engine) and an
+# engine bump is a v<N+1> template event.
+#
+# The pin is enforced twice: TYPST_SHA256 is the sha256 of the published
+# release tarball (`curl -sL <url> | shasum -a 256`), so a retagged or
+# tampered asset fails the build rather than silently changing layout; and
+# the `template-render` CI job asserts `typst --version` on the built image.
+# Typst prints `typst <version> (<8-char commit>)` — the commit in the 0.15.1
+# asset is 9dfd3a08, i.e. the v0.15.1 tag commit.
+#
+# No font dependency of its own: Typst discovers system fonts by scanning
+# /usr/share/fonts (fontdb load_system_fonts, no fontconfig needed), which is
+# where fonts-noto-core above puts Noto Sans — the same family the .tex
+# templates set, with the Kazakh glyph coverage (ә ғ қ ң ө ұ ү һ і) the spike
+# verified.
+#
+# One static-pie musl binary, no runtime deps, ~53 MiB installed. amd64 only:
+# build-staging is linux/amd64 and nothing builds this image locally.
+ARG TYPST_VERSION=0.15.1
+ARG TYPST_SHA256=a6d077d0a95eed5a2eba715b2dae06be954f624ccbf85758a03f389ded33118c
+ARG TARGETARCH
+RUN set -eux; \
+    if [ "${TARGETARCH:-amd64}" != "amd64" ]; then \
+        echo "typst install: unsupported TARGETARCH=${TARGETARCH} (amd64 only)" >&2; exit 1; \
+    fi; \
+    apt-get update && apt-get install -y --no-install-recommends xz-utils; \
+    curl -fsSL -o /tmp/typst.tar.xz \
+        "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-x86_64-unknown-linux-musl.tar.xz"; \
+    echo "${TYPST_SHA256}  /tmp/typst.tar.xz" | sha256sum -c -; \
+    tar -xJf /tmp/typst.tar.xz -C /usr/local/bin --strip-components=1 \
+        "typst-x86_64-unknown-linux-musl/typst"; \
+    rm -f /tmp/typst.tar.xz; \
+    chmod 0755 /usr/local/bin/typst; \
+    apt-get purge -y xz-utils && apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/*; \
+    typst --version
+
 COPY --from=builder --chown=appuser:appuser /app/build/${WORKER_BINARY} /app/
 COPY --from=builder --chown=appuser:appuser /app/config /app/config/
 COPY --from=builder --chown=appuser:appuser /app/migrations /app/migrations/

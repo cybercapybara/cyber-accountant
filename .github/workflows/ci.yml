@@ -403,6 +403,31 @@ jobs:
             type=registry,ref=ghcr.io/${{ github.repository }}/builder:cache
           cache-to: type=gha,mode=max
 
+      - name: Assert the pinned engine versions
+        if: steps.changes.outputs.docgen == 'true'
+        # The engine version is recorded on every rendered document version
+        # (document_versions.render_engine) and is part of the render's
+        # reproducibility contract. Typst is pre-1.0: a silent bump would
+        # change layout under templates already in production use.
+        #
+        # `typst --version` prints `typst <version> (<8-char commit>)` — the
+        # commit is part of the output, not optional, so this matches the
+        # version token exactly and lets the commit follow it. 0.15.1 is tag
+        # commit 9dfd3a08.
+        #
+        # The font check is the second half of the contract: Typst carries no
+        # fonts of its own and finds Noto Sans only by scanning
+        # /usr/share/fonts, where fonts-noto-core (installed for XeLaTeX) puts
+        # it. If that ever stops being true, the templates lose their Cyrillic
+        # and Kazakh glyphs, so it fails here rather than in a rendered PDF.
+        run: |
+          docker run --rm --entrypoint typst \
+            cyber-accountant-template:worker-render --version | tee /tmp/typst-version
+          grep -qE '^typst 0\.15\.1( \(|$)' /tmp/typst-version
+          docker run --rm --entrypoint typst \
+            cyber-accountant-template:worker-render fonts | tee /tmp/typst-fonts
+          grep -qx 'Noto Sans' /tmp/typst-fonts
+
       - name: Render every fixture and gate the PDF (content + geometry)
         if: steps.changes.outputs.docgen == 'true'
         run: |
