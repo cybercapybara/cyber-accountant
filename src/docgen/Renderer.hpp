@@ -167,7 +167,7 @@ inline void escape_tree(const json& root_schema, const json& schema_node, json& 
 }  // namespace detail
 
 /**
- * @brief Render @p info's `template.tex` against @p input.
+ * @brief Render @p info's LaTeX source (`info.source_path`) against @p input.
  * @details Deep-copies @p input, LaTeX-escapes its string leaves — every one
  *          of them except the control literals @p info's schema pins with an
  *          `enum` — then renders the copy through inja. @p input itself is
@@ -179,9 +179,9 @@ inline std::string render_tex(const TemplateInfo& info, const json& input) {
     json escaped = input;
     detail::escape_tree(info.schema, info.schema, escaped);
 
-    std::ifstream tex_file(info.tex_path, std::ios::binary);
+    std::ifstream tex_file(info.source_path, std::ios::binary);
     if (!tex_file)
-        throw std::runtime_error("render_tex: cannot open " + info.tex_path.string());
+        throw std::runtime_error("render_tex: cannot open " + info.source_path.string());
     std::ostringstream ss;
     ss << tex_file.rdbuf();
     const std::string tpl_source = ss.str();

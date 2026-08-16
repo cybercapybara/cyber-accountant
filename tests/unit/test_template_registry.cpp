@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -54,6 +55,18 @@ protected:
         const fs::path dir = root_ / slug / version_dir;
         fs::create_directories(dir);
         std::ofstream(dir / "template.tex") << tex;
+        std::ofstream(dir / "schema.json") << schema.dump();
+    }
+
+    /// Write templates/<slug>/<version_dir>/template.typ + schema.json — the
+    /// Typst sibling of write_version(), for the engine-discovery tests.
+    void write_typst_version(const std::string& slug,
+                             const std::string& version_dir,
+                             const std::string& typ = "#let d = json(\"input.json\")",
+                             const json& schema = json{{"type", "object"}}) {
+        const fs::path dir = root_ / slug / version_dir;
+        fs::create_directories(dir);
+        std::ofstream(dir / "template.typ") << typ;
         std::ofstream(dir / "schema.json") << schema.dump();
     }
 };
@@ -124,7 +137,63 @@ TEST_F(TemplateRegistryTest, LatestFindsSingleVersion) {
     EXPECT_EQ(info->slug, "invoice");
     EXPECT_EQ(info->version, 1);
     EXPECT_EQ(info->version_str, "v1");
-    EXPECT_EQ(info->tex_path, root_ / "invoice" / "v1" / "template.tex");
+    EXPECT_EQ(info->source_path, root_ / "invoice" / "v1" / "template.tex");
+}
+
+// ── per-template engine discovery ────────────────────────────────────────
+// The engine is a property of the template directory, decided once here, so
+// the migration can convert one template at a time with both engines live.
+
+TEST_F(TemplateRegistryTest, LatexTemplateReportsXelatexEngine) {
+    write_version("invoice", "v1");
+    Docgen::TemplateRegistry registry(root_);
+
+    auto info = registry.latest("invoice");
+    ASSERT_TRUE(info.has_value());
+    EXPECT_EQ(info->engine, Docgen::Engine::kLatex);
+    EXPECT_EQ(info->source_path, root_ / "invoice" / "v1" / "template.tex");
+    EXPECT_STREQ(Docgen::engine_name(info->engine), "xelatex");
+}
+
+TEST_F(TemplateRegistryTest, TypstTemplateReportsTypstEngine) {
+    write_typst_version("payslip", "v1");
+    Docgen::TemplateRegistry registry(root_);
+
+    auto info = registry.latest("payslip");
+    ASSERT_TRUE(info.has_value());
+    EXPECT_EQ(info->engine, Docgen::Engine::kTypst);
+    EXPECT_EQ(info->source_path, root_ / "payslip" / "v1" / "template.typ");
+    EXPECT_STREQ(Docgen::engine_name(info->engine), "typst");
+}
+
+// Transient state while a template is being converted: the .typ is
+// authoritative. Deliberate, not accidental — the conversion commit adds the
+// .typ and deletes the .tex, and if a rebase ever lands only half of that,
+// the new source must win rather than the retired one.
+TEST_F(TemplateRegistryTest, TypstWinsWhenBothSourcesExist) {
+    write_version("payslip", "v1");
+    std::ofstream(root_ / "payslip" / "v1" / "template.typ") << "typst body";
+    Docgen::TemplateRegistry registry(root_);
+
+    auto info = registry.latest("payslip");
+    ASSERT_TRUE(info.has_value());
+    EXPECT_EQ(info->engine, Docgen::Engine::kTypst);
+    EXPECT_EQ(info->source_path, root_ / "payslip" / "v1" / "template.typ");
+}
+
+// list() resolves through the same load(), so discovery over the whole tree
+// reports the engine per directory too — not just the single-slug path.
+TEST_F(TemplateRegistryTest, ListReportsTheEnginePerTemplate) {
+    write_version("invoice", "v1");
+    write_typst_version("payslip", "v1");
+    Docgen::TemplateRegistry registry(root_);
+
+    const auto all = registry.list();
+    ASSERT_EQ(all.size(), 2u);
+    EXPECT_EQ(all[0].slug, "invoice");
+    EXPECT_EQ(all[0].engine, Docgen::Engine::kLatex);
+    EXPECT_EQ(all[1].slug, "payslip");
+    EXPECT_EQ(all[1].engine, Docgen::Engine::kTypst);
 }
 
 // v10 sorts BEFORE v2 lexicographically ("v10" < "v2") but must win
@@ -154,7 +223,10 @@ TEST_F(TemplateRegistryTest, IgnoresNonVersionDirectories) {
     EXPECT_EQ(info->version_str, "v1");
 }
 
-TEST_F(TemplateRegistryTest, MissingTemplateTexThrows) {
+// Neither source present is a malformed template, not "no such engine" and
+// not a silent not-found: the directory declares a version and a schema, so
+// something is missing from the commit and it must fail loudly.
+TEST_F(TemplateRegistryTest, MissingBothSourcesThrows) {
     fs::create_directories(root_ / "broken" / "v1");
     std::ofstream(root_ / "broken" / "v1" / "schema.json") << json::object().dump();
     Docgen::TemplateRegistry registry(root_);
@@ -495,8 +567,11 @@ void collect_enum_paths(const json& root,
         collect_enum_paths(root, prop.value(), prefix.empty() ? prop.key() : prefix + "." + prop.key(), out);
 }
 
-/// Every `{{ expression }}` in @p source, trimmed — the things a template
-/// PRINTS, as opposed to the things it branches on inside `{% %}`.
+/// Every field path a template PRINTS — inja `{{ a.b }}` expressions and
+/// Typst `#d.a.b` references — as opposed to the things it branches on
+/// inside `{% %}` / an `if`. Both forms are collected unconditionally: a
+/// file only ever contains one of them, and a helper that silently found
+/// nothing is how a shipped test rots into `EXPECT_TRUE(true)`.
 std::vector<std::string> printed_expressions(const std::string& source) {
     std::vector<std::string> out;
     for (std::size_t pos = source.find("{{"); pos != std::string::npos; pos = source.find("{{", pos + 2)) {
@@ -509,12 +584,18 @@ std::vector<std::string> printed_expressions(const std::string& source) {
         if (first != std::string::npos)
             out.push_back(expr.substr(first, last - first + 1));
     }
+    static const std::regex kTypst(R"(#d\.([A-Za-z_][A-Za-z0-9_.]*))");
+    for (std::sregex_iterator it(source.begin(), source.end(), kTypst), end; it != end; ++it)
+        out.push_back((*it)[1].str());
     return out;
 }
 
 /// Skip guard shared by the tests that read the repo's real templates.
+/// Deliberately probes the DIRECTORY, not `invoice/v1/template.tex` — the
+/// point is "am I running from the repo root", and the source file's name
+/// changes under every template as the Typst migration proceeds.
 bool repo_templates_reachable() {
-    return fs::exists("templates/latex/invoice/v1/template.tex");
+    return fs::is_directory("templates/latex/invoice/v1");
 }
 
 // THE defect, in miniature: an enum-pinned control value whose literal
@@ -619,6 +700,67 @@ TEST_F(TemplateRegistryTest, RenderTexEscapesAStringLeafAgainstANonStringEnum) {
 
 // ── the shipped templates ────────────────────────────────────────────────
 
+// The engine a shipped template reports must be the one its source file on
+// disk implies, with that file actually present. Self-maintaining: it keeps
+// holding as templates convert one at a time.
+TEST(ShippedTemplatesTest, EveryShippedTemplateReportsTheEngineOfItsSourceFile) {
+    if (!repo_templates_reachable())
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+
+    Docgen::TemplateRegistry registry;
+    const auto templates = registry.list();
+    ASSERT_FALSE(templates.empty());
+
+    for (const auto& info : templates) {
+        EXPECT_TRUE(fs::exists(info.source_path)) << info.slug << ": " << info.source_path.string() << " is missing";
+        const std::string extension = info.source_path.extension().string();
+        if (extension == ".typ") {
+            EXPECT_EQ(info.engine, Docgen::Engine::kTypst) << info.slug;
+            EXPECT_STREQ(Docgen::engine_name(info.engine), "typst") << info.slug;
+        } else {
+            EXPECT_EQ(extension, ".tex") << info.slug << ": unknown template source extension";
+            EXPECT_EQ(info.engine, Docgen::Engine::kLatex) << info.slug;
+            EXPECT_STREQ(Docgen::engine_name(info.engine), "xelatex") << info.slug;
+        }
+    }
+}
+
+// The migration's scoreboard. Ten templates ship and ALL TEN still render
+// through XeLaTeX — per-template engine discovery landed without converting
+// anything. Each conversion commit moves one slug from the LaTeX list to the
+// Typst one here; when the LaTeX list is empty the XeLaTeX pipeline and the
+// TeX Live layer of the worker image can go.
+TEST(ShippedTemplatesTest, AllTenShippedTemplatesStillRenderThroughXelatex) {
+    if (!repo_templates_reachable())
+        GTEST_SKIP() << "repo templates not reachable from this working directory";
+
+    Docgen::TemplateRegistry registry;
+    const auto templates = registry.list();
+
+    std::vector<std::string> latex_slugs;
+    std::vector<std::string> typst_slugs;
+    for (const auto& info : templates) {
+        if (info.engine == Docgen::Engine::kTypst)
+            typst_slugs.push_back(info.slug);
+        else
+            latex_slugs.push_back(info.slug);
+    }
+
+    const std::vector<std::string> kExpectedLatex = {"avr",
+                                                     "fno_300",
+                                                     "fno_910",
+                                                     "hr_order",
+                                                     "invoice",
+                                                     "labor_contract",
+                                                     "payslip",
+                                                     "reconciliation",
+                                                     "tax_invoice",
+                                                     "waybill"};
+    const std::vector<std::string> kNoTypstYet;
+    EXPECT_EQ(latex_slugs, kExpectedLatex);
+    EXPECT_EQ(typst_slugs, kNoTypstYet);
+}
+
 // The blast-radius test the fix owes: a counterparty name carrying every
 // LaTeX weapon at once, substituted into EVERY string leaf of EVERY shipped
 // template's fixture, must come out as literal text in every one of them.
@@ -676,15 +818,16 @@ TEST(ShippedTemplatesTest, NeverPrintAnEnumPinnedField) {
         collect_enum_paths(info.schema, info.schema, "", control_paths);
         enum_fields += control_paths.size();
 
-        std::ifstream tex(info.tex_path, std::ios::binary);
+        std::ifstream source(info.source_path, std::ios::binary);
         std::ostringstream buf;
-        buf << tex.rdbuf();
+        buf << source.rdbuf();
         const auto printed = printed_expressions(buf.str());
 
         for (const auto& path : control_paths) {
             EXPECT_EQ(std::find(printed.begin(), printed.end(), path), printed.end())
-                << info.slug << "/" << info.version_str << " prints {{ " << path
-                << " }}, but its schema pins that field to an enum — enum fields are control "
+                << info.slug << "/" << info.version_str << " (" << Docgen::engine_name(info.engine) << ") prints '"
+                << path
+                << "', but its schema pins that field to an enum — enum fields are control "
                    "values, reach the template unescaped, and must only be compared";
         }
     }

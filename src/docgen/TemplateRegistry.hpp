@@ -1,11 +1,13 @@
 /**
  * @file TemplateRegistry.hpp
- * @brief Discovers docgen LaTeX templates on disk and validates input JSON
- *        against their JSON Schema.
+ * @brief Discovers docgen document templates on disk, decides which engine
+ *        compiles each one, and validates input JSON against their JSON
+ *        Schema.
  *
  * Layout convention (design spec, Task 9's `templates/latex/invoice/v1/` is
  * the reference implementation): `templates/latex/<slug>/v<N>/` holding
- * `template.tex` + `schema.json` (+ one JSON fixture per case under
+ * `template.typ` (Typst) **or** `template.tex` (LaTeX, being retired)
+ * + `schema.json` (+ one JSON fixture per case under
  * `fixtures/`, e.g. `fixtures/happy_path.json`, used by
  * `scripts/render-templates.sh`, not read by this class). `<N>` is a plain
  * non-negative integer — `latest(slug)` picks the directory with the
@@ -32,14 +34,28 @@ namespace Docgen {
 
 using json = nlohmann::json;
 
-/// One resolved template version: where its `.tex` source lives on disk and
-/// its parsed JSON Schema.
+/// Which document engine renders a template, decided by the source file that
+/// is on disk. The migration converts one template at a time
+/// (docs/superpowers/plans/2026-08-16-typst-migration.md), so both values are
+/// live simultaneously and the worker image carries both engines.
+enum class Engine { kLatex, kTypst };
+
+/// The stable, storable name of an engine — this is the string a later task
+/// records alongside the document's template version, so it is decided in
+/// exactly one place and never re-derived at a call site.
+inline const char* engine_name(Engine e) {
+    return e == Engine::kTypst ? "typst" : "xelatex";
+}
+
+/// One resolved template version: where its source lives on disk, which
+/// engine compiles it, and its parsed JSON Schema.
 struct TemplateInfo {
     std::string slug;
-    int version = 0;            ///< Numeric part of the `vN` directory name.
-    std::string version_str;    ///< The `vN` directory name as it appears on disk.
-    std::filesystem::path dir;  ///< `templates/latex/<slug>/<vN>/`
-    std::filesystem::path tex_path;
+    int version = 0;                    ///< Numeric part of the `vN` directory name.
+    std::string version_str;            ///< The `vN` directory name as it appears on disk.
+    std::filesystem::path dir;          ///< `templates/latex/<slug>/<vN>/`
+    std::filesystem::path source_path;  ///< `template.typ` (Typst) or `template.tex` (LaTeX)
+    Engine engine = Engine::kLatex;
     json schema;
 };
 
@@ -64,9 +80,10 @@ public:
      * @return `std::nullopt` if @p slug fails the allowlist, the slug
      *         directory doesn't exist, or it contains no valid `vN`
      *         subdirectory.
-     * @throws std::runtime_error if the highest-version directory is missing
-     *         `template.tex` or `schema.json` (a malformed template ships as
-     *         a hard error, not a silent "not found").
+     * @throws std::runtime_error if the highest-version directory has
+     *         NEITHER `template.typ` nor `template.tex`, or is missing
+     *         `schema.json` (a malformed template ships as a hard error, not
+     *         a silent "not found").
      */
     std::optional<TemplateInfo> latest(const std::string& slug) const {
         namespace fs = std::filesystem;
@@ -334,9 +351,20 @@ private:
         info.version = version;
         info.version_str = version_str;
         info.dir = root_ / slug / version_str;
-        info.tex_path = info.dir / "template.tex";
-        if (!fs::exists(info.tex_path))
-            throw std::runtime_error("template registry: missing template.tex for " + slug + "/" + version_str);
+        // template.typ wins: while a template is mid-conversion both files can
+        // exist for one commit, and the Typst source is the authoritative one.
+        const fs::path typ_path = info.dir / "template.typ";
+        const fs::path tex_path = info.dir / "template.tex";
+        if (fs::exists(typ_path)) {
+            info.source_path = typ_path;
+            info.engine = Engine::kTypst;
+        } else if (fs::exists(tex_path)) {
+            info.source_path = tex_path;
+            info.engine = Engine::kLatex;
+        } else {
+            throw std::runtime_error("template registry: missing template.typ/template.tex for " + slug + "/" +
+                                     version_str);
+        }
 
         const fs::path schema_path = info.dir / "schema.json";
         std::ifstream schema_file(schema_path);
