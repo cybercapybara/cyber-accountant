@@ -163,7 +163,7 @@ redis:
 cyber-accountant:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant
-    tag: "0.4.3"  # docgen escaping order: a string leaf is escaped only if the template PRINTS it, not when it COMPARES it — restores the ФНО 300.00 closing line and the business_trip/salary_change order bodies. NOT "v0.4.2" (release.yml strips the `v` prefix); confirmed present via /v2/.../tags/list before use
+    tag: "0.5.0"  # Typst 0.15.1 — движок документов; данные больше не становятся кодом (слой шаблонизации и escape_latex удалены). Тег без префикса `v` (release.yml его срезает); наличие подтверждено через /v2/.../tags/list до раскатки
   # No imagePullSecrets: this package is public and pulled anonymously.
   # See "IMAGE PULLS DEPEND ON THE GHCR PACKAGES STAYING PUBLIC" at the top.
   externalKafka:
@@ -356,7 +356,7 @@ cyber-accountant:
 cyber-accountant-worker:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-worker
-    tag: "0.4.3"  # see note above — unprefixed tag, docgen escaping-order fix
+    tag: "0.5.0"  # см. примечание выше — тег без префикса, Typst
   # No imagePullSecrets: this package is public and pulled anonymously.
   # See "IMAGE PULLS DEPEND ON THE GHCR PACKAGES STAYING PUBLIC" at the top.
   tracing:
@@ -429,6 +429,6 @@ cyber-accountant-worker:
 cpp-frontend:
   image:
     repository: ghcr.io/cybercapybara/cyber-accountant-frontend
-    tag: "0.4.3"  # see note above — unprefixed tag, docgen escaping-order fix
+    tag: "0.5.0"  # см. примечание выше — тег без префикса, Typst
   # No imagePullSecrets: this package is public and pulled anonymously.
   # See "IMAGE PULLS DEPEND ON THE GHCR PACKAGES STAYING PUBLIC" at the top.
