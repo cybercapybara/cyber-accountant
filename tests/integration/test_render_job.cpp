@@ -4,15 +4,17 @@
  *        src/docgen/RenderJob.hpp) against real Postgres + Redis + a
  *        LocalStorage backend.
  *
- * The real XeLaTeX binary is NEVER invoked here: DOCGEN_LATEX_CMD is pointed
- * at a stub shell script (written to a temp file and chmod +x'd in SetUp)
- * that either copies a hardcoded minimal PDF into `main.pdf` (success case)
- * or exits 1 without producing one (failure case). The full pipeline —
- * schema validation, inja rendering + LaTeX escaping, the two-pass "latex"
- * invocation, sha256, Storage::put, DocumentRepository::version_render_state/
- * set_version_file/set_current_version/set_status_if — runs for real; only the
- * compiler itself is faked. Real
- * XeLaTeX only ever runs via scripts/render-templates.sh (the
+ * THE REAL ENGINE IS NEVER INVOKED here: DOCGEN_TYPST_CMD is pointed at a
+ * stub shell script (written to a temp file and chmod +x'd in SetUp) that
+ * answers `--version`, and then either copies a hardcoded minimal PDF into
+ * `main.pdf` (success case) or exits 1 without producing one (failure case).
+ * It ignores its arguments, so it stands in for `typst compile main.typ`.
+ *
+ * The full pipeline — schema validation, the Typst staging (template copy +
+ * input.json), the engine invocation, sha256, Storage::put,
+ * DocumentRepository::version_render_state/set_version_file/
+ * set_current_version/set_status_if — runs for real; only the compiler itself
+ * is faked. A real engine only ever runs via scripts/render-templates.sh (the
  * `template-render` CI job, on the worker image — see docker/Dockerfile).
  */
 
@@ -29,8 +31,10 @@
 
 #include "database/Database.hpp"
 #include "docgen/RenderJob.hpp"
+#include "docgen/TemplateRegistry.hpp"
 #include "jobs/Job.hpp"
 #include "ledger/DocumentRepository.hpp"
+#include "repo_templates.hpp"
 #include "repositories/RoleRepository.hpp"
 #include "repositories/UserRepository.hpp"
 #include "storage/Storage.hpp"
@@ -63,8 +67,8 @@ fs::path scripts_dir_path() {
     return fs::temp_directory_path() / "docgen_render_job_scripts";
 }
 
-/// Make @p path executable for owner/group/other — the stub scripts
-/// DOCGEN_LATEX_CMD points at need +x to run via popen()'s `sh -c`.
+/// Make @p path executable for owner/group/other — the stub script
+/// DOCGEN_TYPST_CMD points at needs +x to run via popen()'s `sh -c`.
 void make_executable(const fs::path& path) {
     std::error_code ec;
     fs::permissions(path,
@@ -76,7 +80,7 @@ void make_executable(const fs::path& path) {
 
 class RenderJobTest : public TestHelpers::CoreBackedTest {
 protected:
-    std::unique_ptr<TestHelpers::ScopedEnv> latex_cmd_env_;
+    std::unique_ptr<TestHelpers::ScopedEnv> typst_cmd_env_;
 
     std::string config_file_name() const override { return "render_job_test_config.json"; }
 
@@ -98,8 +102,12 @@ protected:
         if (::testing::Test::IsSkipped())
             return;
 
-        if (!fs::exists("templates/latex/invoice/v1/template.tex"))
-            GTEST_SKIP() << "repo templates not reachable from this working directory";
+        // Engine-agnostic by construction: the directory and its schema.json,
+        // never `invoice/v1/template.tex`. That file is what this guard used
+        // to probe, and the invoice's Typst conversion (3c77b1e) deleted it —
+        // every test in this file then skipped, silently, for the whole of
+        // the migration. See tests/repo_templates.hpp.
+        REQUIRE_REPO_TEMPLATE("invoice");
 
         // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
         // test_helpers.hpp) — TRUNCATEs the journal/document tables (bypasses
@@ -110,7 +118,7 @@ protected:
     }
 
     void TearDown() override {
-        latex_cmd_env_.reset();
+        typst_cmd_env_.reset();
         TestHelpers::CoreBackedTest::TearDown();
         std::error_code ec;
         fs::remove_all(storage_root_path(), ec);
@@ -144,7 +152,7 @@ protected:
         return created.id;
     }
 
-    /// A valid input for templates/latex/invoice/v1's schema.json.
+    /// A valid input for templates/docs/invoice/v1's schema.json.
     static json valid_invoice_input() {
         return json{
             {"number", "1"},
@@ -157,7 +165,7 @@ protected:
                                {"unit", "шт"},
                                {"price", "1000.00"},
                                {"amount", "1000.00"}}})},
-            // total_tiyn is REQUIRED by templates/latex/invoice/v1/schema.json
+            // total_tiyn is REQUIRED by templates/docs/invoice/v1/schema.json
             // since P3, and render_and_compile() runs
             // TemplateRegistry::validate() strictly BEFORE normalize_input()
             // — so a missing integer is a hard failure here, never a
@@ -172,44 +180,59 @@ protected:
     /// one test render TWICE and get DIFFERENT files, which is what makes
     /// "version 1's object still holds version 1's content" a real assertion
     /// instead of a tautology. Deliberately rewrites the canned PDF rather
-    /// than pointing DOCGEN_LATEX_CMD at a second script: re-seating
-    /// latex_cmd_env_ would construct the new ScopedEnv and only then destroy
-    /// the old one, and that destructor would restore the variable right back
-    /// over the new value.
+    /// than pointing the engine variable at a second script: re-seating it
+    /// would construct the new ScopedEnv and only then destroy the old one,
+    /// and that destructor would restore the variable right back over the new
+    /// value.
     void set_canned_pdf(const std::string& bytes) {
         std::ofstream(scripts_dir_path() / "canned.pdf", std::ios::binary) << bytes;
     }
 
-    /// Points DOCGEN_LATEX_CMD at a stub script that copies the canned PDF
-    /// into `main.pdf` (cwd, per compile_pdf's `cd <tex_dir> && ...`) and
-    /// exits 0.
-    void use_succeeding_latex_stub() {
+    /// Point the engine command at @p script_path. Named for the ENGINE in
+    /// the abstract, not for Typst: which binary a render reaches for is
+    /// decided by the template directory on disk (Docgen::TemplateRegistry::
+    /// load), and this fixture deliberately never spells out which one the
+    /// invoice selects today.
+    void use_engine_stub(const fs::path& script_path) {
+        make_executable(script_path);
+        typst_cmd_env_ = std::make_unique<TestHelpers::ScopedEnv>("DOCGEN_TYPST_CMD", script_path.string());
+    }
+
+    /// Points the engine command at a stub script that copies the canned
+    /// PDF into `main.pdf` (cwd, per compile_typst's `cd <dir> && ...`) and
+    /// exits 0. The stub ignores its arguments.
+    void use_succeeding_engine_stub() {
         const fs::path pdf_path = scripts_dir_path() / "canned.pdf";
         set_canned_pdf(kFakePdfBytes);
 
-        const fs::path script_path = scripts_dir_path() / "fake-latex-ok.sh";
+        const fs::path script_path = scripts_dir_path() / "fake-engine-ok.sh";
         {
             std::ofstream script(script_path);
+            // `--version` is answered rather than compiled: Docgen::
+            // engine_version asks the Typst command for its version (once per
+            // process, cached) and it does so from the test's OWN working
+            // directory — a stub that blindly copied a PDF would drop a stray
+            // `main.pdf` into the repo root on that call.
             script << "#!/bin/sh\n"
+                   << "case \"$1\" in --version) echo 'typst 0.15.1 (stub)'; exit 0;; esac\n"
                    << "cp \"" << pdf_path.string() << "\" main.pdf\n"
                    << "exit 0\n";
         }
-        make_executable(script_path);
-        latex_cmd_env_ = std::make_unique<TestHelpers::ScopedEnv>("DOCGEN_LATEX_CMD", script_path.string());
+        use_engine_stub(script_path);
     }
 
-    /// Points DOCGEN_LATEX_CMD at a stub script that fails (exit 1) without
-    /// producing a PDF — simulates a XeLaTeX compile error.
-    void use_failing_latex_stub() {
-        const fs::path script_path = scripts_dir_path() / "fake-latex-fail.sh";
+    /// Points the engine command at a stub script that fails (exit 1)
+    /// without producing a PDF — simulates a compile error from whichever
+    /// engine the template selects.
+    void use_failing_engine_stub() {
+        const fs::path script_path = scripts_dir_path() / "fake-engine-fail.sh";
         {
             std::ofstream script(script_path);
             script << "#!/bin/sh\n"
-                   << "echo 'simulated latex failure' >&2\n"
+                   << "echo 'simulated engine failure' >&2\n"
                    << "exit 1\n";
         }
-        make_executable(script_path);
-        latex_cmd_env_ = std::make_unique<TestHelpers::ScopedEnv>("DOCGEN_LATEX_CMD", script_path.string());
+        use_engine_stub(script_path);
     }
 };
 
@@ -222,7 +245,7 @@ protected:
 // one pins the fallback so a future cleanup cannot quietly turn those jobs
 // into skips.
 TEST_F(RenderJobTest, RenderJobHappyPath) {
-    use_succeeding_latex_stub();
+    use_succeeding_engine_stub();
     auto org_id = make_org("111280000001");
     Ledger::DocumentRepository documents;
     auto doc = documents.create(org_id, "invoice", "generated", "draft", std::nullopt, "invoice", "v1");
@@ -261,7 +284,7 @@ TEST_F(RenderJobTest, RenderJobHappyPath) {
 }
 
 TEST_F(RenderJobTest, RenderJobInvalidInputFails) {
-    use_succeeding_latex_stub();  // never reached — schema validation fails first
+    use_succeeding_engine_stub();  // never reached — schema validation fails first
     auto org_id = make_org("111280000002");
     Ledger::DocumentRepository documents;
     auto doc = documents.create(org_id, "invoice", "generated", "draft", std::nullopt, "invoice", "v1");
@@ -276,8 +299,10 @@ TEST_F(RenderJobTest, RenderJobInvalidInputFails) {
     EXPECT_FALSE(stored->s3_key.has_value());
 }
 
-TEST_F(RenderJobTest, RenderJobLatexFailureFails) {
-    use_failing_latex_stub();
+// Named for the engine in the abstract: the stub fails whichever binary the
+// invoice's directory currently selects.
+TEST_F(RenderJobTest, RenderJobEngineFailureFails) {
+    use_failing_engine_stub();
     auto org_id = make_org("111280000003");
     Ledger::DocumentRepository documents;
     auto doc = documents.create(org_id, "invoice", "generated", "draft", std::nullopt, "invoice", "v1");
@@ -297,9 +322,9 @@ TEST_F(RenderJobTest, RenderJobLatexFailureFails) {
 // primitive if unchecked). TemplateRegistry::latest()'s allowlist must
 // reject it before any filesystem access, and the job must throw (document
 // stays draft) exactly like any other "no such template" failure — not
-// silently succeed, and not read/write outside templates/latex.
+// silently succeed, and not read/write outside templates/docs.
 TEST_F(RenderJobTest, RenderJobRejectsTraversalSlug) {
-    use_succeeding_latex_stub();  // never reached — slug is rejected first
+    use_succeeding_engine_stub();  // never reached — slug is rejected first
     auto org_id = make_org("111280000004");
     Ledger::DocumentRepository documents;
     auto doc = documents.create(org_id, "invoice", "generated", "draft");
@@ -319,7 +344,7 @@ TEST_F(RenderJobTest, RenderJobRejectsTraversalSlug) {
 // ── P3 task 10: the job addresses a VERSION ──────────────────────────────────
 
 TEST_F(RenderJobTest, WritesTheFileIntoTheAddressedVersionAndPublishesIt) {
-    use_succeeding_latex_stub();
+    use_succeeding_engine_stub();
     auto org_id = make_org("111280000005");
     Ledger::DocumentRepository documents;
     auto doc = documents.create(org_id,
@@ -357,11 +382,137 @@ TEST_F(RenderJobTest, WritesTheFileIntoTheAddressedVersionAndPublishesIt) {
     EXPECT_TRUE(Storage::get().exists(key));
 }
 
+// ── the engine descriptor itself ─────────────────────────────────────────────
+// Pure parsing, no fixture and no services — but it lives here rather than in
+// tests/unit because the function under test is declared in RenderJob.hpp,
+// which drags in the repository/storage/job stack that the unit bucket is
+// defined by NOT having.
+
+// Task 1 found that `typst --version` prints `typst 0.15.1 (9dfd3a08)`: the
+// build's commit hash is appended at runtime. Storing that line verbatim
+// would make "was this rendered by 0.15.1?" a substring match, and would
+// change the recorded descriptor when the SAME release is rebuilt. So the
+// version is parsed out and the hash dropped — the exact binary stays
+// identifiable through TYPST_SHA256 in docker/Dockerfile.
+TEST(DocgenEngineDescriptor, ParsesTheVersionAndDropsTheBuildHash) {
+    EXPECT_EQ(Docgen::typst_descriptor("typst 0.15.1 (9dfd3a08)\n"), "typst 0.15.1");
+    EXPECT_EQ(Docgen::typst_descriptor("typst 0.15.1\n"), "typst 0.15.1");
+    EXPECT_EQ(Docgen::typst_descriptor("typst 0.16.0 (deadbeef)\r\nignored second line\n"), "typst 0.16.0");
+}
+
+// An unreadable answer degrades to the bare engine name — the render still
+// produces a document, and a coarse engine note beats none. What it must NOT
+// do is store a line whose shape we do not understand.
+TEST(DocgenEngineDescriptor, DegradesToTheBareEngineNameOnUnparseableOutput) {
+    EXPECT_EQ(Docgen::typst_descriptor(""), "typst");
+    EXPECT_EQ(Docgen::typst_descriptor("command not found: typst\n"), "typst");
+}
+
+// The engine that produced the bytes is part of the version's provenance:
+// Typst is pre-1.0, and re-rendering a v1 template under a later engine can
+// lay it out differently, so "which template" is not enough to reproduce a
+// document.
+//
+// WHICH engine is deliberately not written here. It is read off the invoice's
+// own TemplateInfo — the same directory-decided answer the render pipeline
+// uses — because a literal engine name is a test that has to be edited by
+// every conversion instead of surviving it; this one survived all ten. The
+// property is the AGREEMENT: what got stored on the version is the engine the
+// template on disk selects, prefix-matched because the descriptor carries a
+// version suffix the bare name does not (see Docgen::engine_version). The
+// engine command variable points at the stub script, which is exactly why the
+// descriptor may not be derived from the command.
+TEST_F(RenderJobTest, RecordsTheEngineOnTheRenderedVersion) {
+    use_succeeding_engine_stub();
+    Docgen::TemplateRegistry registry;
+    const auto invoice_template = registry.latest("invoice");
+    ASSERT_TRUE(invoice_template.has_value());
+    const std::string expected_engine = Docgen::engine_name(invoice_template->engine);
+
+    auto org_id = make_org("111280000014");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    auto v1 = documents.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+    // Nothing was rendered into it yet, so it carries no engine at all.
+    EXPECT_FALSE(v1->render_engine.has_value());
+
+    auto result = Docgen::process_job(json{{"org_id", org_id},
+                                           {"document_id", doc.id},
+                                           {"version_id", v1->id},
+                                           {"slug", "invoice"},
+                                           {"input", valid_invoice_input()}});
+    ASSERT_FALSE(result.contains("skipped")) << result.dump();
+    const std::string reported = result["render_engine"].get<std::string>();
+    EXPECT_EQ(reported.rfind(expected_engine, 0), 0U)
+        << "the job reported engine '" << reported << "' for a template the registry resolves to '" << expected_engine
+        << "'";
+
+    auto version = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->render_engine.has_value());
+    EXPECT_EQ(*version->render_engine, reported);
+    // …and it is served, not just stored: this field is the answer to "why
+    // does this PDF differ from the one I printed in March".
+    EXPECT_EQ(nlohmann::json(*version)["render_engine"].get<std::string>(), reported);
+}
+
+// The upload path shares set_version_file with the render path, and it must
+// neither invent an engine for a human-uploaded file nor blank one a render
+// already recorded — hence COALESCE on the column. Both halves are asserted
+// here because a plain `render_engine = $7` would pass the first.
+TEST_F(RenderJobTest, ConfirmUploadStyleWriteDoesNotTouchTheRecordedEngine) {
+    // No engine stub: nothing is rendered here, the repository is driven
+    // directly — this is about the WRITE, not about a compile.
+    auto org_id = make_org("111280000015");
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id,
+                                "invoice",
+                                "generated",
+                                "draft",
+                                std::nullopt,
+                                "invoice",
+                                "v1",
+                                std::optional<nlohmann::json>{valid_invoice_input()});
+    auto v1 = documents.latest_version(org_id, doc.id);
+    ASSERT_TRUE(v1);
+
+    // No engine argument — the shape LedgerDocumentsController::confirmUpload
+    // calls with. A version that never had one keeps NULL.
+    ASSERT_TRUE(documents.set_version_file(
+        org_id, v1->id, "org/" + org_id + "/uploaded/x.pdf", std::string(64, 'a'), "application/pdf", 12));
+    auto after_upload = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(after_upload);
+    EXPECT_FALSE(after_upload->render_engine.has_value());
+
+    // Now record one, then repeat the engine-less write: it survives.
+    ASSERT_TRUE(documents.set_version_file(org_id,
+                                           v1->id,
+                                           "org/" + org_id + "/generated/x.pdf",
+                                           std::string(64, 'b'),
+                                           "application/pdf",
+                                           34,
+                                           std::string("typst 0.15.1")));
+    ASSERT_TRUE(documents.set_version_file(
+        org_id, v1->id, "org/" + org_id + "/uploaded/y.pdf", std::string(64, 'c'), "application/pdf", 56));
+    auto after = documents.find_version(org_id, doc.id, 1);
+    ASSERT_TRUE(after);
+    ASSERT_TRUE(after->render_engine.has_value());
+    EXPECT_EQ(*after->render_engine, "typst 0.15.1");
+}
+
 // THE property the whole versioning work exists for: a later render must not
 // touch an earlier version's bytes. Both renders produce genuinely different
 // PDFs (set_canned_pdf), so equal-looking objects could not hide a rewrite.
 TEST_F(RenderJobTest, RenderOfVersionTwoLeavesVersionOnesObjectIntact) {
-    use_succeeding_latex_stub();
+    use_succeeding_engine_stub();
     auto org_id = make_org("111280000006");
     Ledger::DocumentRepository documents;
     auto doc = documents.create(org_id,
@@ -432,7 +583,7 @@ TEST_F(RenderJobTest, RenderOfVersionTwoLeavesVersionOnesObjectIntact) {
 }
 
 TEST_F(RenderJobTest, IsANoOpForASupersededVersion) {
-    use_succeeding_latex_stub();
+    use_succeeding_engine_stub();
     auto org_id = make_org("111280000007");
     Ledger::DocumentRepository documents;
     auto doc = documents.create(org_id,
@@ -478,14 +629,14 @@ TEST_F(RenderJobTest, IsANoOpForASupersededVersion) {
 
 TEST_F(RenderJobTest, DoesNotOverwriteAnAlreadyRenderedVersionOnRerun) {
     // ВАЖНО про форму проверки: PDF в этом дереве НЕ байт-стабилен —
-    // SOURCE_DATE_EPOCH нигде не выставляется, XeLaTeX штампует в файл дату
+    // SOURCE_DATE_EPOCH нигде не выставляется, движок штампует в файл дату
     // сборки. Поэтому «повтор ничего не перезаписал» доказывается тем, что
     // джоба вернула skipped и байты в хранилище не изменились, а НЕ тем, что
     // второй рендер дал ту же контрольную сумму: без гварда суммы разошлись
     // бы, но и с наивным сравнением тест флакал бы на любом изменении
     // шаблона. Второй рендер здесь намеренно выдаёт ДРУГИЕ байты — если бы
     // гвард пропал, объект и checksum поехали бы, и тест это увидит.
-    use_succeeding_latex_stub();
+    use_succeeding_engine_stub();
     auto org_id = make_org("111280000008");
     Ledger::DocumentRepository documents;
     auto doc = documents.create(org_id,
@@ -527,7 +678,7 @@ TEST_F(RenderJobTest, DoesNotOverwriteAnAlreadyRenderedVersionOnRerun) {
 }
 
 TEST_F(RenderJobTest, IsANoOpForAVersionOfAnotherOrg) {
-    use_succeeding_latex_stub();
+    use_succeeding_engine_stub();
     auto org_id = make_org("111280000009");
     auto other_org_id = make_org("111280000010");
     Ledger::DocumentRepository documents;
@@ -567,7 +718,7 @@ TEST_F(RenderJobTest, IsANoOpForAVersionOfAnotherOrg) {
 // input_snapshot, undetectably. Skipping is the only safe answer: the job
 // can be re-enqueued by hand with the right version_id.
 TEST_F(RenderJobTest, IsANoOpForALegacyPayloadWhoseDocumentWasEditedAcrossTheDeploy) {
-    use_succeeding_latex_stub();
+    use_succeeding_engine_stub();
     auto org_id = make_org("111280000012");
     Ledger::DocumentRepository documents;
     auto doc = documents.create(org_id,
@@ -607,7 +758,7 @@ TEST_F(RenderJobTest, IsANoOpForALegacyPayloadWhoseDocumentWasEditedAcrossTheDep
 // file stays as it is — a re-run overwrites nothing whether or not the
 // payload names its version.
 TEST_F(RenderJobTest, IsANoOpForALegacyPayloadWhoseVersionOneAlreadyHasAFile) {
-    use_succeeding_latex_stub();
+    use_succeeding_engine_stub();
     auto org_id = make_org("111280000013");
     Ledger::DocumentRepository documents;
     auto doc = documents.create(org_id,
@@ -642,7 +793,7 @@ TEST_F(RenderJobTest, IsANoOpForALegacyPayloadWhoseVersionOneAlreadyHasAFile) {
 // бы обойти простым ожиданием. Единственное, что этого не допускает, —
 // (d.voided_at IS NOT NULL) в version_render_state() и ветка kVoided.
 TEST_F(RenderJobTest, DoesNotResurrectAVoidedDocument) {
-    use_succeeding_latex_stub();
+    use_succeeding_engine_stub();
     auto org_id = make_org("111280000011");
     auto user_id = seed_user("voider@example.com");
     Ledger::DocumentRepository documents;

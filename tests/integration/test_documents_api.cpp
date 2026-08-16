@@ -49,6 +49,7 @@
 #include "ledger/JournalService.hpp"
 #include "money/AmountInWords.hpp"
 #include "money/MoneyFormat.hpp"
+#include "repo_templates.hpp"
 #include "repositories/RepoErrors.hpp"
 #include "repositories/RoleRepository.hpp"
 #include "repositories/UserRepository.hpp"
@@ -121,8 +122,8 @@ bool is_minio_available() {
 class LedgerDocumentsApiTest : public TestHelpers::CoreBackedTest {
 protected:
     Api::LedgerDocumentsController ctrl;
-    std::unique_ptr<TestHelpers::ScopedEnv> latex_stub_;
-    std::filesystem::path latex_stub_dir_;
+    std::unique_ptr<TestHelpers::ScopedEnv> typst_stub_;
+    std::filesystem::path engine_stub_dir_;
 
     std::string config_file_name() const override { return "documents_api_test_config.json"; }
 
@@ -181,30 +182,35 @@ protected:
     void TearDown() override {
         if (!::testing::Test::IsSkipped() && Cache::is_initialized())
             drain_queue();
-        latex_stub_.reset();
-        if (!latex_stub_dir_.empty()) {
+        typst_stub_.reset();
+        if (!engine_stub_dir_.empty()) {
             std::error_code ec;
-            std::filesystem::remove_all(latex_stub_dir_, ec);
+            std::filesystem::remove_all(engine_stub_dir_, ec);
         }
         Storage::reset_for_testing();
         TestHelpers::CoreBackedTest::TearDown();
     }
 
-    /// Point DOCGEN_LATEX_CMD at a stub that "compiles" anything into
+    /// Point the engine command at a stub that "compiles" anything into
     /// @p bytes, so a test can run the REAL Docgen::process_job (schema
-    /// validation, inja render, storage, repository writes) without TeX Live
-    /// — same idiom as tests/integration/test_render_job.cpp, which owns the
-    /// render pipeline's own coverage. Only the tests that actually drive the
-    /// worker call this.
-    void use_latex_stub(const std::string& bytes) {
-        latex_stub_dir_ = std::filesystem::temp_directory_path() / ("documents_api_latex_" + Jobs::generate_uuid());
-        std::filesystem::create_directories(latex_stub_dir_);
-        const std::filesystem::path pdf_path = latex_stub_dir_ / "canned.pdf";
+    /// validation, the staging, storage, repository writes) without a Typst
+    /// binary — same idiom as tests/integration/test_render_job.cpp, which
+    /// owns the render pipeline's own coverage. Only the tests that actually
+    /// drive the worker call this. The stub ignores its arguments.
+    void use_engine_stub(const std::string& bytes) {
+        engine_stub_dir_ = std::filesystem::temp_directory_path() / ("documents_api_engine_" + Jobs::generate_uuid());
+        std::filesystem::create_directories(engine_stub_dir_);
+        const std::filesystem::path pdf_path = engine_stub_dir_ / "canned.pdf";
         std::ofstream(pdf_path, std::ios::binary) << bytes;
-        const std::filesystem::path script_path = latex_stub_dir_ / "fake-latex.sh";
+        const std::filesystem::path script_path = engine_stub_dir_ / "fake-engine.sh";
         {
             std::ofstream script(script_path);
+            // `--version` is answered, not compiled — Docgen::engine_version
+            // asks the Typst command for its version from the test's own
+            // working directory, and a blind copy would litter the repo root
+            // with a stray `main.pdf`.
             script << "#!/bin/sh\n"
+                   << "case \"$1\" in --version) echo 'typst 0.15.1 (stub)'; exit 0;; esac\n"
                    << "cp \"" << pdf_path.string() << "\" main.pdf\n"
                    << "exit 0\n";
         }
@@ -215,7 +221,7 @@ protected:
                                          std::filesystem::perms::others_exec,
                                      std::filesystem::perm_options::replace,
                                      ec);
-        latex_stub_ = std::make_unique<TestHelpers::ScopedEnv>("DOCGEN_LATEX_CMD", script_path.string());
+        typst_stub_ = std::make_unique<TestHelpers::ScopedEnv>("DOCGEN_TYPST_CMD", script_path.string());
     }
 
     static void drain_queue() { TestHelpers::drain_jobs({kRenderJobType}); }
@@ -277,11 +283,11 @@ protected:
     // The edit tests need real templates on disk: createVersion() resolves the
     // slug through Docgen::TemplateRegistry and schema-validates the merged
     // input, so a working directory without templates/ would turn every one of
-    // them into a 500 that says nothing about the allowlist.
-    static bool templates_available() {
-        return std::filesystem::exists("templates/latex/invoice/v1/schema.json") &&
-               std::filesystem::exists("templates/latex/fno_910/v1/schema.json");
-    }
+    // them into a 500 that says nothing about the allowlist. Each of them
+    // opens with REQUIRE_REPO_TEMPLATE for `invoice` and `fno_910` — a probe
+    // for the DIRECTORY and its schema.json, never for one engine's source
+    // file, and a hard failure rather than a skip when the checkout is there
+    // but the template is not (tests/repo_templates.hpp).
 
     /// A REQUEST-shaped invoice input: money is the INTEGER tiyn field only.
     /// `total`/`total_words` are the SERVER's to write — supplying either is
@@ -996,8 +1002,8 @@ TEST_F(LedgerDocumentsApiTest, UploadConfirmAndDownloadRoundTrip) {
 // forward figure would come from the request instead of the previous version.
 
 TEST_F(LedgerDocumentsApiTest, EditCreatesANewVersionAndKeepsTheOldPdf) {
-    if (!templates_available())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE("invoice");
+    REQUIRE_REPO_TEMPLATE("fno_910");
     auto org = seed_org("444240000030", "Edit Versions Org LLP");
     auto p = member("edit@example.com", org.id, "accountant");
     const std::string original_pdf = "invoice-v1-bytes-" + Jobs::generate_uuid();
@@ -1093,8 +1099,8 @@ TEST_F(LedgerDocumentsApiTest, EditCreatesANewVersionAndKeepsTheOldPdf) {
 // the object on the document instead of the version, version 2's bytes would
 // come back here and this test would fail.
 TEST_F(LedgerDocumentsApiTest, RenderingVersionTwoLeavesVersionOnesPdfDownloadable) {
-    if (!templates_available())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE("invoice");
+    REQUIRE_REPO_TEMPLATE("fno_910");
     auto org = seed_org("444240000045", "Render Keeps Old Pdf Org LLP");
     auto p = member("render-v2@example.com", org.id, "accountant");
     const std::string original_pdf = "invoice-v1-bytes-" + Jobs::generate_uuid();
@@ -1123,7 +1129,7 @@ TEST_F(LedgerDocumentsApiTest, RenderingVersionTwoLeavesVersionOnesPdfDownloadab
     ASSERT_TRUE(job.has_value());
 
     const std::string rendered_pdf = "%PDF-1.1 rendered-version-2-" + Jobs::generate_uuid() + "\n";
-    use_latex_stub(rendered_pdf);
+    use_engine_stub(rendered_pdf);
     auto result = Docgen::process_job(job->payload);
     ASSERT_FALSE(result.contains("skipped")) << result.dump();
     const std::string v2_key = result["key"].get<std::string>();
@@ -1168,8 +1174,8 @@ TEST_F(LedgerDocumentsApiTest, RenderingVersionTwoLeavesVersionOnesPdfDownloadab
 }
 
 TEST_F(LedgerDocumentsApiTest, EditRejectsFieldsOutsideTheCreationAllowlist) {
-    if (!templates_available())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE("invoice");
+    REQUIRE_REPO_TEMPLATE("fno_910");
     auto org = seed_org("444240000031", "Edit Allowlist Org LLP");
     auto p = member("edit2@example.com", org.id, "accountant");
     const std::string filing_doc = seed_fno910_document(org.id);
@@ -1208,8 +1214,8 @@ TEST_F(LedgerDocumentsApiTest, EditRejectsFieldsOutsideTheCreationAllowlist) {
 // derivation — the printed sum and its words are the SERVER's, from an integer
 // tiyn field, and a client-supplied string is refused exactly as at creation.
 TEST_F(LedgerDocumentsApiTest, EditRejectsServerDerivedMoneyStrings) {
-    if (!templates_available())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE("invoice");
+    REQUIRE_REPO_TEMPLATE("fno_910");
     auto org = seed_org("444240000032", "Edit Money Org LLP");
     auto p = member("edit6@example.com", org.id, "accountant");
     const std::string doc_id = seed_rendered_invoice(org.id, /*total_tiyn=*/1234567, "seed-bytes");
@@ -1267,8 +1273,8 @@ TEST_F(LedgerDocumentsApiTest, EditWithANonObjectBodyIsABadRequest) {
 // a legitimate edit — it edits nothing and re-renders the stored input
 // faithfully.
 TEST_F(LedgerDocumentsApiTest, EditWithNoBodyRerendersTheStoredInputUnchanged) {
-    if (!templates_available())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE("invoice");
+    REQUIRE_REPO_TEMPLATE("fno_910");
     auto org = seed_org("444240000046", "Edit Empty Body Org LLP");
     auto p = member("edit11@example.com", org.id, "accountant");
     const std::string filing_doc = seed_fno910_document(org.id);
@@ -1292,8 +1298,8 @@ TEST_F(LedgerDocumentsApiTest, EditWithNoBodyRerendersTheStoredInputUnchanged) {
 }
 
 TEST_F(LedgerDocumentsApiTest, EditOfAServerBuiltFormCarriesDerivedFiguresForward) {
-    if (!templates_available())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE("invoice");
+    REQUIRE_REPO_TEMPLATE("fno_910");
     auto org = seed_org("444240000033", "Edit Carry Forward Org LLP");
     auto p = member("edit3@example.com", org.id, "accountant");
     const std::string filing_doc = seed_fno910_document(org.id);
@@ -1377,8 +1383,8 @@ TEST_F(LedgerDocumentsApiTest, VersionDownloadUrlRejectsAMalformedVersionNumber)
 // A version whose render has not landed has no file — an honest 409, the same
 // answer the document-level download-url gives in that state.
 TEST_F(LedgerDocumentsApiTest, VersionDownloadUrlIsAConflictWhileTheRenderIsPending) {
-    if (!templates_available())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE("invoice");
+    REQUIRE_REPO_TEMPLATE("fno_910");
     auto org = seed_org("444240000037", "Edit Pending Render Org LLP");
     auto p = member("edit8@example.com", org.id, "accountant");
     const std::string doc_id = seed_rendered_invoice(org.id, /*total_tiyn=*/1234567, "seed-bytes");
@@ -1732,8 +1738,8 @@ TEST_F(LedgerDocumentsApiTest, AVoidedDocumentCannotBeDeleted) {
 // A voided document is not editable: a new version would be rendered and would
 // hand the document a live file back.
 TEST_F(LedgerDocumentsApiTest, AVoidedDocumentCannotBeEdited) {
-    if (!templates_available())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE("invoice");
+    REQUIRE_REPO_TEMPLATE("fno_910");
     auto org = seed_org("444240000050", "Void Then Edit Org LLP");
     auto p = member("del6@example.com", org.id, "accountant");
     const std::string doc_id = seed_rendered_invoice(org.id, /*total_tiyn=*/1234567, "seed-bytes");

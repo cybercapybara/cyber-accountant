@@ -49,7 +49,7 @@
  * found".
  *
  * generate-document design (both hr-orders and labor-contracts): the two
- * templates' schemas (templates/latex/hr_order/v1/schema.json,
+ * templates' schemas (templates/docs/hr_order/v1/schema.json,
  * .../labor_contract/v1/schema.json) require several free-text fields this
  * codebase has no column for at all — `director`, `reason`, `details`,
  * `employer.address`, `employee.address`, `work_schedule`,
@@ -679,7 +679,7 @@ private:
     }
 
     /// Free-text fields the hr_order template's schema
-    /// (templates/latex/hr_order/v1/schema.json) needs that have no backing
+    /// (templates/docs/hr_order/v1/schema.json) needs that have no backing
     /// column anywhere in this codebase — see file header. This IS the
     /// allowlist: every other key in a caller-supplied generate-document
     /// body is rejected by Api::Validation::merge_allowed_extra(),
@@ -693,7 +693,7 @@ private:
     }
 
     /// Same role as hr_order_allowed_extra_fields(), for the labor_contract
-    /// template (templates/latex/labor_contract/v1/schema.json). Paths are
+    /// template (templates/docs/labor_contract/v1/schema.json). Paths are
     /// dot-separated for fields nested under employer/employee — e.g.
     /// "employer.director" allows overriding ONLY that leaf, never the
     /// authoritative employer.name/employer.bin siblings.

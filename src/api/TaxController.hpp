@@ -116,7 +116,7 @@
  * flag stays attached to the file that was actually produced.
  *
  * The printable form goes through the SAME base-input + ALLOWLISTED-body-
- * merge design HrController documents: templates/latex/fno_910/v1/schema.json
+ * merge design HrController documents: templates/docs/fno_910/v1/schema.json
  * and fno_300/v1/schema.json both require free-text fields this codebase has
  * no column for — `director` and `accountant`. Those — and ONLY those, per
  * fno_910_allowed_extra_fields()/fno_300_allowed_extra_fields() — must
@@ -256,7 +256,7 @@ public:
         return v;
     }
 
-    /// The free-text fields templates/latex/fno_910/v1/schema.json requires
+    /// The free-text fields templates/docs/fno_910/v1/schema.json requires
     /// that NOTHING in this database can supply: the two signatory names
     /// (Tenancy::Organization has no director/accountant column). This IS
     /// the allowlist for `document_input` — the org's bin/name, the period,
@@ -274,7 +274,7 @@ public:
     }
 
     /// Same role as fno_910_allowed_extra_fields(), for
-    /// templates/latex/fno_300/v1/schema.json.
+    /// templates/docs/fno_300/v1/schema.json.
     ///
     /// `sales_tenge` is deliberately NOT here. An earlier round of this fix
     /// admitted it, on the reasoning that calculate_vat sums `vat_amount`

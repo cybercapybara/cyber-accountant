@@ -49,6 +49,7 @@
 #include "ledger/JournalService.hpp"
 #include "money/AmountInWords.hpp"
 #include "money/MoneyFormat.hpp"
+#include "repo_templates.hpp"
 #include "repositories/RoleRepository.hpp"
 #include "repositories/UserRepository.hpp"
 #include "security/Auth.hpp"
@@ -507,8 +508,7 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        if (!fs::exists("templates/latex/fno_910/v1/schema.json"))
-            GTEST_SKIP() << "repo templates not reachable from this working directory";
+        REQUIRE_REPO_TEMPLATE("fno_910");
         reset_tenant_data();
         TestHelpers::drain_jobs({kRenderJobType});
 
@@ -544,7 +544,7 @@ protected:
         return static_cast<long>(Cache::get().get_client().llen(Jobs::queue_key(kRenderJobType)));
     }
 
-    /// The free-text fields templates/latex/fno_910/v1/schema.json requires
+    /// The free-text fields templates/docs/fno_910/v1/schema.json requires
     /// and the database cannot hold (see TaxController.hpp's header).
     /// `tax_words` is NOT among them since P3: the amount in words is
     /// derived from the calculation's own total_tiyn, and supplying it is a

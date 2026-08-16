@@ -127,7 +127,7 @@ public:
     /// selects from that table alone.
     static constexpr const char* kVersionColumns =
         "id, org_id, document_id, version_no, s3_key, checksum_sha256, mime, size_bytes, template_version, "
-        "input_snapshot, created_by_user_id, created_at, updated_at";
+        "render_engine, input_snapshot, created_by_user_id, created_at, updated_at";
 
     /**
      * @brief Insert a new document for @p org_id. No UNIQUE constraint to
@@ -505,16 +505,28 @@ public:
      * @return false if no row matches (id, org_id) both — the standard
      *         OrgCrudBase-style "wrong org is indistinguishable from
      *         missing" contract, not a separate 403 branch.
+     *
+     * @param render_engine The engine descriptor that produced these bytes
+     *        (`xelatex`, `typst 0.15.1` — Docgen::engine_version). Defaulted
+     *        to nullopt so the UPLOAD path (confirmUpload) needs no change:
+     *        a file a human uploaded was produced by no engine of ours, and
+     *        recording one for it would be invented provenance. Written
+     *        through COALESCE, so a caller that passes nothing can never
+     *        BLANK an engine a render already recorded — the asymmetry
+     *        matters because the two callers write the same row for
+     *        different reasons.
      */
     bool set_version_file(const std::string& org_id,
                           const std::string& version_id,
                           const std::string& s3_key,
                           const std::string& checksum_sha256,
                           const std::string& mime,
-                          long long size_bytes) {
+                          long long size_bytes,
+                          std::optional<std::string> render_engine = std::nullopt) {
         return Database::get().execute_write([&](auto& txn) {
             auto r = txn.exec_params(
-                "UPDATE document_versions SET s3_key = $3, checksum_sha256 = $4, mime = $5, size_bytes = $6 "
+                "UPDATE document_versions SET s3_key = $3, checksum_sha256 = $4, mime = $5, size_bytes = $6, "
+                "render_engine = COALESCE($7, render_engine) "
                 "WHERE id = $1 AND org_id = $2 "
                 "RETURNING id",
                 version_id,
@@ -522,7 +534,8 @@ public:
                 s3_key,
                 checksum_sha256,
                 mime,
-                size_bytes);
+                size_bytes,
+                render_engine);
             return !r.empty();
         });
     }

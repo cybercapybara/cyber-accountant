@@ -30,6 +30,7 @@
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalEntry.hpp"
 #include "ledger/JournalService.hpp"
+#include "repo_templates.hpp"
 #include "repositories/RoleRepository.hpp"
 #include "repositories/UserRepository.hpp"
 #include "security/Auth.hpp"
@@ -64,8 +65,7 @@ protected:
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
             return;
-        if (!fs::exists("templates/latex/invoice/v1/schema.json"))
-            GTEST_SKIP() << "repo templates not reachable from this working directory";
+        REQUIRE_REPO_TEMPLATE("invoice");
 
         // Centralized org-data wipe (TestHelpers::wipe_org_data(), in
         // test_helpers.hpp) — see its Doxygen comment for why the journal/
@@ -129,7 +129,7 @@ protected:
         return TestHelpers::authed_json(p, body, method);
     }
 
-    /// A valid REQUEST input for templates/latex/invoice/v1's schema.json.
+    /// A valid REQUEST input for templates/docs/invoice/v1's schema.json.
     /// P3: the caller supplies the integer `total_tiyn` ONLY — `total` and
     /// `total_words` are derived by the server, and sending either is a 422
     /// (GenerateRejectsClientSuppliedTotalWords). What the document ends up
@@ -160,7 +160,7 @@ protected:
         return input;
     }
 
-    /// A valid REQUEST input for templates/latex/tax_invoice/v1 minus its
+    /// A valid REQUEST input for templates/docs/tax_invoice/v1 minus its
     /// `totals` object, which each test supplies itself — the three integer
     /// totals are the subject of those tests.
     static json tax_invoice_input_without_totals() {
@@ -489,11 +489,11 @@ TEST_F(DocgenApiTest, GenerateFormatsAllThreeTaxInvoiceTotalsFromIntegers) {
               "Сто четыре тысячи четыреста тенге 00 тиын");
 }
 
-// The invoice VAT hole, end to end. templates/latex/invoice/v1/template.tex
-// prints «НДС ({{ vat_rate }}): {{ vat_amount }} ₸» on line 30 and
-// «Итого к оплате: {{ total }} ₸» on line 31 — adjacent lines of the SAME
-// issued PDF. While vat_amount was client-authored, those two lines could be
-// made to contradict each other outright.
+// The invoice VAT hole, end to end. templates/docs/invoice/v1's template
+// prints «НДС (<vat_rate>): <vat_amount> ₸» directly above «Итого к оплате:
+// <total> ₸» — adjacent lines of the SAME issued PDF, in either engine's
+// spelling of them. While vat_amount was client-authored, those two lines
+// could be made to contradict each other outright.
 TEST_F(DocgenApiTest, GenerateRejectsAClientSuppliedInvoiceVatAmount) {
     auto org = seed_org("444260000016", "Invoice Vat Org LLP");
     auto accountant = member("invoice-vat@example.com", org.id, "accountant");
@@ -569,9 +569,10 @@ TEST_F(DocgenApiTest, GenerateFormatsInvoiceVatAndTotalFromIntegers) {
 
 // Third instance of the same forgery class this phase, and the subtlest: the
 // LABEL, not the amount. `vat_rate` is caller text printed inside the VAT
-// line's parentheses — «НДС ({{ vat_rate }}): {{ vat_amount }} ₸» — and
-// escape_latex deliberately passes '(', ')', ':', digits, spaces and '₸'
-// through untouched (only LaTeX-special bytes are rewritten). So a rate of
+// line's parentheses — «НДС (#d.vat_rate): #d.vat_amount ₸» — and nothing
+// between the request and the page rewrites a '(', ')', ':', digit, space or
+// '₸'. (Under the retired LaTeX path that was the escaper's deliberate
+// choice; under Typst nothing transforms a value at all.) So a rate of
 // "16%): 9 999 999,00 ₸ (" closed the parenthesis, printed a fabricated
 // amount, and reopened it — a forged figure standing directly above the
 // server-derived total. The schema pattern is what stops it: the rate may now

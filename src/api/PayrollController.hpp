@@ -66,7 +66,7 @@
  *     thresholds still come exclusively from `tax_rates`/`tax_constants`.
  *
  * generate-document: same base-input + ALLOWLISTED-body-merge design
- * HrController documents at length. templates/latex/payslip/v1/schema.json
+ * HrController documents at length. templates/docs/payslip/v1/schema.json
  * requires `net_words` (the net amount spelled out in Russian); until P3
  * this codebase had no money-to-words converter, so that one field had to
  * come from the caller. It no longer does — Money::to_words_ru
@@ -174,7 +174,7 @@ public:
     /// module rather than pulling in the worker-side RenderJob.hpp.
     static constexpr const char* kRenderJobType = "docgen.render";
 
-    /// Docgen template slug for a payslip (templates/latex/payslip/v1/).
+    /// Docgen template slug for a payslip (templates/docs/payslip/v1/).
     static constexpr const char* kPayslipSlug = "payslip";
 
     /// `documents.doc_type` for a generated payslip — the §5.3 `payroll`
@@ -595,7 +595,7 @@ private:
     }
 
     /// "Август 2026" — the human-readable period label
-    /// templates/latex/payslip/v1/schema.json wants (its fixtures use exactly
+    /// templates/docs/payslip/v1/schema.json wants (its fixtures use exactly
     /// this shape). Its own table rather than reusing Tax::TaxCalendar's:
     /// that one is a private implementation detail of the deadline expander
     /// and labels a period ENDING in a month, not a payroll month.

@@ -42,10 +42,18 @@ gates by construction. Hand-rolled versions usually don't.
    table). gitleaks gates CI; `make prod-check` gates the prod profile.
 8. **Commits:** conventional commits, no AI-attribution trailers.
 9. **Document templates carry their own expectations:** every
-   `templates/latex/<slug>/v<N>/` needs an `expected.txt` listing the static
+   `templates/docs/<slug>/v<N>/` needs an `expected.txt` listing the static
    labels it prints and its `margin <N>mm`, plus optional per-fixture
    `fixtures/<name>.expected.txt`. `scripts/check-render.py` fails if it is
-   missing — a template with no declared expectations cannot be gated.
+   missing — a template with no declared expectations cannot be gated. It
+   also needs a `fixtures/special-chars.json` whose data carries the hostile
+   payload: `#panic(`, `#read(`, `*`, `` ` ``, `@`, plus the bytes the
+   deleted LaTeX escaper used to rewrite (`% & # $ _ { } \ ^ ~`), which stay
+   on the list because the requirement was never "the escaper handles them"
+   but "the engine PRINTS them". That fixture is what makes `template-render`
+   an injection guard, and
+   `ShippedTemplatesTest.EveryTemplateShipsAHostileSpecialCharsFixture`
+   (`tests/unit/test_template_registry.cpp`) fails if one goes bland.
 10. **Printed money is `Money::format_tiyn_ru`; stored/served/filed money is
    `Ledger::format_tiyn`.** The rule is by DESTINATION, not by module. Every
    `input` handed to a docgen template — the ФНО forms (TaxController), the
@@ -54,7 +62,7 @@ gates by construction. Hand-rolled versions usually don't.
    .amount`, API responses and the ФНО XML (which uses neither formatter:
    `FnoXml::tenge_amount`, whole tenge) keep `1234.56`. In a fixture a printed
    amount is never written out at all — it is declared `amount <path> <tiyn>`
-   and derived (invariant 9, and `templates/latex/README.md`).
+   and derived (invariant 9, and `templates/docs/README.md`).
 
 ## Gate sequence — run cheapest-first before pushing
 
@@ -71,14 +79,16 @@ CI additionally runs clang-tidy, ASan+UBSan (+TSAN), gitleaks, Trivy,
 helm-render and the OpenAPI-drift gate. `template-render` renders every
 template fixture on the worker image (`worker-render-check` target — the
 production worker image plus `pdftotext`/`python3`) and then **gates the PDF
-it produced**, in three steps:
+it produced**. It first asserts the pinned engine (see "Document engines"
+below), then runs three steps:
 
 1. `scripts/render-templates.sh` — compiles every
-   `templates/latex/*/v*/fixtures/*.json` through the worker's
-   `--render-template` mode, i.e. the real render pipeline. A nonzero XeLaTeX
-   exit fails the job; so does an overfull `\hbox` over `OVERFULL_MAX_PT`
-   (1.0pt), kept as a LaTeX-only tripwire for overflow in material that
-   produces no text (a `\hrulefill` rule, an `\hline`).
+   `templates/docs/*/v*/fixtures/*.json` through the worker's
+   `--render-template` mode, i.e. the real render pipeline. A nonzero engine
+   exit fails the job, and that is **all** it can catch: Typst clips silently,
+   exits 0 and writes no transcript, so there is nothing to grep. The
+   overfull-`\hbox` tripwire went with the last `template.tex` and was not
+   replaced — step 2 reads the PDF instead, which is why it exists.
 2. `scripts/check-render.py` — the gate proper, engine-agnostic, run per
    fixture. **Oracle:** every printed amount is DERIVED from an integer
    declared `amount <path> <tiyn>` in the per-fixture expectation file, by the
@@ -92,14 +102,97 @@ it produced**, in three steps:
    `12 345,67`), never as a raw integer, and an amount that survives only
    broken across a line break counts as lost. **Geometry:** every word box
    from `pdftotext -bbox` must lie inside the declared margin box (0.5pt of
-   slack sideways, 6.0pt vertically for font ascent).
-3. `scripts/check-render-selftest.sh` — breaks payslip, fno_910, tax_invoice
-   and fno_300 on purpose and fails unless the gate catches all four and names
-   what was lost. The fno_300 case breaks the FIXTURE, not the template, and
-   is the regression test for the gate's own fixture-as-oracle blind spot.
+   slack sideways, 6.0pt vertically for font ascent). The `margin <N>mm` in
+   `expected.txt` is cross-checked against the template's own page setup
+   (`#set page(..., margin: 18mm)`). **Syntax:** no extracted token may look
+   like template syntax (a Typst `#` sigil, a content-block bracket, a bare
+   `else`/`endif`; inja delimiters and LaTeX control sequences are still
+   screened so a stray one cannot creep back in) unless the
+   fixture or a declared label contains it — the `special-chars` fixtures
+   ship `#panic("x")` and `#read("/etc/passwd")` as DATA and must keep
+   passing, so the test is provenance, not appearance. **Ink:** the page is
+   rasterised (`pdftoppm`, 200dpi) and no word may have a rule drawn through
+   it — a solid band spanning the word box and past both sides, with the
+   word's own ink above AND below it in the same pixel columns. An underline,
+   a `\midrule` or a signature line has ink on one side only; measured over
+   all 23 fixtures, zero findings.
+3. `scripts/check-render-selftest.sh` — breaks payslip, fno_910, tax_invoice,
+   fno_300 and labor_contract on purpose and fails unless the gate catches all
+   six and names what went wrong. The fno_300 case breaks the FIXTURE, not the
+   template, and is the regression test for the gate's own fixture-as-oracle
+   blind spot; the two labor_contract cases (`] else [` split across lines so
+   the branch is typeset as body text, and the signature rules turned back
+   into a zero-height `line()`) are the regression tests for the two blind
+   spots that were measured PASSING at exit 0 before the syntax and ink
+   layers existed. **A mutation that changes nothing is itself a failure:**
+   a mutator that edits engine-specific syntax silently no-ops against a
+   template converted to the other engine, so the script fingerprints the
+   template tree around every mutator and fails loudly ("changed NOTHING")
+   rather than re-testing the healthy document and reporting OK. That guard
+   fired for real when the migration retired the last `template.tex`:
+   `break_truncated_amount` and `break_over_wide_table` were still `sed`ing a
+   `{{ }}` placeholder and a `tabularx` width, and both were ported to the
+   Typst source. **All six mutators are now python3 and every one counts its
+   own substitutions and exits nonzero on a miscount** — keep both defences
+   when adding a case, and never replace a mutator with one that cannot fail
+   loudly. The tax-invoice mutator's `44mm` column width is MEASURED, not
+   arbitrary: it is the width that reproduces both halves of the original
+   LaTeX defect (columns 7-9 off the paper => `CONTENT LOST`, column 6 in the
+   band between margin and paper edge => `OFF-MARGIN`). A wider set pushes
+   everything clean off the paper, `pdftotext` sees no word, and the geometry
+   layer reports nothing.
+
+The job keeps every rendered PDF and uploads it as the **`rendered-documents`**
+artifact (`render-out/<mangled-fixture-path>/main.pdf`, 14-day retention), so
+every template conversion can still get one human look at the raster:
+`gh run download --name rendered-documents`. The two defects that used to make
+that review load-bearing — a rule drawn *through* the text, a control construct
+typeset as body text — are now gated by layers 3 and 4 above.
 
 It triggers on changes under `templates/**`, `src/docgen/**`,
 `docker/Dockerfile` or the three gate scripts.
+
+## Document engines
+
+**Typst, pinned to 0.15.1**, is the only document engine. All ten templates are
+`template.typ`; the XeLaTeX render path, the inja templating layer and
+`escape_latex` were deleted with the last `template.tex`, and **TeX Live is no
+longer installed anywhere**. The worker image (`docker/Dockerfile`, stage
+`worker-runtime`) is the only image carrying an engine, and it now carries one
+53 MiB static binary plus `fonts-noto-core` where it used to carry ~62
+TeX packages and ~417 MiB (measured from the noble apt closure; the built
+image is measured by the `Report the worker image size` step of
+`template-render`). Reverting a template to LaTeX is no longer a template
+change — it means putting that layer back.
+
+- **Data is never code.** A Typst template opens its own input
+  (`#let d = json("input.json")`), which `write_typst_inputs` writes beside the
+  copied template, so a tenant-supplied value is content and cannot be parsed
+  as source. That is why there is no escaping layer and why adding one would be
+  a regression, not a hardening: escaping BEFORE templating is what shipped ФНО
+  300.00 forms without their closing line and hr_order orders with no body at
+  all. Every template's `special-chars` fixture pins the property through the
+  real engine in CI.
+- **Which engine a template uses is still a property of its directory, not a
+  list anywhere.** `TemplateRegistry::load()` decides it per version directory
+  (`template.typ` ⇒ Typst) and `engine_name()` produces the string stored on
+  the document version. `Docgen::Engine` has one value today and the enum stays
+  — `document_versions.render_engine` still holds `xelatex` on rows rendered
+  before the migration, and a second engine must be a change to `load()` rather
+  than to every call site.
+- The Typst pin is not decorative. Typst is pre-1.0 and every minor release
+  changes layout, so the version is a build arg (`TYPST_VERSION`), the
+  download is checksum-verified against `TYPST_SHA256`, and `template-render`
+  fails if `typst --version` on the built image is not 0.15.1. Bumping it is a
+  deliberate act with a template-version consequence, never a drive-by.
+- Typst ships no fonts. It finds **Noto Sans** — the family with the Kazakh
+  glyph coverage (ә ғ қ ң ө ұ ү һ і) — from `fonts-noto-core` in
+  `/usr/share/fonts`, by scanning that directory (no fontconfig, no
+  `--font-path`). `fonts-noto-core` was installed next to TeX Live but was
+  never a TeX package: it **stayed** when TeX Live went, and removing it as
+  part of some later "TeX cleanup" would blank the Cyrillic in every document.
+  The same CI step asserts `typst fonts` still lists Noto Sans, which is what
+  would catch that.
 
 ## Don'ts
 

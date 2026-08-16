@@ -212,7 +212,7 @@ For URL components: `REDIS_HOST`, `REDIS_PORT`.
 
 | Env | JSON key | Type | Default | Notes |
 |---|---|---|---|---|
-| `DOCGEN_LATEX_CMD` | `docgen.latex_cmd` | string | `xelatex` | The LaTeX compiler `RenderJob` shells out to (run twice, each under `/usr/bin/timeout 60`). Tests point this at a stub script that copies a canned PDF instead of invoking real XeLaTeX — see `tests/integration/test_render_job.cpp`. |
+| `DOCGEN_TYPST_CMD` | `docgen.typst_cmd` | string | `typst` | The document engine `RenderJob` shells out to, once per render (`typst compile --root <tmpdir> main.typ main.pdf`, under `/usr/bin/timeout 60`). The only one: `DOCGEN_LATEX_CMD` went with the XeLaTeX path. Pinned to 0.15.1 in the worker image — Typst is pre-1.0 and each minor release breaks layout. Tests point this at a stub script. |
 
 ## Conventions
 

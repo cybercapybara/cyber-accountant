@@ -1,12 +1,12 @@
 /**
  * @file RenderJob.hpp
  * @brief Background job handler for `docgen.render`: validates a document's
- *        input against its template's JSON Schema, renders LaTeX via inja
- *        (auto-escaped), compiles it to PDF with XeLaTeX, stores the PDF,
- *        and marks the document `final`.
+ *        input against its template's JSON Schema, compiles it to PDF with
+ *        the engine that template selects, stores the PDF, and marks the
+ *        document `final`.
  *
  * Payload: `{org_id, document_id, version_id, slug, input}`. On ANY failure
- * (schema rejection, missing template, XeLaTeX exit != 0, storage/DB error)
+ * (schema rejection, missing template, engine exit != 0, storage/DB error)
  * this throws — the job framework's retry/DLQ machinery takes over
  * (src/jobs/Dispatcher.hpp) and the document is left exactly as it was
  * (typically `draft`): `set_version_file`/`set_current_version`/
@@ -31,21 +31,35 @@
  *     renders of identical input produce DIFFERENT bytes and "did someone
  *     re-render this?" is not answerable from a digest.
  *
- * The XeLaTeX invocation (`docgen.latex_cmd` / `DOCGEN_LATEX_CMD`, default
- * `xelatex`) runs twice under `/usr/bin/timeout 60` — once for content, once
- * more so a future template's `\ref`/`\pageref`/totals that depend on a
- * first pass resolve (the shipped invoice template needs none, but the
- * two-pass contract is cheap insurance for templates that do). Unit/
- * integration tests never invoke the real xelatex: DOCGEN_LATEX_CMD points
- * at a stub script that copies a canned PDF — see
- * tests/integration/test_render_job.cpp. The real XeLaTeX only runs in the
- * `template-render` CI job, on the worker image (the only place TeX Live is
+ * ONE ENGINE, still chosen per template directory (TemplateRegistry::load),
+ * never by a caller or a payload field: Typst (`docgen.typst_cmd` /
+ * `DOCGEN_TYPST_CMD`, default `typst`). `write_typst_inputs` writes the
+ * normalized input to `input.json` and copies the template to `main.typ` in
+ * the same ScopedTempDir, then ONE `typst compile --root <dir> main.typ
+ * main.pdf` pass — Typst has no aux-file fixpoint to converge, so there is
+ * nothing to run twice. The template reads the data itself
+ * (`#let d = json("input.json")`), so there is no templating layer and
+ * nothing to escape: a value is content, never source. The JSON goes in a
+ * FILE, not on the command line via `--input` — an unbounded document has no
+ * business on an argv.
+ *
+ * The inja + XeLaTeX path this replaced (`render_tex`, `escape_latex`,
+ * `compile_pdf`, `DOCGEN_LATEX_CMD`) is gone as of the Typst migration's
+ * task 16; `document_versions.render_engine` still carries `xelatex` on rows
+ * rendered before it, which is why `engine_name()` remains the single place
+ * a storable engine string is decided.
+ *
+ * Unit/integration tests never invoke the real engine: DOCGEN_TYPST_CMD
+ * points at a stub script that answers `--version` and copies a canned PDF —
+ * see tests/integration/test_render_job.cpp. The real Typst only runs in the
+ * `template-render` CI job, on the worker image (the only place it is
  * installed — see docker/Dockerfile).
  */
 
 #pragma once
 
 #include <array>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -79,8 +93,10 @@ inline constexpr const char* kJobType = "docgen.render";
 /**
  * @brief RAII scratch directory. Created via `mkdtemp` under the system temp
  *        root; removed recursively on every exit path (success, exception,
- *        early return) so a failed render never leaks a `main.tex`/`main.pdf`
- *        pair — or, worse, the input JSON snapshot baked into `main.tex`.
+ *        early return) so a failed render never leaks a `main.typ`/`main.pdf`
+ *        pair — or, worse, the input JSON snapshot, which sits there verbatim
+ *        as `input.json`. That directory is also the Typst sandbox: `--root`
+ *        points at it, so it is the entire filesystem a template can read.
  */
 class ScopedTempDir {
 public:
@@ -105,17 +121,17 @@ private:
     std::filesystem::path path_;
 };
 
-/// Resolve the configured XeLaTeX command: `docgen.latex_cmd` /
-/// `DOCGEN_LATEX_CMD`, default `xelatex`. Works even without Config
+/// Resolve the configured Typst command: `docgen.typst_cmd` /
+/// `DOCGEN_TYPST_CMD`, default `typst`. Works even without Config
 /// initialized (falls back to a raw getenv), so the worker's
 /// `--render-template` CLI smoke-test mode (no Core::initialize) can use it
 /// too.
-inline std::string latex_cmd() {
+inline std::string typst_cmd() {
     if (Config::is_initialized())
-        return Config::get().get<std::string>("docgen.latex_cmd", "DOCGEN_LATEX_CMD", "xelatex");
-    if (const char* env = std::getenv("DOCGEN_LATEX_CMD"))
+        return Config::get().get<std::string>("docgen.typst_cmd", "DOCGEN_TYPST_CMD", "typst");
+    if (const char* env = std::getenv("DOCGEN_TYPST_CMD"))
         return env;
-    return "xelatex";
+    return "typst";
 }
 
 /**
@@ -149,44 +165,151 @@ inline int run_command(const std::string& cmd, std::string* output = nullptr) {
 }
 
 /**
- * @brief Compile `<tex_dir>/main.tex` to `<tex_dir>/main.pdf` by running
- *        @p cmd twice, each under a 60s timeout with shell-escape disabled.
- * @throws std::runtime_error on any nonzero exit, or if compilation reports
- *         success but `main.pdf` is missing.
+ * @brief Compile `<dir>/main.typ` to `<dir>/main.pdf` with one `typst
+ *        compile` pass under a 60s timeout.
+ * @details `--root <dir>` confines every `read`/`include` the template can
+ *          perform to the scratch directory that holds only main.typ and
+ *          input.json. Verified against typst 0.15.1: an ABSOLUTE path is
+ *          resolved relative to the root (`#read("/etc/passwd")` fails with
+ *          "file not found (searched at <dir>/etc/passwd)") and a relative
+ *          climb errors with "path would escape the project root". One pass,
+ *          not two — Typst has no aux-file fixpoint to converge.
+ * @note Typst exits 0 and writes NO log when content overflows the page: it
+ *       clips or draws past the margin silently. There is deliberately
+ *       nothing here that greps a transcript, because there is no transcript.
+ *       Overflow is caught downstream by scripts/check-render.py, which reads
+ *       the PDF instead of the engine's opinion of it.
+ * @note A genuine failure IS loud: Typst writes its diagnostic (with source
+ *       line and caret) to stderr and produces no PDF at all, so the nonzero
+ *       exit below carries the engine's own message — which is what a
+ *       developer needs, since the most common failure is a template dotting
+ *       into a key the input does not have. `run_command` merges stderr into
+ *       the captured output for exactly this reason. A hang is bounded by
+ *       `timeout 60`: exit 124, or a signal, which `run_command` reports as
+ *       -1 — both nonzero, both throw.
+ * @throws std::runtime_error on a nonzero exit, or if it reports success but
+ *         `main.pdf` is missing.
  */
-inline void compile_pdf(const std::filesystem::path& tex_dir, const std::string& cmd) {
-    const std::string invocation =
-        "/usr/bin/timeout 60 " + cmd + " -interaction=nonstopmode -halt-on-error -no-shell-escape main.tex";
-    const std::string full_cmd = "cd " + tex_dir.string() + " && " + invocation;
-
-    for (int pass = 1; pass <= 2; ++pass) {
-        std::string output;
-        const int rc = run_command(full_cmd, &output);
-        if (rc != 0)
-            throw std::runtime_error("docgen: latex pass " + std::to_string(pass) + " failed (exit " +
-                                     std::to_string(rc) + "): " + output);
-    }
-    if (!std::filesystem::exists(tex_dir / "main.pdf"))
-        throw std::runtime_error("docgen: latex reported success but main.pdf is missing");
+inline void compile_typst(const std::filesystem::path& dir, const std::string& cmd) {
+    const std::string full_cmd = "cd " + dir.string() + " && /usr/bin/timeout 60 " + cmd + " compile --root " +
+                                 dir.string() + " main.typ main.pdf";
+    std::string output;
+    const int rc = run_command(full_cmd, &output);
+    if (rc != 0)
+        throw std::runtime_error("docgen: typst compile failed (exit " + std::to_string(rc) + "): " + output);
+    if (!std::filesystem::exists(dir / "main.pdf"))
+        throw std::runtime_error("docgen: typst reported success but main.pdf is missing");
 }
 
 /**
- * @brief Validate, render and compile @p slug's latest template against
- *        @p input into `<out_dir>/main.tex` / `<out_dir>/main.pdf`.
+ * @brief Turn the raw output of `typst --version` into the storable
+ *        descriptor: `typst 0.15.1` out of `typst 0.15.1 (9dfd3a08)`.
+ * @details Split out from engine_version() below purely so it is TESTABLE:
+ *          engine_version caches its answer in a function-local static (one
+ *          subprocess per worker, not one per render), and a cache cannot be
+ *          re-exercised with a second input inside one test binary. The
+ *          parsing is the part with a decision in it, so it is the part that
+ *          gets a test.
+ *
+ *          Takes the first whitespace-separated token that STARTS WITH A
+ *          DIGIT, which drops both the program name Typst prints first and
+ *          the `(9dfd3a08)` build hash it appends. Anything unrecognizable —
+ *          empty output, a line with no numeric token — degrades to the bare
+ *          engine name rather than storing a line whose shape we do not
+ *          understand.
+ * @return `typst <version>`, or the bare `typst` if no version is parseable.
+ */
+inline std::string typst_descriptor(const std::string& version_output) {
+    const std::string base = engine_name(Engine::kTypst);
+    std::string first_line = version_output;
+    if (const std::size_t eol = first_line.find_first_of("\r\n"); eol != std::string::npos)
+        first_line.erase(eol);
+
+    std::istringstream tokens(first_line);
+    std::string token;
+    while (tokens >> token) {
+        if (!token.empty() && std::isdigit(static_cast<unsigned char>(token.front())) != 0)
+            return base + " " + token;
+    }
+    return base;
+}
+
+/**
+ * @brief The engine descriptor recorded on a rendered version: `typst` plus
+ *        its parsed version — `typst 0.15.1`.
+ * @details The engine's stable NAME is never spelled out here: it comes from
+ *          `Docgen::engine_name()` (TemplateRegistry.hpp), the single place
+ *          that decides what a stored engine is called. This function only
+ *          appends the version.
+ *
+ *          A version is carried at all because Typst is pre-1.0 and every
+ *          minor release restyles the same template, so it is the difference
+ *          between a reproducible document and a guess. (The retired XeLaTeX
+ *          descriptor was the bare engine name for the opposite reason: its
+ *          layout had not moved in years and the TeX Live release pinning it
+ *          was already recorded by `docker/Dockerfile`. Rows written then
+ *          still read `xelatex`.)
+ *
+ *          The real binary is asked (`typst --version`), once per process
+ *          (function-local static), NOT read off a constant in this file: the
+ *          pin is a property of the worker image, and a Dockerfile bump this
+ *          source never heard about must still be recorded truthfully.
+ *
+ *          What is stored is the PARSED version, not the raw line. `typst
+ *          --version` prints `typst 0.15.1 (9dfd3a08)` — the trailing commit
+ *          hash of the build, which would turn every "was this rendered by
+ *          0.15.1?" into a substring match, and would change the stored
+ *          descriptor for a rebuild of the very same release. That hash is
+ *          not lost: the version tag plus `TYPST_SHA256` in docker/Dockerfile
+ *          identify the downloaded binary exactly, which is a stronger record
+ *          than the hash alone and one this column does not have to carry.
+ *
+ *          If the binary cannot be asked — it is absent, it fails, or popen
+ *          itself fails — the descriptor degrades to a bare `typst` instead
+ *          of failing the render: a document with a coarse engine note beats
+ *          no document.
+ */
+inline std::string engine_version(Engine /*engine*/) {
+    static const std::string cached = [] {
+        try {
+            std::string out;
+            if (run_command(typst_cmd() + " --version", &out) != 0)
+                return std::string(engine_name(Engine::kTypst));
+            return typst_descriptor(out);
+        } catch (const std::exception&) {
+            return std::string(engine_name(Engine::kTypst));
+        }
+    }();
+    return cached;
+}
+
+/**
+ * @brief Validate, stage and compile @p slug's latest template against
+ *        @p input, producing `<out_dir>/main.pdf`.
  * @details Shared by the render job and the worker's `--render-template`
  *          CLI smoke-test mode (src/worker_main.cpp), so both paths exercise
- *          the exact same validate -> normalize -> render -> compile
+ *          the exact same validate -> normalize -> stage -> compile
  *          pipeline. `TemplateRegistry::normalize_input` runs strictly AFTER
  *          `validate()` succeeds — it schema-driven-fills every optional
- *          field the caller omitted (so `{{ }}`/`{% if %}` in the template
- *          can dot into it without inja's "variable not found" render
- *          error) — see that function's doc comment for why templates
- *          additionally had to switch `{% if X %}` to `{% if X != "" %}` on
- *          optional string fields.
+ *          field the caller omitted, without which Typst fails the whole
+ *          compile with "dictionary does not contain key" the moment a
+ *          template dots into one.
+ *
+ *          The engine is `info->engine`, decided by the template directory
+ *          (TemplateRegistry::load), never by a caller or a payload field.
+ *          There is one engine today, and the resolution stays here anyway:
+ *          `write_typst_inputs` + `compile_typst`, leaving `main.typ` and
+ *          `input.json` beside the PDF.
+ * @return the engine descriptor that produced the PDF (`engine_version`),
+ *         for the caller to store on the version alongside the file. It is
+ *         returned rather than recomputed by the caller because the engine
+ *         is resolved HERE, from the template on disk, and nowhere else.
  * @throws std::runtime_error on a missing template, schema-validation
  *         failure, or compile failure.
  */
-inline void render_and_compile(const std::string& slug, const json& input, const std::filesystem::path& out_dir) {
+inline std::string render_and_compile(const std::string& slug,
+                                      const json& input,
+                                      const std::filesystem::path& out_dir) {
     TemplateRegistry registry;
     auto info = registry.latest(slug);
     if (!info)
@@ -195,16 +318,13 @@ inline void render_and_compile(const std::string& slug, const json& input, const
         throw std::runtime_error("docgen: schema validation failed: " + *err);
 
     const json normalized = TemplateRegistry::normalize_input(info->schema, input);
-    const std::string tex = render_tex(*info, normalized);
-    std::ofstream out(out_dir / "main.tex", std::ios::binary | std::ios::trunc);
-    if (!out)
-        throw std::runtime_error("docgen: cannot write main.tex to " + out_dir.string());
-    out << tex;
-    out.close();
-    if (!out)
-        throw std::runtime_error("docgen: failed writing main.tex to " + out_dir.string());
 
-    compile_pdf(out_dir, latex_cmd());
+    // normalize_input is MORE load-bearing under Typst, not less: inja
+    // printed nothing for a missing optional, Typst hard-errors with
+    // "dictionary does not contain key".
+    write_typst_inputs(*info, normalized, out_dir);
+    compile_typst(out_dir, typst_cmd());
+    return engine_version(info->engine);
 }
 
 /**
@@ -239,7 +359,11 @@ inline json process_job(const json& payload) {
     std::string version_id = payload.value("version_id", std::string{});
 
     ScopedTempDir tmp("docgen-");
-    render_and_compile(slug, input, tmp.path());
+    // Which engine, and at which version, produced these exact bytes — stored
+    // on the version below. Taken from the render itself, never re-derived
+    // from the slug afterwards: the template on disk is what chooses the
+    // engine, and it may have been converted between the two.
+    const std::string engine = render_and_compile(slug, input, tmp.path());
 
     const auto pdf_path = tmp.path() / "main.pdf";
     std::ifstream pdf_file(pdf_path, std::ios::binary);
@@ -313,7 +437,7 @@ inline json process_job(const json& payload) {
     Storage::get().put(key, pdf_bytes, "application/pdf");
 
     if (!documents.set_version_file(
-            org_id, version_id, key, checksum, "application/pdf", static_cast<long long>(pdf_bytes.size())))
+            org_id, version_id, key, checksum, "application/pdf", static_cast<long long>(pdf_bytes.size()), engine))
         throw std::runtime_error("docgen: set_version_file found no version " + version_id + " in org " + org_id);
 
     // Publish: only now does the document report this file — and only while
@@ -360,7 +484,8 @@ inline json process_job(const json& payload) {
                 {"slug", slug},
                 {"key", key},
                 {"checksum_sha256", checksum},
-                {"size_bytes", pdf_bytes.size()}};
+                {"size_bytes", pdf_bytes.size()},
+                {"render_engine", engine}};
 }
 
 // Self-registration — the worker dispatches "docgen.render" jobs here as

@@ -25,6 +25,7 @@
 #include <nlohmann/json.hpp>
 
 #include "money/MoneyFormat.hpp"
+#include "repo_templates.hpp"
 
 namespace {
 
@@ -90,10 +91,6 @@ std::vector<std::string> split_path(const std::string& path) {
     return segs;
 }
 
-bool repo_templates_reachable() {
-    return fs::exists("templates/latex/fno_300/v1/template.tex");
-}
-
 /// THE regression pin for the v0.4.2 defect, and the seam between the C++
 /// formatter and the render gate's Python port of it.
 ///
@@ -108,12 +105,18 @@ bool repo_templates_reachable() {
 ///  * if format_tiyn_ru were ever "unified" back into Ledger::format_tiyn's
 ///    "450000.00", every one of these assertions fails at once. That is the
 ///    machine form coming back, and the explicit shape check below names it.
+///
+/// It ran nothing at all between the ФНО 300 conversion and this commit: the
+/// guard probed `templates/docs/fno_300/v1/template.tex`, which that
+/// conversion deleted, so the whole sweep skipped — silently, repo-wide, on
+/// the one test that stands between the printed form and the machine form.
+/// The guard now asks the template TREE (tests/repo_templates.hpp), which no
+/// engine change can move.
 TEST(MoneyFormatRu, MatchesEveryAmountDirective) {
-    if (!repo_templates_reachable())
-        GTEST_SKIP() << "repo templates not reachable from this working directory";
+    REQUIRE_REPO_TEMPLATE_TREE();
 
     std::size_t checked = 0;
-    for (const auto& entry : fs::recursive_directory_iterator("templates/latex")) {
+    for (const auto& entry : fs::recursive_directory_iterator(TestTemplates::kRoot)) {
         const fs::path& expectations = entry.path();
         if (!entry.is_regular_file() || expectations.extension() != ".txt")
             continue;

@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS documents (
     mime             TEXT,
     size_bytes       BIGINT,
     -- Set only for source='generated' rows (Docgen::TemplateRegistry,
-    -- templates/latex/<slug>/v<N>/). template_version is TEXT, not INTEGER:
+    -- templates/docs/<slug>/v<N>/). template_version is TEXT, not INTEGER:
     -- it is carried forward opaquely from the registry's on-disk version
     -- label — nothing in this table does arithmetic or ordering on it.
     template_slug    TEXT,
