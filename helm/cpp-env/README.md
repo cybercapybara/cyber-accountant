@@ -44,3 +44,36 @@ kubectl -n cyber-accountant exec deploy/api -c cyber-accountant -- \
 Ingress отдаёт `/` на `web:8080`, поэтому снаружи `/ready` и `/health`
 возвращают HTML одностраничного приложения. Реальная проверка — обращение к
 поду `api` внутри кластера, где `/ready` завязан на `SELECT 1`.
+
+## values-cybercapybara.yaml НЕ является файлом боевого развёртывания
+
+Название обещает обратное, и на этом легко подорваться. В репозитории лежат
+**заглушки** (`test-db-pass-change-me`), другой хост БД и выключенный ingress.
+Боевые значения существуют только внутри самого релиза Helm.
+
+Развёртывание этим файлом ломает установку молча и до конца: пароли БД, Redis,
+JWT, SMTP и S3 подставляются заглушками, чарт **удаляет секрет `api`**, а из
+подов пропадают все `secretKeyRef`. Старые поды при этом продолжают работать —
+они прочитали значения при старте, — поэтому сайт выглядит живым, хотя любой
+перезапуск пода означал бы падение. Так был сломан выпуск 0.5.0 (релиз 23).
+
+**Правильный способ получить боевые значения — извлечь их из последнего
+удачного релиза:**
+
+```
+helm -n cyber-accountant get values cyber-accountant --revision <N> -o yaml > /tmp/vals.yaml
+chmod 600 /tmp/vals.yaml            # файл содержит все секреты
+# поменять только теги образов, затем:
+helm upgrade cyber-accountant helm/cpp-env -n cyber-accountant -f /tmp/vals.yaml --wait
+shred -u /tmp/vals.yaml
+```
+
+`helm history cyber-accountant` покажет номер последней ревизии со статусом
+`deployed`. Никогда не запускать `helm upgrade` с `--reuse-values=false` и
+репозиторным values-файлом.
+
+**Признак, что это уже случилось:**
+
+```
+kubectl -n cyber-accountant get secret api    # NotFound == установка сломана
+```
