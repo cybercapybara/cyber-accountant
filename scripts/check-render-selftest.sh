@@ -37,8 +37,11 @@
 # because the expectation files were wrong, or because the render crashed, or
 # because the gate rejects everything.
 #
-# Needs the same environment as scripts/render-templates.sh (a real xelatex,
-# a real typst, pdftotext and python3) — i.e. the worker-render-check image.
+# Needs the same environment as scripts/render-templates.sh (a real typst,
+# pdftotext, pdftoppm and python3) — i.e. the worker-render-check image. All
+# ten templates are Typst now, so no case reaches xelatex any more; the image
+# still carries TeX Live and this script would still drive it if a
+# `template.tex` came back.
 #
 # Usage:
 #   WORKER_BIN=/app/cyber_accountant_worker ./scripts/check-render-selftest.sh
@@ -63,21 +66,26 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 failures=0
 
-# --- the four breakages ------------------------------------------------------
+# --- the six breakages --------------------------------------------------------
 # Each takes the root of a private copy of the templates tree and edits one
-# template in place. `sed -i` is avoided: its argument differs between GNU and
-# BSD sed and this script is run on both.
+# template (case 4: one fixture) in place.
 #
-# TWO OF THE FOUR EDIT LaTeX SYNTAX (a `{{ }}` placeholder, a `tabularx`
-# width) — payslip's was ported to Typst when payslip was converted, and the
-# rest follow their own templates. Against a converted `template.typ` a
-# LaTeX pattern matches
-# nothing and `sed` cheerfully copies the file through unchanged — the case
-# would then "pass" because the gate was handed an UNMUTATED template twice,
-# which is the green-rubber-stamp failure this whole script exists to prevent.
-# So run_case fingerprints the tree around every mutator and fails loudly when
-# a mutation changes nothing. See tree_files/digest_of and the "changed
-# NOTHING" branch below.
+# EVERY MUTATOR IS NOW python3 AND EVERY ONE COUNTS ITS SUBSTITUTIONS. That is
+# not style. Two of them used to `sed` LaTeX syntax — a `{{ }}` placeholder in
+# fno_910, a `tabularx` width in tax_invoice — and when those templates were
+# converted the patterns stopped matching: `sed` cheerfully copied the file
+# through unchanged and the case would have "passed" because the gate was
+# handed an UNMUTATED template twice, which is the green-rubber-stamp failure
+# this whole script exists to prevent. The tree now holds zero `template.tex`,
+# so ANY surviving LaTeX pattern would no-op silently. Two defences, and keep
+# both: each mutator exits nonzero when its own count is wrong, AND run_case
+# fingerprints the tree around every mutator and fails loudly when a mutation
+# changes nothing. See tree_files/digest_of and the "changed NOTHING" branch
+# below.
+#
+# `sed -i` was avoided here for a second reason worth keeping in mind if one
+# ever comes back: its argument differs between GNU and BSD sed and this
+# script is run on both.
 
 # 1. The v0.3.0 symptom, reproduced exactly: the payslip's amounts column is
 #    emptied. Every money cell in the table body loses its value while the
@@ -107,18 +115,56 @@ PY
 #    that was printed and filed in v0.3.0, and it is the case that proves
 #    amounts are compared in the form they are PRINTED — `10 000` is a prefix
 #    of `10 000 000,00`, so a sloppy check would pass it.
+#    The reference may be written `#d.income_tenge` (markup position) or
+#    `d.income_tenge` (inside a table cell, already code position), so both are
+#    matched — and the mutator fails loudly if it matched neither, because a
+#    mutator that changes nothing turns its case into "the gate passed a
+#    healthy document".
 break_truncated_amount() {
-    local tex="$1/fno_910/v1/template.tex"
-    sed 's/{{ income_tenge }}/10 000/' "$tex" >"$tex.new" && mv "$tex.new" "$tex"
+    python3 - "$1/fno_910/v1/template.typ" <<'PY'
+import re, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+# `[10 000]` and not a bare `10 000`: in a code position a bare number is code,
+# not text. A content block prints the literal either way.
+text, n = re.subn(r"#?d\.income_tenge", "[10 000]", text)
+if n < 1:
+    sys.exit("break_truncated_amount: no d.income_tenge reference in %s" % path)
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(text)
+PY
 }
 
 # 3. Content pushed past the right margin: the tax invoice's nine-column table
-#    is widened to 1.25\textwidth, which walks its VAT columns off the right
-#    edge of the paper — the printed document loses them entirely.
+#    is given fixed, oversized columns instead of the (auto, 1fr, auto…) set,
+#    which walks its VAT columns off the right edge. Typst does this SILENTLY —
+#    exit 0, no warning, no log at all — which is precisely why the gate reads
+#    the PDF and not the engine's opinion of it.
+#    44mm is measured, not arbitrary. The column pitch is 44+3mm, so on a 297mm
+#    landscape page columns 7-9 land past the PAPER edge (their content is
+#    dropped and lost, `Ставка НДС` among it) while column 6's right-aligned
+#    figures land between the 285mm margin and the paper edge, where pdftotext
+#    still sees them and layer 2 can flag them. Both halves are needed: the
+#    run_case below asserts CONTENT LOST *and* OFF-MARGIN. A wider set (60mm)
+#    pushes EVERY overflowing column clean off the paper, leaving no word for
+#    the geometry layer to find and no OFF-MARGIN line at all.
 break_over_wide_table() {
-    local tex="$1/tax_invoice/v1/template.tex"
-    sed 's/\\begin{tabularx}{\\textwidth}/\\begin{tabularx}{1.25\\textwidth}/' \
-        "$tex" >"$tex.new" && mv "$tex.new" "$tex"
+    python3 - "$1/tax_invoice/v1/template.typ" <<'PY'
+import re, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+# count=1: the template has exactly two `columns: (…)` — the nine-column
+# `#table` and the signature `#grid` — and the table is first.
+text, n = re.subn(r"columns:\s*\([^)]*\)",
+                  "columns: (44mm, 44mm, 44mm, 44mm, 44mm, 44mm, 44mm, 44mm, 44mm)",
+                  text, count=1)
+if n != 1:
+    sys.exit("break_over_wide_table: no `columns: (...)` found in %s" % path)
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(text)
+PY
 }
 
 # 4. The v0.4.2 defect, reproduced exactly: every amount of the ФНО 300.00
@@ -134,8 +180,11 @@ import re, sys
 path = sys.argv[1]
 with open(path, encoding="utf-8") as fh:
     text = fh.read()
-text = re.sub(r': "(\d{1,3}(?: \d{3})*),(\d{2})"',
-              lambda m: ': "%s.%s"' % (m.group(1).replace(" ", ""), m.group(2)), text)
+text, n = re.subn(r': "(\d{1,3}(?: \d{3})*),(\d{2})"',
+                  lambda m: ': "%s.%s"' % (m.group(1).replace(" ", ""), m.group(2)), text)
+if n < 1:
+    sys.exit("break_machine_money_form: no printed-form amount in %s — the "
+             "fixture no longer carries the money strings this case rewrites" % path)
 with open(path, "w", encoding="utf-8") as fh:
     fh.write(text)
 PY
@@ -217,10 +266,12 @@ tree_files() {
 #
 # It fingerprints a FIXED path list captured before the mutation, deliberately
 # ignoring files that appeared after it. A mutator whose pattern matches
-# nothing still leaves litter behind — `sed ... >"$tex.new"` creates an empty
-# `template.tex.new` through the shell redirect before sed even runs — and a
-# whole-tree fingerprint would read that litter as "something changed" and wave
-# the no-op through. Only a change to a file the render actually reads counts.
+# nothing can still leave litter behind — the retired `sed ... >"$tex.new"`
+# form created an empty `template.tex.new` through the shell redirect before
+# sed even ran — and a whole-tree fingerprint would read that litter as
+# "something changed" and wave the no-op through. No mutator writes a sidecar
+# today, but keep the fixed list: only a change to a file the render actually
+# reads may count as a mutation.
 digest_of() {
     local file
     while IFS= read -r file; do

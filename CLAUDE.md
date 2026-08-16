@@ -128,11 +128,22 @@ below), then runs three steps:
    into a zero-height `line()`) are the regression tests for the two blind
    spots that were measured PASSING at exit 0 before the syntax and ink
    layers existed. **A mutation that changes nothing is itself a failure:**
-   several mutators edit engine-specific syntax and would silently no-op
-   against a template converted to the other engine, so the script
-   fingerprints the template tree around every mutator and fails loudly
-   ("changed NOTHING") rather than re-testing the healthy document and
-   reporting OK.
+   a mutator that edits engine-specific syntax silently no-ops against a
+   template converted to the other engine, so the script fingerprints the
+   template tree around every mutator and fails loudly ("changed NOTHING")
+   rather than re-testing the healthy document and reporting OK. That guard
+   fired for real when the migration retired the last `template.tex`:
+   `break_truncated_amount` and `break_over_wide_table` were still `sed`ing a
+   `{{ }}` placeholder and a `tabularx` width, and both were ported to the
+   Typst source. **All six mutators are now python3 and every one counts its
+   own substitutions and exits nonzero on a miscount** — keep both defences
+   when adding a case, and never replace a mutator with one that cannot fail
+   loudly. The tax-invoice mutator's `44mm` column width is MEASURED, not
+   arbitrary: it is the width that reproduces both halves of the original
+   LaTeX defect (columns 7-9 off the paper => `CONTENT LOST`, column 6 in the
+   band between margin and paper edge => `OFF-MARGIN`). A wider set pushes
+   everything clean off the paper, `pdftotext` sees no word, and the geometry
+   layer reports nothing.
 
 The job keeps every rendered PDF and uploads it as the **`rendered-documents`**
 artifact (`render-out/<mangled-fixture-path>/main.pdf`, 14-day retention), so
