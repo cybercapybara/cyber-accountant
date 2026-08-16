@@ -156,9 +156,14 @@ It triggers on changes under `templates/**`, `src/docgen/**`,
 
 **Typst, pinned to 0.15.1**, is the only document engine. All ten templates are
 `template.typ`; the XeLaTeX render path, the inja templating layer and
-`escape_latex` were deleted with the last `template.tex`. The worker image
-(`docker/Dockerfile`, stage `worker-runtime`) is the only image carrying an
-engine, and still carries the TeX Live layer — dropping it is its own task.
+`escape_latex` were deleted with the last `template.tex`, and **TeX Live is no
+longer installed anywhere**. The worker image (`docker/Dockerfile`, stage
+`worker-runtime`) is the only image carrying an engine, and it now carries one
+53 MiB static binary plus `fonts-noto-core` where it used to carry ~62
+TeX packages and ~417 MiB (measured from the noble apt closure; the built
+image is measured by the `Report the worker image size` step of
+`template-render`). Reverting a template to LaTeX is no longer a template
+change — it means putting that layer back.
 
 - **Data is never code.** A Typst template opens its own input
   (`#let d = json("input.json")`), which `write_typst_inputs` writes beside the
@@ -182,8 +187,12 @@ engine, and still carries the TeX Live layer — dropping it is its own task.
   deliberate act with a template-version consequence, never a drive-by.
 - Typst ships no fonts. It finds **Noto Sans** — the family with the Kazakh
   glyph coverage (ә ғ қ ң ө ұ ү һ і) — from `fonts-noto-core` in
-  `/usr/share/fonts`, by scanning that directory. The same CI step asserts
-  `typst fonts` still lists it.
+  `/usr/share/fonts`, by scanning that directory (no fontconfig, no
+  `--font-path`). `fonts-noto-core` was installed next to TeX Live but was
+  never a TeX package: it **stayed** when TeX Live went, and removing it as
+  part of some later "TeX cleanup" would blank the Cyrillic in every document.
+  The same CI step asserts `typst fonts` still lists Noto Sans, which is what
+  would catch that.
 
 ## Don'ts
 

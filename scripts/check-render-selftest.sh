@@ -39,9 +39,10 @@
 #
 # Needs the same environment as scripts/render-templates.sh (a real typst,
 # pdftotext, pdftoppm and python3) — i.e. the worker-render-check image. All
-# ten templates are Typst now, so no case reaches xelatex any more; the image
-# still carries TeX Live and this script would still drive it if a
-# `template.tex` came back.
+# ten templates are Typst and the image carries no other engine: TeX Live is
+# gone, so a `template.tex` coming back would not render at all rather than
+# quietly taking a second path. Every mutator here therefore edits Typst
+# source, and the "changed NOTHING" guard below is what keeps that true.
 #
 # Usage:
 #   WORKER_BIN=/app/cyber_accountant_worker ./scripts/check-render-selftest.sh

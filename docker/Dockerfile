@@ -201,43 +201,39 @@ FROM runtime-base AS worker-runtime
 ARG WORKER_BINARY=cyber_accountant_worker
 ENV WORKER_BINARY=${WORKER_BINARY}
 
-# TeX Live for the "docgen.render" job (src/docgen/RenderJob.hpp): renders
-# templates/latex/<slug>/v<N>/template.tex to PDF via XeLaTeX. ONLY installed
-# here (never in runtime-base / the api `runtime` stage above) — TeX Live is
-# hundreds of MB and the API image never shells out to xelatex.
-#   texlive-xetex               the XeTeX engine RenderJob invokes
-#   texlive-latex-recommended    core LaTeX + polyglossia.sty (verified via
-#                                packages.ubuntu.com/noble contents search —
-#                                this is the package that ships it, not
-#                                texlive-lang-*), needed for the invoice
-#                                template's \usepackage{polyglossia}
-#   texlive-latex-extra          tabularx/booktabs/fancyhdr — the invoice
-#                                template's table + header packages
-#   texlive-lang-cyrillic        polyglossia/babel Cyrillic hyphenation
-#                                patterns (\setmainlanguage{russian})
-#   fonts-noto-core              ships NotoSans-Regular.ttf — the invoice
-#                                template's \setmainfont{Noto Sans}, with
-#                                Cyrillic AND Kazakh (ә ғ қ ң ө ұ ү һ і)
-#                                glyph coverage
-# texlive-lang-other was considered (polyglossia's language coverage) but
-# skipped: polyglossia/babel ship no Kazakh language file at all (no
-# gloss-kazakh.ldf, no babel-kazakh package) — Kazakh text renders as plain
-# Unicode via fontspec/Noto Sans, same as any other run of characters, not as
-# a polyglossia \setmainlanguage. Nothing in texlive-lang-other is needed.
+# Fonts for the "docgen.render" job (src/docgen/RenderJob.hpp). ONLY installed
+# here, never in runtime-base / the api `runtime` stage above — the API image
+# never renders a document.
+#
+# `fonts-noto-core` ships NotoSans-Regular/Bold/Italic/BoldItalic, the family
+# all ten templates select with `#set text(font: "Noto Sans")` and the one with
+# Cyrillic AND Kazakh (ә ғ қ ң ө ұ ү һ і) coverage, plus ₸ and №. Typst carries
+# no fonts of its own and discovers system fonts by scanning /usr/share/fonts
+# (fontdb load_system_fonts — no fontconfig, no --font-path), which is where
+# this package puts them. It is NOT a TeX package and did not go with TeX Live:
+# removing it would blank every Cyrillic glyph in every document.
+#
+# TeX Live used to live here — texlive-xetex, texlive-latex-recommended,
+# texlive-latex-extra and texlive-lang-cyrillic, for the retired XeLaTeX render
+# path. Resolving the apt closure of that set against the real noble
+# main+universe indexes: ~62 packages and ~417 MiB installed, gone. It also
+# took a full Perl (libperl5.38t64 + perl-modules-5.38, 47 MiB) and
+# libpdfbox-java out of Trivy's scan surface — a Java PDF library and a Perl
+# this service never used, pulled in transitively by texlive-base. What is left
+# of the docgen layer is Typst's one 53 MiB static binary plus ~43 MiB of Noto,
+# roughly an 80% cut, and ~137 MiB less to push to GHCR per release and pull
+# per deploy. Sizes: .superpowers/sdd/typst-migration-spike.md §4 and the
+# `Report the worker image size` step of the `template-render` CI job, which
+# measures the built image rather than the package metadata.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    texlive-xetex \
-    texlive-latex-recommended \
-    texlive-latex-extra \
-    texlive-lang-cyrillic \
     fonts-noto-core \
     && rm -rf /var/lib/apt/lists/*
 
-# Typst — the document engine the docgen templates are migrating to
-# (.superpowers/sdd/typst-migration-spike.md). Installed ALONGSIDE TeX Live
-# for the duration of the migration: TemplateRegistry picks the engine per
-# template directory (template.typ -> typst, template.tex -> xelatex), so
-# both must exist until the tenth template is converted. TeX Live is removed
-# in its own commit once none remains.
+# Typst — the ONLY document engine (.superpowers/sdd/typst-migration-spike.md).
+# `TemplateRegistry::load()` still decides the engine per version directory
+# (template.typ -> typst), so this image ships exactly the one engine the
+# template tree asks for; there is no LaTeX fallback and a `template.tex` would
+# now fail to render rather than quietly take a second path.
 #
 # Pinned, never `latest`: Typst is pre-1.0 and every minor release carries
 # breaking changes and removals. A document rendered from v1 must still
@@ -252,11 +248,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Typst prints `typst <version> (<8-char commit>)` — the commit in the 0.15.1
 # asset is 9dfd3a08, i.e. the v0.15.1 tag commit.
 #
-# No font dependency of its own: Typst discovers system fonts by scanning
-# /usr/share/fonts (fontdb load_system_fonts, no fontconfig needed), which is
-# where fonts-noto-core above puts Noto Sans — the same family the .tex
-# templates set, with the Kazakh glyph coverage (ә ғ қ ң ө ұ ү һ і) the spike
-# verified.
+# No font dependency of its own — see the fonts-noto-core block above, which
+# is why that package stays now that TeX Live is gone. The `template-render`
+# job asserts `typst fonts` still lists Noto Sans, so a font package lost in a
+# future cleanup fails the build rather than a rendered PDF.
 #
 # One static-pie musl binary, no runtime deps, ~53 MiB installed. amd64 only:
 # build-staging is linux/amd64 and nothing builds this image locally.

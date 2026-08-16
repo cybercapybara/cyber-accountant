@@ -333,23 +333,28 @@ jobs:
   template-render:
     runs-on: ubuntu-latest
     # Actually compiles every templates/latex/*/v*/fixtures/*.json through
-    # XeLaTeX on the worker image — the only stage with TeX Live installed
+    # Typst on the worker image — the only stage carrying a document engine
     # (docker/Dockerfile's worker-runtime stage). The unit/integration
     # buckets stub DOCGEN_TYPST_CMD (tests/integration/test_render_job.cpp),
     # so this is the ONLY gate that would catch a template that passes
     # schema validation and staging but doesn't actually compile.
     #
-    # "It compiled" was never enough, though: v0.3.0 shipped templates whose
-    # amounts table hung off the right edge of the page, which XeLaTeX reports
-    # as a *warning* with exit code 0. So this job then reads the PDF it just
-    # produced (scripts/check-render.py): every fixture value and every static
-    # label must be in the extracted text, every word box must sit inside the
-    # page's margin box, no token may look like template syntax the fixture
-    # cannot account for, and the page is rasterised (pdftoppm) so that a rule
-    # drawn THROUGH a word — which text extraction is blind to — fails too.
-    # The last step breaks six things on purpose and requires the gate to
-    # catch all six, so it cannot rot into a green rubber stamp. See the
-    # rationale block in scripts/render-templates.sh.
+    # "It compiled" was never enough, and there is no engine transcript to ask
+    # instead: v0.3.0 shipped templates whose amounts table hung off the right
+    # edge of the page, and Typst does that kind of damage even more quietly —
+    # it CLIPS silently, exits 0 and writes no log, so there is nothing to
+    # grep. So this job reads the PDF it just produced
+    # (scripts/check-render.py), in layers: every fixture value and every
+    # static label must be in the extracted text (with printed money DERIVED
+    # from the fixture's integer tiyn, never hand-written); every word box must
+    # sit inside the page's margin box; no token may look like template syntax
+    # the fixture cannot account for — screened by provenance, so the
+    # special-chars fixtures' `#panic(` stays legal as DATA; and the page is
+    # rasterised (pdftoppm) so that a rule drawn THROUGH a word, which text
+    # extraction is blind to, fails too. The last step breaks six things on
+    # purpose and requires the gate to catch all six, so it cannot rot into a
+    # green rubber stamp. See the rationale block in
+    # scripts/render-templates.sh.
     #
     # The PDFs themselves are kept and uploaded as the `rendered-documents`
     # artifact, so every template conversion in the Typst migration can still
@@ -363,9 +368,11 @@ jobs:
     permissions:
       contents: read
       pull-requests: read  # dorny/paths-filter needs this to list changed files via the API on pull_request events
-    # 45, not 30: the worker-runtime image carries TeX Live, and a cache-cold
-    # build of it alone overran the old ceiling.
-    timeout-minutes: 45
+    # Back to 30: the ceiling was raised to 45 because worker-runtime carried
+    # TeX Live and a cache-cold build of that layer alone overran it. That
+    # layer is gone — one 16.7 MiB Typst tarball and ~13 MiB of Noto replace
+    # 154 MiB of apt downloads plus texlive-base's format generation.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -388,7 +395,7 @@ jobs:
         if: steps.changes.outputs.docgen == 'true'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
 
-      - name: Build worker image (worker-render-check target — TeX Live + poppler)
+      - name: Build worker image (worker-render-check target — Typst + poppler)
         if: steps.changes.outputs.docgen == 'true'
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5.4.0
         with:
@@ -412,7 +419,7 @@ jobs:
             type=registry,ref=ghcr.io/${{ github.repository }}/builder:cache
           cache-to: type=gha,mode=max
 
-      - name: Assert the pinned engine versions
+      - name: Assert the pinned engine version
         if: steps.changes.outputs.docgen == 'true'
         # The engine version is recorded on every rendered document version
         # (document_versions.render_engine) and is part of the render's
@@ -424,11 +431,14 @@ jobs:
         # version token exactly and lets the commit follow it. 0.15.1 is tag
         # commit 9dfd3a08.
         #
-        # The font check is the second half of the contract: Typst carries no
-        # fonts of its own and finds Noto Sans only by scanning
-        # /usr/share/fonts, where fonts-noto-core (installed for XeLaTeX) puts
-        # it. If that ever stops being true, the templates lose their Cyrillic
-        # and Kazakh glyphs, so it fails here rather than in a rendered PDF.
+        # The font check is the second half of the contract, and it is what
+        # stands between the image and a well-meant "drop the last font
+        # package too" cleanup: Typst carries no fonts of its own and finds
+        # Noto Sans only by scanning /usr/share/fonts, where fonts-noto-core
+        # puts it. That package was installed alongside TeX Live but was never
+        # a TeX package, and it stayed when TeX Live went. If it ever leaves,
+        # every template loses its Cyrillic and Kazakh glyphs — so it fails
+        # here rather than in a rendered PDF.
         run: |
           docker run --rm --entrypoint typst \
             cyber-accountant-template:worker-render --version | tee /tmp/typst-version
@@ -481,3 +491,15 @@ jobs:
             --entrypoint /bin/bash \
             cyber-accountant-template:worker-render \
             /scripts/check-render-selftest.sh
+
+      - name: Report the worker image size
+        if: steps.changes.outputs.docgen == 'true'
+        # The one number the Typst migration was justified on that nothing
+        # measured: the spike could only resolve apt metadata, because Docker
+        # was not available on the machine it ran on. This is the built image,
+        # in bytes. worker-render-check = the production worker-runtime layers
+        # plus poppler-utils and python3, so it reads a little high; the
+        # worker-runtime layers underneath are the ones that ship.
+        run: |
+          docker image inspect cyber-accountant-template:worker-render \
+            --format '{{.Size}} bytes ({{div .Size 1048576}} MiB)'
