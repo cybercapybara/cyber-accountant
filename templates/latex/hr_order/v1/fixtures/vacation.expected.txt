@@ -1,0 +1,30 @@
+# kind == "vacation" — the FIFTH order kind, and until the Typst conversion
+# the only one with no fixture at all. `hire`, `dismiss`, `business_trip` and
+# `salary_change` each had one; nothing ever rendered a vacation order, so the
+# only thing asserting that this branch prints a body was
+# ShippedTemplatesTest.HrOrderPrintsABodyForEveryKind, which searched the
+# rendered LaTeX SOURCE. A Typst template produces no such source — the branch
+# is taken inside the engine — so that test cannot survive the conversion, and
+# the property it protected (every kind prints a body, the v0.4.1 symptom
+# being a header and two signature lines with nothing in between) moves here,
+# to the render gate's content layer, exactly as
+# Fno300PrintsItsClosingLineForBothBalanceKinds moved to fno_300's per-fixture
+# expectations. With this file all five kinds have a rendered witness.
+Демалыс беру туралы бұйрық / Приказ о предоставлении отпуска
+демалыс берілсін.
+Предоставить
+отпуск с
+Мазмұны / Содержание:
+Негіздеме / Основание:
+
+# No `effective_to`. The vacation and business-trip bodies are the only two
+# with an optional end-date sub-branch inside them, and
+# fixtures/business_trip.expected.txt exercises only its POSITIVE half
+# ("бастап … дейін" / "по …"). This fixture is the negative half: the branch
+# must still print its whole body, in both languages, with the sub-branch
+# taken the other way — an order reading "отпуск с 01.09.2026." and not
+# "отпуск с 01.09.2026 else [ по ]".
+
+# As in fixtures/business_trip.expected.txt: this branch identifies the
+# employee by name and position, not by ЖСН/ИИН.
+unprinted employee.iin
