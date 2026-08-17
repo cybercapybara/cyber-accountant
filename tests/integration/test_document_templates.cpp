@@ -245,4 +245,67 @@ TEST_F(DocumentTemplatesTest, ArchivedTemplatesStopResolving) {
     EXPECT_FALSE(repo.resolve(org_id, "invoice").has_value());
 }
 
+TEST_F(DocumentTemplatesTest, DeletingTheOrganizationCascadesThroughPublishedTemplates) {
+    // Вырез migrations/028. Без него организация с опубликованным шаблоном не
+    // удалялась ВООБЩЕ: каскад натыкался на запрет неизменяемости и валил
+    // транзакцию. Поймано сборкой — восемь тестов рендер-джобы упали разом,
+    // потому что общая очистка тестовых данных перестала проходить.
+    Docgen::DocumentTemplateRepository repo;
+    auto org_id = make_org("555260000020");
+    repo.create(draft(org_id, "invoice", 1, "published"), std::nullopt);
+
+    EXPECT_NO_THROW({
+        Database::get().execute_write([&](auto& txn) {
+            txn.exec_params("DELETE FROM organizations WHERE id = $1", org_id);
+            return true;
+        });
+    });
+}
+
+TEST_F(DocumentTemplatesTest, TheCascadeCarveOutDoesNotWeakenPlatformTemplates) {
+    // САМАЯ ОПАСНАЯ тонкость выреза: у шаблона площадки org_id IS NULL, и
+    // `NOT EXISTS (... WHERE id = NULL)` истинно ВСЕГДА. Без явной проверки на
+    // NULL вырез снял бы неизменяемость с общих шаблонов целиком и навсегда —
+    // условие выглядело бы узким, а было открыто настежь.
+    Docgen::DocumentTemplateRepository repo;
+    auto platform = repo.create(draft(std::nullopt, "platform-invoice", 1, "published"), std::nullopt);
+
+    EXPECT_THROW(
+        {
+            Database::get().execute_write([&](auto& txn) {
+                txn.exec_params("DELETE FROM document_templates WHERE id = $1", platform.id);
+                return true;
+            });
+        },
+        std::exception);
+
+    EXPECT_THROW(
+        {
+            Database::get().execute_write([&](auto& txn) {
+                txn.exec_params("UPDATE document_templates SET source = 'подделка' WHERE id = $1", platform.id);
+                return true;
+            });
+        },
+        std::exception);
+}
+
+TEST_F(DocumentTemplatesTest, ADirectDeleteOfAPublishedTemplateIsStillRefused) {
+    // Контрольный случай к вырезу: организация НА МЕСТЕ, значит вырез не
+    // применяется и запрет работает. Без этой пары предыдущий тест доказывал
+    // бы лишь то, что что-то где-то бросает.
+    Docgen::DocumentTemplateRepository repo;
+    auto org_id = make_org("555260000021");
+    auto published = repo.create(draft(org_id, "invoice", 1, "published"), std::nullopt);
+
+    EXPECT_THROW(
+        {
+            Database::get().execute_write([&](auto& txn) {
+                txn.exec_params("DELETE FROM document_templates WHERE id = $1", published.id);
+                return true;
+            });
+        },
+        std::exception);
+    EXPECT_TRUE(repo.find_in_org(org_id, published.id).has_value());
+}
+
 }  // namespace
