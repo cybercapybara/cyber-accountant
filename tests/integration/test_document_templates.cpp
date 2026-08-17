@@ -17,6 +17,7 @@
 #include <string>
 
 #include <gtest/gtest.h>
+
 #include <nlohmann/json.hpp>
 
 #include "database/Database.hpp"

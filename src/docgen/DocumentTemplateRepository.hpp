@@ -102,7 +102,9 @@ public:
     std::optional<DocumentTemplate> find_in_org(const std::string& org_id, const std::string& id) {
         return Database::get().execute_read([&](auto& txn) -> std::optional<DocumentTemplate> {
             auto r = txn.exec_params(
-                "SELECT " + std::string(kColumns) + " FROM document_templates WHERE id = $1 AND org_id = $2", id, org_id);
+                "SELECT " + std::string(kColumns) + " FROM document_templates WHERE id = $1 AND org_id = $2",
+                id,
+                org_id);
             if (r.empty())
                 return std::nullopt;
             return DocumentTemplate::from_row(r[0]);
@@ -114,10 +116,11 @@ public:
     /// один из них упал бы на UNIQUE уже после того, как автор нажал «создать».
     int next_version(const std::optional<std::string>& org_id, const std::string& slug) {
         return Database::get().execute_read([&](auto& txn) {
-            auto r = txn.exec_params("SELECT COALESCE(MAX(version), 0) + 1 AS next FROM document_templates "
-                                     " WHERE slug = $2 AND org_id IS NOT DISTINCT FROM $1",
-                                     org_id,
-                                     slug);
+            auto r = txn.exec_params(
+                "SELECT COALESCE(MAX(version), 0) + 1 AS next FROM document_templates "
+                " WHERE slug = $2 AND org_id IS NOT DISTINCT FROM $1",
+                org_id,
+                slug);
             return r[0]["next"].template as<int>();
         });
     }
@@ -196,12 +199,13 @@ public:
         return Repositories::detail::translate_sql(
             [&]() -> std::optional<DocumentTemplate> {
                 return Database::get().execute_write([&](auto& txn) -> std::optional<DocumentTemplate> {
-                    auto r = txn.exec_params("UPDATE document_templates SET status = $3 "
-                                             " WHERE id = $1 AND org_id = $2 RETURNING " +
-                                                 std::string(kColumns),
-                                             id,
-                                             org_id,
-                                             status);
+                    auto r = txn.exec_params(
+                        "UPDATE document_templates SET status = $3 "
+                        " WHERE id = $1 AND org_id = $2 RETURNING " +
+                            std::string(kColumns),
+                        id,
+                        org_id,
+                        status);
                     if (r.empty())
                         return std::nullopt;
                     return DocumentTemplate::from_row(r[0]);

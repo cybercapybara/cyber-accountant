@@ -66,7 +66,20 @@ gates by construction. Hand-rolled versions usually don't.
 
 ## Gate sequence — run cheapest-first before pushing
 
-1. `make fmt` — clang-format in place
+0. **Check your clang-format version first.** CI pins **clang-format 17**
+   (`.github/workflows/ci.yml`), and a different major version reformats code
+   CI then rejects — running `make fmt` with clang-format 22 rewrote 18
+   unrelated files and cost three red runs. If `clang-format --version` is not
+   17, do NOT run `make fmt`; get the exact version from a wheel instead and
+   format only the files you touched:
+
+   ```
+   python3 -m venv /tmp/cf17 && /tmp/cf17/bin/pip install -q clang-format==17.0.6
+   /tmp/cf17/bin/clang-format -i <your files>
+   git ls-files | grep -E '^(src|tests)/.*\.(hpp|cpp)$' | xargs /tmp/cf17/bin/clang-format --dry-run --Werror
+   ```
+
+1. `make fmt` — clang-format in place (only when your version is 17)
 2. `./scripts/check-openapi-drift.sh && ./scripts/check-routes-registered.sh
    && ./scripts/check-test-buckets.sh` — seconds, no build
 3. `make lint-openapi` — spectral over `docs/openapi.yaml`
