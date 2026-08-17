@@ -44,7 +44,7 @@ public:
     /// роняет чтение в рантайме, а не на сборке.
     static constexpr const char* kColumns =
         "id, bin, name, tax_regime, vat_payer, status, "
-        "legal_address, director_name, director_position, created_at, updated_at";
+        "legal_address, director_name, director_position, vat_certificate, created_at, updated_at";
     static constexpr const char* kIdColumn = "id";
     static constexpr const char* kOrderBy = "created_at DESC";
 
@@ -63,7 +63,7 @@ public:
                         "INSERT INTO organizations (bin, name, tax_regime, vat_payer) "
                         "VALUES ($1, $2, $3, $4) "
                         "RETURNING id, bin, name, tax_regime, vat_payer, status, "
-                        "legal_address, director_name, director_position, created_at, updated_at",
+                        "legal_address, director_name, director_position, vat_certificate, created_at, updated_at",
                         bin,
                         name,
                         tax_regime,
@@ -106,16 +106,18 @@ public:
     bool update_requisites(const std::string& id,
                            const std::string& legal_address,
                            const std::string& director_name,
-                           const std::string& director_position) {
+                           const std::string& director_position,
+                           const std::string& vat_certificate = "") {
         return Database::get().execute_write([&](auto& txn) {
             auto r = txn.exec_params(
                 "UPDATE organizations "
-                "SET legal_address = $2, director_name = $3, director_position = $4 "
+                "SET legal_address = $2, director_name = $3, director_position = $4, vat_certificate = $5 "
                 "WHERE id = $1 RETURNING id",
                 id,
                 legal_address,
                 director_name,
-                director_position);
+                director_position,
+                vat_certificate);
             return !r.empty();
         });
     }

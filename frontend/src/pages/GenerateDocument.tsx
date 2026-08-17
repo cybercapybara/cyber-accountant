@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 
 import { FormField } from '@/components/FormField';
+import { SellerNotice } from '@/components/SellerNotice';
 import { Money } from '@/components/Money';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
@@ -22,12 +23,7 @@ import type {
   GenerateDocumentCreate,
   GenerateDocumentResponse,
 } from '@/lib/api/types';
-import {
-  buildPartyInput,
-  counterpartyToParty,
-  getSellerDefaults,
-  setSellerDefaults,
-} from '@/lib/docParty';
+import { buildPartyInput, counterpartyToParty, EMPTY_PARTY } from '@/lib/docParty';
 import { formatTiynRu, toTiyn } from '@/lib/money';
 import {
   avrFormSchema,
@@ -415,7 +411,6 @@ export function buildInvoiceInput(
   const input: Record<string, unknown> = {
     number: values.number.trim(),
     date: values.date.trim(),
-    seller: buildPartyInput(values.seller),
     buyer: buildPartyInput(buyer),
     items: buildLineItemsJson(values.items),
     total_tiyn: subtotalTiyn + vatTiyn,
@@ -447,7 +442,6 @@ export function InvoiceForm({
     defaultValues: defaultValues ?? {
       number: '',
       date: '',
-      seller: getSellerDefaults(),
       buyerCounterpartyId: '',
       contract: '',
       items: [{ ...EMPTY_LINE_ITEM }],
@@ -502,21 +496,7 @@ export function InvoiceForm({
             />
           </div>
 
-          <Controller
-            control={control}
-            name="seller"
-            render={({ field }) => (
-              <PartyFieldset
-                idPrefix="inv-seller"
-                title="Продавец (мои реквизиты)"
-                value={field.value}
-                onChange={(v) => {
-                  field.onChange(v);
-                  setSellerDefaults(v);
-                }}
-              />
-            )}
-          />
+          <SellerNotice />
 
           <Controller
             control={control}
@@ -663,7 +643,6 @@ export function AvrForm({
     defaultValues: defaultValues ?? {
       number: '',
       date: '',
-      seller: getSellerDefaults(),
       buyerCounterpartyId: '',
       contract: '',
       items: [{ ...EMPTY_LINE_ITEM }],
@@ -726,21 +705,7 @@ export function AvrForm({
             {...register('act_period')}
           />
 
-          <Controller
-            control={control}
-            name="seller"
-            render={({ field }) => (
-              <PartyFieldset
-                idPrefix="avr-seller"
-                title="Исполнитель (мои реквизиты)"
-                value={field.value}
-                onChange={(v) => {
-                  field.onChange(v);
-                  setSellerDefaults(v);
-                }}
-              />
-            )}
-          />
+          <SellerNotice />
 
           <Controller
             control={control}
@@ -872,7 +837,6 @@ export function buildWaybillInput(
   return {
     number: values.number.trim(),
     date: values.date.trim(),
-    seller: buildPartyInput(values.seller),
     buyer: buildPartyInput(buyer),
     basis: values.basis.trim(),
     items: buildLineItemsJson(values.items),
@@ -901,7 +865,6 @@ export function WaybillForm({
     defaultValues: defaultValues ?? {
       number: '',
       date: '',
-      seller: getSellerDefaults(),
       buyerCounterpartyId: '',
       basis: '',
       items: [{ ...EMPTY_LINE_ITEM }],
@@ -951,21 +914,7 @@ export function WaybillForm({
             />
           </div>
 
-          <Controller
-            control={control}
-            name="seller"
-            render={({ field }) => (
-              <PartyFieldset
-                idPrefix="wb-seller"
-                title="Поставщик (мои реквизиты)"
-                value={field.value}
-                onChange={(v) => {
-                  field.onChange(v);
-                  setSellerDefaults(v);
-                }}
-              />
-            )}
-          />
+          <SellerNotice />
 
           <Controller
             control={control}
@@ -1107,7 +1056,6 @@ export function buildTaxInvoiceInput(
   return {
     number: values.number.trim(),
     date: values.date.trim(),
-    seller: buildPartyInput(values.seller, { vat_certificate: values.seller.vat_certificate }),
     buyer: buildPartyInput(buyer, { vat_certificate: values.buyerVatCertificate }),
     items: lines.map(({ item, amounts }) => ({
       name: item.name.trim(),
@@ -1151,7 +1099,6 @@ export function TaxInvoiceForm({
     defaultValues: defaultValues ?? {
       number: '',
       date: '',
-      seller: getSellerDefaults(),
       buyerCounterpartyId: '',
       buyerVatCertificate: '',
       items: [{ ...EMPTY_VAT_LINE_ITEM }],
@@ -1208,22 +1155,7 @@ export function TaxInvoiceForm({
             />
           </div>
 
-          <Controller
-            control={control}
-            name="seller"
-            render={({ field }) => (
-              <PartyFieldset
-                idPrefix="ti-seller"
-                title="Продавец (мои реквизиты)"
-                value={field.value}
-                onChange={(v) => {
-                  field.onChange(v);
-                  setSellerDefaults(v);
-                }}
-                showVatCertificate
-              />
-            )}
-          />
+          <SellerNotice />
 
           <Controller
             control={control}
@@ -1404,7 +1336,7 @@ export function ReconciliationForm({
     defaultValues: defaultValues ?? {
       period_from: '',
       period_to: '',
-      partyA: getSellerDefaults(),
+      partyA: EMPTY_PARTY,
       counterpartyId: '',
       openingADebit: '',
       openingACredit: '',
@@ -1462,10 +1394,7 @@ export function ReconciliationForm({
                 idPrefix="rec-party-a"
                 title="Сторона А (мои реквизиты)"
                 value={field.value}
-                onChange={(v) => {
-                  field.onChange(v);
-                  setSellerDefaults(v);
-                }}
+                onChange={field.onChange}
               />
             )}
           />

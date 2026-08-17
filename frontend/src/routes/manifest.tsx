@@ -18,6 +18,7 @@ import { Permission } from '@/lib/auth/permissions';
 import type { NavGroupId } from '@/routes/navGroups';
 
 import { HomePage } from '@/pages/Home';
+import { RequisitesPage } from '@/pages/Requisites';
 import { AboutPage } from '@/pages/About';
 import { LoginPage } from '@/pages/Login';
 import { RegisterPage } from '@/pages/Register';
@@ -192,6 +193,17 @@ export const routes: RouteEntry[] = [
     navGroup: 'settings',
     // navRoles намеренно не задан: список СВОИХ организаций видит любая
     // роль, включая кадровика, — это и есть точка входа в смену тенанта.
+  },
+  {
+    path: '/requisites',
+    element: <RequisitesPage />,
+    guard: 'confirmed',
+    navLabel: 'Реквизиты',
+    navIcon: Landmark,
+    navGroup: 'settings',
+    // Кадровик сюда не ходит: реквизиты и счета к кадровым документам
+    // отношения не имеют (матрица прав, ресурс `requisites`).
+    navRoles: ['owner', 'accountant', 'viewer'],
   },
   {
     path: '/counterparties',

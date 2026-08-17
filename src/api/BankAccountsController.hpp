@@ -143,21 +143,35 @@ public:
                 callback(ErrorResponse::not_found("bank_account"));
                 return;
             }
-            callback(Response::no_content());
+            callback(Response::ok({{"deleted", true}}));
         });
     }
 
 private:
-    /// Полная проверка тела для POST. `iik` и `bank_name` обязательны:
-    /// счёт без номера или без банка нельзя напечатать в документе, а
-    /// значит, и хранить его незачем.
+    /// Полная проверка тела для POST. `iik` и `bank_name` обязательны: счёт
+    /// без номера или без банка нельзя напечатать в документе, а значит, и
+    /// хранить его незачем. Ошибки КОПЯТСЯ и отдаются одним ответом
+    /// (Validation::Errors), а не по первой — заполняющий форму должен
+    /// увидеть все промахи сразу.
     static bool validate_and_fill(const json& body,
                                   Tenancy::BankAccount& out,
                                   const std::function<void(const HttpResponsePtr&)>& callback) {
-        if (!Validation::require_string(body, "iik", out.iik, callback))
+        Validation::Errors errs;
+        Validation::require(errs, body, "iik");
+        Validation::require(errs, body, "bank_name");
+        for (const char* f : {"iik", "bank_name", "bik", "kbe", "currency"}) {
+            if (body.contains(f) && !body[f].is_string())
+                errs.add(f, "not_string", "must be a string");
+        }
+        if (body.contains("is_primary") && !body["is_primary"].is_boolean())
+            errs.add("is_primary", "not_boolean", "must be a boolean");
+        if (errs.any()) {
+            callback(Validation::response_400(errs));
             return false;
-        if (!Validation::require_string(body, "bank_name", out.bank_name, callback))
-            return false;
+        }
+
+        out.iik = body["iik"].get<std::string>();
+        out.bank_name = body["bank_name"].get<std::string>();
         out.bik = body.value("bik", "");
         out.kbe = body.value("kbe", "");
         out.currency = body.value("currency", "KZT");
@@ -166,21 +180,35 @@ private:
     }
 
     /// Частичное обновление: трогаются только присутствующие в теле ключи.
+    /// Именно поэтому патч кладётся поверх ТЕКУЩЕЙ строки, а не поверх
+    /// пустой — иначе отсутствующий в теле `kbe` молча затёрся бы.
     static bool apply_patch(const json& body,
                             Tenancy::BankAccount& out,
                             const std::function<void(const HttpResponsePtr&)>& callback) {
-        if (body.contains("iik") && !Validation::require_string(body, "iik", out.iik, callback))
+        Validation::Errors errs;
+        for (const char* f : {"iik", "bank_name", "bik", "kbe", "currency"}) {
+            if (body.contains(f) && !body[f].is_string())
+                errs.add(f, "not_string", "must be a string");
+        }
+        if (body.contains("is_primary") && !body["is_primary"].is_boolean())
+            errs.add("is_primary", "not_boolean", "must be a boolean");
+        if (errs.any()) {
+            callback(Validation::response_400(errs));
             return false;
-        if (body.contains("bank_name") && !Validation::require_string(body, "bank_name", out.bank_name, callback))
-            return false;
+        }
+
+        if (body.contains("iik"))
+            out.iik = body["iik"].get<std::string>();
+        if (body.contains("bank_name"))
+            out.bank_name = body["bank_name"].get<std::string>();
         if (body.contains("bik"))
-            out.bik = body.value("bik", out.bik);
+            out.bik = body["bik"].get<std::string>();
         if (body.contains("kbe"))
-            out.kbe = body.value("kbe", out.kbe);
+            out.kbe = body["kbe"].get<std::string>();
         if (body.contains("currency"))
-            out.currency = body.value("currency", out.currency);
+            out.currency = body["currency"].get<std::string>();
         if (body.contains("is_primary"))
-            out.is_primary = body.value("is_primary", out.is_primary);
+            out.is_primary = body["is_primary"].get<bool>();
         return true;
     }
 };

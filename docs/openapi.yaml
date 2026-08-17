@@ -254,6 +254,7 @@ components:
         legal_address:     { type: string, description: 'Printed on documents; empty string means "not filled in"' }
         director_name:     { type: string, description: 'Signatory printed on documents' }
         director_position: { type: string, default: Директор }
+        vat_certificate:   { type: string, description: 'VAT registration certificate — printed on the счёт-фактура only' }
         created_at: { type: string }
         updated_at: { type: string }
 
@@ -268,6 +269,7 @@ components:
         legal_address:     { type: string }
         director_name:     { type: string }
         director_position: { type: string }
+        vat_certificate:   { type: string, description: 'Optional — only a VAT payer has one, and only the счёт-фактура prints it' }
 
     BankAccount:
       type: object
@@ -1262,15 +1264,17 @@ paths:
   /api/v1/orgs/{orgId}/requisites:
     parameters:
       - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
-    put:
+    patch:
       summary: Set the organization's printable requisites (owner only)
       description: >
         Legal address and the signatory printed on documents. Written in ONE
         request rather than field by field: they appear in the same signature
         block, so an organization whose signatory position changed but whose
-        name did not would issue documents signed by the wrong person. Reading
-        them needs no separate route — GET /api/v1/orgs/mine already returns
-        the organization, requisites included.
+        name did not would issue documents signed by the wrong person — the
+        handler requires all three even though the verb is PATCH, which is the
+        update verb this API uses everywhere. Reading them needs no separate
+        route — GET /api/v1/orgs/mine already returns the organization,
+        requisites included.
       tags: [organizations]
       security: [{ BearerAuth: [] }]
       requestBody:

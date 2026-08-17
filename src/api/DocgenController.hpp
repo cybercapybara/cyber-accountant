@@ -145,8 +145,10 @@
 #include "ledger/CounterpartyRepository.hpp"
 #include "ledger/DocumentRepository.hpp"
 #include "ledger/JournalRepository.hpp"
+#include "tenancy/BankAccountRepository.hpp"
 #include "tenancy/OrgContext.hpp"
 #include "tenancy/OrgPermissions.hpp"
+#include "tenancy/OrganizationRepository.hpp"
 #include "utils/ErrorResponse.hpp"
 
 namespace Api {
@@ -277,6 +279,15 @@ public:
                 callback(Validation::response_422(bad_field, bad_code, bad_message));
                 return;
             }
+            // Реквизиты продавца — это САМА организация, поэтому их тоже
+            // пишет сервер, а не клиент. До этого `seller` приходил в теле
+            // целиком, и два документа одной организации могли разойтись в
+            // номере расчётного счёта.
+            if (!Docgen::InputPolicy::apply_seller_requisites(
+                    template_slug, input, load_seller(ctx.org_id), bad_field, bad_code, bad_message)) {
+                callback(Validation::response_422(bad_field, bad_code, bad_message));
+                return;
+            }
         }
 
         if (auto err = Docgen::TemplateRegistry::validate(*info, input)) {
@@ -367,6 +378,29 @@ public:
             const json response_body = {{"document_id", created.id}, {"render_queued", render_queued}};
             callback(Response::accepted(response_body));
         });
+    }
+
+    /// Собрать реквизиты продавца из организации и её ОСНОВНОГО счёта.
+    /// Отсутствие основного счёта — нормальное состояние, а не ошибка:
+    /// банковские поля тогда просто не пишутся, и документ выпускается без
+    /// них (см. Docgen::InputPolicy::apply_seller_requisites).
+    static Docgen::InputPolicy::SellerRequisites load_seller(const std::string& org_id) {
+        Docgen::InputPolicy::SellerRequisites seller;
+        Tenancy::OrganizationRepository orgs;
+        if (auto org = orgs.find(org_id)) {
+            seller.name = org->name;
+            seller.identifier = org->bin;
+            seller.address = org->legal_address;
+            seller.vat_certificate = org->vat_certificate;
+        }
+        Tenancy::BankAccountRepository accounts;
+        if (auto primary = accounts.find_primary(org_id)) {
+            seller.iik = primary->iik;
+            seller.bank = primary->bank_name;
+            seller.bik = primary->bik;
+            seller.kbe = primary->kbe;
+        }
+        return seller;
     }
 };
 

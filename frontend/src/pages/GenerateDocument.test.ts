@@ -4,7 +4,6 @@ import type {
   AvrFormValues,
   InvoiceFormValues,
   PartyValues,
-  SellerDefaultsValues,
   TaxInvoiceFormValues,
   WaybillFormValues,
 } from '@/lib/schemas/documents';
@@ -29,17 +28,6 @@ import {
  * refusing them, was a PDF that could state a figure its own XML did not.
  */
 
-const seller: SellerDefaultsValues = {
-  name: 'ТОО «Ромашка»',
-  identifier: '123456789012',
-  address: 'г. Алматы, ул. Абая 1',
-  iik: 'KZ123',
-  bik: 'ABCDKZKX',
-  bank: 'АО «Банк»',
-  kbe: '17',
-  vat_certificate: '600900000001',
-};
-
 const buyer: PartyValues = {
   name: 'ТОО «Василёк»',
   identifier: '210987654321',
@@ -53,7 +41,6 @@ const buyer: PartyValues = {
 const invoiceValues: InvoiceFormValues = {
   number: '17',
   date: '14.08.2026',
-  seller,
   buyerCounterpartyId: 'c0ffee00-0000-4000-8000-000000000001',
   contract: '',
   // 2 × 1500.55 = 3001.10 ₸ = 300110 тиын
@@ -125,7 +112,6 @@ describe('buildWaybillInput', () => {
   const waybillValues: WaybillFormValues = {
     number: '4',
     date: '14.08.2026',
-    seller,
     buyerCounterpartyId: 'c0ffee00-0000-4000-8000-000000000001',
     basis: 'Договор №1',
     items: [
@@ -148,7 +134,6 @@ describe('buildTaxInvoiceInput', () => {
   const taxInvoiceValues: TaxInvoiceFormValues = {
     number: '9',
     date: '14.08.2026',
-    seller,
     buyerCounterpartyId: 'c0ffee00-0000-4000-8000-000000000001',
     buyerVatCertificate: '600900000002',
     items: [

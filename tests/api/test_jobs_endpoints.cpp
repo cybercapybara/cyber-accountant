@@ -102,7 +102,8 @@ TEST_F(JobsEndpointTest, GetJobStatus) {
     std::string job_id = submit_body["data"]["id"];
 
     HttpResponsePtr get_resp;
-    controller.getJobStatus(TestHelpers::make_request(), [&](const HttpResponsePtr& resp) { get_resp = resp; }, job_id);
+    controller.getJobStatus(
+        TestHelpers::make_request(), [&](const HttpResponsePtr& resp) { get_resp = resp; }, job_id);
 
     ASSERT_NE(get_resp, nullptr);
     EXPECT_EQ(get_resp->statusCode(), k200OK);
@@ -150,7 +151,8 @@ TEST_F(JobsEndpointTest, CancelJob) {
 
     // Verify status is failed/cancelled
     HttpResponsePtr get_resp;
-    controller.getJobStatus(TestHelpers::make_request(), [&](const HttpResponsePtr& resp) { get_resp = resp; }, job_id);
+    controller.getJobStatus(
+        TestHelpers::make_request(), [&](const HttpResponsePtr& resp) { get_resp = resp; }, job_id);
     auto get_body = json::parse(std::string(get_resp->body()));
     EXPECT_EQ(get_body["data"]["status"], "failed");
     EXPECT_EQ(get_body["data"]["error"], "cancelled");

@@ -28,10 +28,12 @@ describe('groupNavLinks', () => {
     expect(ids).toEqual(NAV_GROUPS.filter((g) => ids.includes(g.id)).map((g) => g.id));
   });
 
-  it('gives the owner all four groups and ten links', () => {
+  it('gives the owner all four groups and eleven links', () => {
     const groups = groupNavLinks(routes, adminUser, 'owner');
     expect(groups.map((g) => g.id)).toEqual(['accounting', 'people', 'tax', 'settings']);
-    expect(groups.reduce((n, g) => n + g.links.length, 0)).toBe(10);
+    // Одиннадцатая — «Реквизиты» (migrations/025_org_requisites.sql):
+    // единственное место, где задаются печатаемые в документах реквизиты.
+    expect(groups.reduce((n, g) => n + g.links.length, 0)).toBe(11);
   });
 
   it('shows the hr role the people group without payroll, plus settings', () => {
@@ -79,18 +81,42 @@ describe('role → visibility matrix (mirrors OrgPermissions.hpp §5.3)', () => 
   const cases: { role: string; sees: string[] }[] = [
     {
       role: 'owner',
-      sees: [...publicLinks, ...accounting, ...people, '/payroll', '/taxes', '/organizations'],
+      sees: [
+        ...publicLinks,
+        ...accounting,
+        ...people,
+        '/payroll',
+        '/taxes',
+        '/organizations',
+        '/requisites',
+      ],
     },
     {
       role: 'accountant',
-      sees: [...publicLinks, ...accounting, ...people, '/payroll', '/taxes', '/organizations'],
+      sees: [
+        ...publicLinks,
+        ...accounting,
+        ...people,
+        '/payroll',
+        '/taxes',
+        '/organizations',
+        '/requisites',
+      ],
     },
     // Кадровик: сотрудники и кадровые документы — да; зарплата, журнал,
     // налоги, контрагенты и первичка — нет (в матрице у него пустая ячейка).
     { role: 'hr', sees: [...publicLinks, ...people, '/organizations'] },
     {
       role: 'viewer',
-      sees: [...publicLinks, ...accounting, ...people, '/payroll', '/taxes', '/organizations'],
+      sees: [
+        ...publicLinks,
+        ...accounting,
+        ...people,
+        '/payroll',
+        '/taxes',
+        '/organizations',
+        '/requisites',
+      ],
     },
     // Неизвестная роль и отсутствие роли закрыты так же, как на сервере
     // (запрет по умолчанию): остаются только публичные ссылки и список

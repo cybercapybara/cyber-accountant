@@ -25,6 +25,11 @@ export type JobListResponse = Schemas['JobListResponse'];
 export type DlqListResponse = Schemas['DlqListResponse'];
 export type JobCreate = Schemas['JobCreate'];
 export type Organization = Schemas['Organization'];
+/** Расчётный счёт организации — то, что сервер печатает в реквизитах продавца. */
+export type BankAccount = Schemas['BankAccount'];
+export type BankAccountListResponse = Schemas['BankAccountListResponse'];
+export type BankAccountDetailResponse = Schemas['BankAccountDetailResponse'];
+export type OrgRequisitesWrite = Schemas['OrgRequisitesWrite'];
 export type OrganizationWithRole = Schemas['OrganizationWithRole'];
 export type OrgMember = Schemas['OrgMember'];
 export type MemberWithEmail = Schemas['MemberWithEmail'];

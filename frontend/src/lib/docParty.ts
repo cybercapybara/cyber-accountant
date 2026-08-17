@@ -1,9 +1,20 @@
 import type { Counterparty } from '@/lib/api/types';
 import type { PartyValues, SellerDefaultsValues } from '@/lib/schemas/documents';
 
-const SELLER_DEFAULTS_KEY = 'cyber-accountant.docgen.sellerDefaults';
-
-const EMPTY_SELLER_DEFAULTS: SellerDefaultsValues = {
+/**
+ * Пустая сторона — начальное значение формы там, где сторону всё ещё вводят
+ * руками (акт сверки: какая из сторон «мы», решает вызывающий, и догадка
+ * напечатала бы чужие реквизиты).
+ *
+ * ЗДЕСЬ БЫЛО ХРАНИЛИЩЕ «моих реквизитов» в localStorage — временное решение,
+ * потому что на сервере их держать было негде. Теперь есть: реквизиты
+ * организации и её расчётные счета живут в БД
+ * (migrations/025_org_requisites.sql), продавца в документ пишет СЕРВЕР, а
+ * присланный клиентом `seller` отвергается. Копия в браузере не пережила бы
+ * смену устройства и позволяла двум документам одной организации разойтись в
+ * номере счёта — ровно то, ради чего всё это переносилось.
+ */
+export const EMPTY_PARTY: SellerDefaultsValues = {
   name: '',
   identifier: '',
   address: '',
@@ -13,35 +24,6 @@ const EMPTY_SELLER_DEFAULTS: SellerDefaultsValues = {
   kbe: '',
   vat_certificate: '',
 };
-
-/**
- * "My requisites" — the org's own bank/legal details used as the seller
- * party on every generated document — persisted in localStorage.
- *
- * TEMPORARY P1 SOLUTION: GET /api/v1/orgs only exposes {bin, name,
- * tax_regime, vat_payer} (Organization in docs/openapi.yaml) — there is
- * no bank-detail field on the org, so there is nowhere on the backend to
- * store IIK/BIK/bank name/KBE per organization yet. Until P2 adds an
- * org-profile endpoint for this, each browser remembers its own copy
- * (seeded once, editable inline on the generation form, saved on every
- * change). This does NOT sync across devices or team members.
- */
-export function getSellerDefaults(): SellerDefaultsValues {
-  if (typeof localStorage === 'undefined') return { ...EMPTY_SELLER_DEFAULTS };
-  try {
-    const raw = localStorage.getItem(SELLER_DEFAULTS_KEY);
-    if (!raw) return { ...EMPTY_SELLER_DEFAULTS };
-    const parsed = JSON.parse(raw) as Partial<SellerDefaultsValues>;
-    return { ...EMPTY_SELLER_DEFAULTS, ...parsed };
-  } catch {
-    return { ...EMPTY_SELLER_DEFAULTS };
-  }
-}
-
-export function setSellerDefaults(values: SellerDefaultsValues): void {
-  if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(SELLER_DEFAULTS_KEY, JSON.stringify(values));
-}
 
 /** Map a selected counterparty onto the generic docgen `party` shape. */
 export function counterpartyToParty(cp: Counterparty): PartyValues {

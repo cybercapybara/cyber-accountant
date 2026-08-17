@@ -79,7 +79,7 @@ public:
     ADD_METHOD_TO(OrganizationsController::addMember, "/api/v1/orgs/{1}/members", Post);
     ADD_METHOD_TO(OrganizationsController::updateMemberRole, "/api/v1/orgs/{1}/members/{2}", Patch);
     ADD_METHOD_TO(OrganizationsController::removeMember, "/api/v1/orgs/{1}/members/{2}", Delete);
-    ADD_METHOD_TO(OrganizationsController::updateRequisites, "/api/v1/orgs/{1}/requisites", Put);
+    ADD_METHOD_TO(OrganizationsController::updateRequisites, "/api/v1/orgs/{1}/requisites", Patch);
     METHOD_LIST_END
 
     // ---------------------------------------------------------------------
@@ -528,7 +528,7 @@ public:
     }
 
     // ---------------------------------------------------------------------
-    // PUT /api/v1/orgs/{id}/requisites
+    // PATCH /api/v1/orgs/{id}/requisites
     //
     // Реквизиты, которые ПЕЧАТАЮТСЯ в документах: юридический адрес и
     // подписант. До этой фазы их не существовало вовсе — реквизиты сторон
@@ -555,19 +555,30 @@ public:
         if (!Validation::parse_body(req, body, callback))
             return;
 
-        std::string legal_address;
-        std::string director_name;
-        std::string director_position;
-        if (!Validation::require_string(body, "legal_address", legal_address, callback))
+        // Ошибки копятся и отдаются одним ответом: заполняющий форму должен
+        // увидеть все промахи сразу, а не по одному за запрос.
+        Validation::Errors errs;
+        for (const char* f : {"legal_address", "director_name", "director_position"}) {
+            Validation::require(errs, body, f);
+            if (body.contains(f) && !body[f].is_string())
+                errs.add(f, "not_string", "must be a string");
+        }
+        if (body.contains("vat_certificate") && !body["vat_certificate"].is_string())
+            errs.add("vat_certificate", "not_string", "must be a string");
+        if (errs.any()) {
+            callback(Validation::response_400(errs));
             return;
-        if (!Validation::require_string(body, "director_name", director_name, callback))
-            return;
-        if (!Validation::require_string(body, "director_position", director_position, callback))
-            return;
+        }
+        const auto legal_address = body["legal_address"].get<std::string>();
+        const auto director_name = body["director_name"].get<std::string>();
+        const auto director_position = body["director_position"].get<std::string>();
+        // Свидетельство по НДС необязательно: его печатает только
+        // счёт-фактура, и организация-неплательщик его не имеет вовсе.
+        const auto vat_certificate = body.value("vat_certificate", std::string{});
 
         with_repo_errors(callback, "orgs updateRequisites", [&] {
             Tenancy::OrganizationRepository orgs;
-            if (!orgs.update_requisites(id, legal_address, director_name, director_position)) {
+            if (!orgs.update_requisites(id, legal_address, director_name, director_position, vat_certificate)) {
                 callback(ErrorResponse::not_found("organization"));
                 return;
             }

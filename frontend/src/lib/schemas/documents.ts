@@ -117,7 +117,6 @@ export const EMPTY_VAT_LINE_ITEM: VatLineItemValues = { ...EMPTY_LINE_ITEM, vat_
 export const invoiceFormSchema = z.object({
   number: z.string().trim().min(1, 'Обязательное поле'),
   date: dateDmySchema,
-  seller: sellerDefaultsSchema,
   buyerCounterpartyId: z.string().trim().min(1, 'Выберите контрагента'),
   contract: z.string().trim().default(''),
   items: z.array(lineItemSchema).min(1, 'Добавьте хотя бы одну строку'),
@@ -133,7 +132,6 @@ export type AvrFormValues = z.infer<typeof avrFormSchema>;
 export const waybillFormSchema = z.object({
   number: z.string().trim().min(1, 'Обязательное поле'),
   date: dateDmySchema,
-  seller: sellerDefaultsSchema,
   buyerCounterpartyId: z.string().trim().min(1, 'Выберите контрагента'),
   basis: z.string().trim().min(1, 'Обязательное поле'),
   items: z.array(lineItemSchema).min(1, 'Добавьте хотя бы одну строку'),
@@ -145,7 +143,6 @@ export type WaybillFormValues = z.infer<typeof waybillFormSchema>;
 export const taxInvoiceFormSchema = z.object({
   number: z.string().trim().min(1, 'Обязательное поле'),
   date: dateDmySchema,
-  seller: sellerDefaultsSchema,
   buyerCounterpartyId: z.string().trim().min(1, 'Выберите контрагента'),
   buyerVatCertificate: z.string().trim().default(''),
   items: z.array(vatLineItemSchema).min(1, 'Добавьте хотя бы одну строку'),
@@ -417,7 +414,6 @@ export function snapshotToInvoiceValues(
   return {
     number: snapshotString(input.number),
     date: snapshotString(input.date),
-    seller: snapshotToParty(input.seller),
     buyerCounterpartyId: counterpartyId ?? '',
     contract: snapshotString(input.contract),
     items: snapshotToLineItems(input.items),
@@ -444,7 +440,6 @@ export function snapshotToWaybillValues(
   return {
     number: snapshotString(input.number),
     date: snapshotString(input.date),
-    seller: snapshotToParty(input.seller),
     buyerCounterpartyId: counterpartyId ?? '',
     basis: snapshotString(input.basis),
     items: snapshotToLineItems(input.items),
@@ -471,7 +466,6 @@ export function snapshotToTaxInvoiceValues(
   return {
     number: snapshotString(input.number),
     date: snapshotString(input.date),
-    seller: snapshotToParty(input.seller),
     buyerCounterpartyId: counterpartyId ?? '',
     buyerVatCertificate: snapshotString(snapshotObject(input.buyer).vat_certificate),
     items: items.length > 0 ? items : [{ ...EMPTY_VAT_LINE_ITEM }],

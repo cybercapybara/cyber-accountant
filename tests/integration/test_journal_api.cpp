@@ -142,7 +142,8 @@ TEST_F(JournalApiTest, LifecycleThroughApi) {
 
     // 2. Post it.
     HttpResponsePtr post_resp;
-    ctrl.post(authed(accountant, Post), [&](const HttpResponsePtr& r) { post_resp = r; }, entry_id);
+    ctrl.post(
+        authed(accountant, Post), [&](const HttpResponsePtr& r) { post_resp = r; }, entry_id);
     ASSERT_NE(post_resp, nullptr);
     ASSERT_EQ(post_resp->statusCode(), k200OK);
     auto post_body = json::parse(std::string(post_resp->body()));
@@ -150,7 +151,8 @@ TEST_F(JournalApiTest, LifecycleThroughApi) {
 
     // 3. Reverse it — returns the NEW storno entry, posted, linked back.
     HttpResponsePtr reverse_resp;
-    ctrl.reverse(authed(accountant, Post), [&](const HttpResponsePtr& r) { reverse_resp = r; }, entry_id);
+    ctrl.reverse(
+        authed(accountant, Post), [&](const HttpResponsePtr& r) { reverse_resp = r; }, entry_id);
     ASSERT_NE(reverse_resp, nullptr);
     ASSERT_EQ(reverse_resp->statusCode(), k200OK);
     auto reverse_body = json::parse(std::string(reverse_resp->body()));
@@ -184,7 +186,8 @@ TEST_F(JournalApiTest, LifecycleThroughApi) {
     // 5. GET the original by id now returns 'reversed' with its own (frozen)
     // lines, not the storno's.
     HttpResponsePtr get_resp;
-    ctrl.get(authed(accountant), [&](const HttpResponsePtr& r) { get_resp = r; }, entry_id);
+    ctrl.get(
+        authed(accountant), [&](const HttpResponsePtr& r) { get_resp = r; }, entry_id);
     ASSERT_EQ(get_resp->statusCode(), k200OK);
     auto get_body = json::parse(std::string(get_resp->body()));
     EXPECT_EQ(get_body["data"]["status"].get<std::string>(), "reversed");
@@ -262,7 +265,8 @@ TEST_F(JournalApiTest, PostViewerForbidden) {
 
     auto viewer = member("viewer2@example.com", org.id, "viewer");
     HttpResponsePtr resp;
-    ctrl.post(authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, entry.id);
+    ctrl.post(
+        authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, entry.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -278,11 +282,13 @@ TEST_F(JournalApiTest, PostAlreadyPostedConflict) {
     const std::string entry_id = json::parse(std::string(create_resp->body()))["data"]["id"].get<std::string>();
 
     HttpResponsePtr first_post;
-    ctrl.post(authed(accountant, Post), [&](const HttpResponsePtr& r) { first_post = r; }, entry_id);
+    ctrl.post(
+        authed(accountant, Post), [&](const HttpResponsePtr& r) { first_post = r; }, entry_id);
     ASSERT_EQ(first_post->statusCode(), k200OK);
 
     HttpResponsePtr second_post;
-    ctrl.post(authed(accountant, Post), [&](const HttpResponsePtr& r) { second_post = r; }, entry_id);
+    ctrl.post(
+        authed(accountant, Post), [&](const HttpResponsePtr& r) { second_post = r; }, entry_id);
     ASSERT_NE(second_post, nullptr);
     EXPECT_EQ(second_post->statusCode(), k409Conflict);
     auto body = json::parse(std::string(second_post->body()));
@@ -304,7 +310,8 @@ TEST_F(JournalApiTest, GetCrossOrgNotFound) {
     const std::string entry_id = json::parse(std::string(create_resp->body()))["data"]["id"].get<std::string>();
 
     HttpResponsePtr resp;
-    ctrl.get(authed(viewer_b), [&](const HttpResponsePtr& r) { resp = r; }, entry_id);
+    ctrl.get(
+        authed(viewer_b), [&](const HttpResponsePtr& r) { resp = r; }, entry_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }

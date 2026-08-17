@@ -32,6 +32,10 @@ struct Organization {
     std::string legal_address;
     std::string director_name;
     std::string director_position;
+    /// Номер свидетельства по НДС (migrations/026): печатается
+    /// только в счёте-фактуре — единственной схеме, где у стороны
+    /// есть это поле.
+    std::string vat_certificate;
     std::string created_at;
     std::string updated_at;
 
@@ -47,6 +51,7 @@ struct Organization {
         o.legal_address = row["legal_address"].template as<std::string>();
         o.director_name = row["director_name"].template as<std::string>();
         o.director_position = row["director_position"].template as<std::string>();
+        o.vat_certificate = row["vat_certificate"].template as<std::string>();
         o.created_at = row["created_at"].template as<std::string>();
         o.updated_at = row["updated_at"].template as<std::string>();
         return o;
@@ -65,6 +70,7 @@ inline void to_json(nlohmann::json& j, const Organization& o) {
         {"legal_address", o.legal_address},
         {"director_name", o.director_name},
         {"director_position", o.director_position},
+        {"vat_certificate", o.vat_certificate},
         {"created_at", o.created_at},
         {"updated_at", o.updated_at},
     };

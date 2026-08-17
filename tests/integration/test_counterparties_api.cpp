@@ -231,7 +231,8 @@ TEST_F(CounterpartiesApiTest, GetCounterpartySucceeds) {
     auto created_id = json::parse(std::string(create_resp->body()))["data"]["id"].get<std::string>();
 
     HttpResponsePtr resp;
-    ctrl.get(authed(accountant), [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.get(
+        authed(accountant), [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK);
     auto body = json::parse(std::string(resp->body()));
@@ -252,7 +253,8 @@ TEST_F(CounterpartiesApiTest, GetCounterpartyCrossOrgNotFound) {
     auto created_id = json::parse(std::string(create_resp->body()))["data"]["id"].get<std::string>();
 
     HttpResponsePtr resp;
-    ctrl.get(authed(accountant_b), [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.get(
+        authed(accountant_b), [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -275,7 +277,8 @@ TEST_F(CounterpartiesApiTest, PatchCounterpartySucceeds) {
                                   {"vat_payer", true}},
                                  Patch);
     HttpResponsePtr resp;
-    ctrl.patch(patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.patch(
+        patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK);
     auto body = json::parse(std::string(resp->body()));
@@ -296,7 +299,8 @@ TEST_F(CounterpartiesApiTest, PatchViewerForbidden) {
 
     auto patch_req = authed_json(viewer, {{"identifier", "111240000081"}, {"name", "Hijacked LLP"}}, Patch);
     HttpResponsePtr resp;
-    ctrl.patch(patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.patch(
+        patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -315,7 +319,8 @@ TEST_F(CounterpartiesApiTest, PatchCrossOrgNotFound) {
 
     auto patch_req = authed_json(accountant_b, {{"identifier", "111240000091"}, {"name", "Stolen LLP"}}, Patch);
     HttpResponsePtr resp;
-    ctrl.patch(patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.patch(
+        patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -331,7 +336,8 @@ TEST_F(CounterpartiesApiTest, PatchInvalidIdentifierRejected) {
 
     auto patch_req = authed_json(accountant, {{"identifier", "123"}, {"name", "Valid LLP"}}, Patch);
     HttpResponsePtr resp;
-    ctrl.patch(patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.patch(
+        patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto body = json::parse(std::string(resp->body()));

@@ -116,7 +116,8 @@ inline json process_job(const json& payload) {
     curl_easy_setopt(h.get(), CURLOPT_TIMEOUT, 10L);
     curl_easy_setopt(h.get(), CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(h.get(), CURLOPT_FOLLOWLOCATION, 0L);  // a redirect could bypass the SSRF check
-    curl_easy_setopt(h.get(), CURLOPT_WRITEFUNCTION, +[](char*, size_t s, size_t n, void*) -> size_t { return s * n; });
+    curl_easy_setopt(
+        h.get(), CURLOPT_WRITEFUNCTION, +[](char*, size_t s, size_t n, void*) -> size_t { return s * n; });
 
     const CURLcode rc = curl_easy_perform(h.get());
     if (rc != CURLE_OK)

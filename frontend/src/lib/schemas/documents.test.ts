@@ -243,7 +243,9 @@ describe('snapshotToInvoiceValues', () => {
     expect(values.contract).toBe('Договор № 7');
     expect(values.vat_rate).toBe('16');
     expect(values.items).toEqual([{ name: 'Услуга', qty: '2', unit: 'усл.', price: '1000.50' }]);
-    expect(values.seller.bank).toBe('АО «Банк»');
+    // Продавца в форме больше нет: его пишет сервер из реквизитов
+    // организации, и клиент не может его ни задать, ни прислать.
+    expect('seller' in values).toBe(false);
   });
 
   it('never carries a server-derived total back into the form', () => {
@@ -251,13 +253,14 @@ describe('snapshotToInvoiceValues', () => {
     const serialised = JSON.stringify(values);
     expect(serialised).not.toContain('total_words');
     expect(serialised).not.toContain('2 321,16');
+    // `seller` в этом списке больше нет: реквизиты продавца берутся из
+    // карточки организации, и форма их не хранит (см. SellerNotice).
     expect(Object.keys(values).sort()).toEqual([
       'buyerCounterpartyId',
       'contract',
       'date',
       'items',
       'number',
-      'seller',
       'vat_rate',
     ]);
   });
@@ -308,7 +311,10 @@ describe('snapshotToTaxInvoiceValues', () => {
       'cp-3',
     );
     expect(taxInvoiceFormSchema.safeParse(values).success).toBe(true);
-    expect(values.seller.vat_certificate).toBe('600900');
+    // Свидетельство ПРОДАВЦА по НДС теперь берётся из карточки
+    // организации и в форму не попадает; свидетельство ПОКУПАТЕЛЯ —
+    // по-прежнему поле формы, это реквизит контрагента.
+    expect('seller' in values).toBe(false);
     expect(values.buyerVatCertificate).toBe('600901');
     expect(values.items.map((i) => i.vat_rate)).toEqual(['16', '12']);
     expect(values.items[0].price).toBe('10000.00');

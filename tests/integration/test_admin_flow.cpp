@@ -164,7 +164,8 @@ TEST_F(AdminFlowTest, deleteUserAsAdmin) {
     auto admin_user = seed_user("admin@example.com", "Administrator");
     auto target = seed_user("victim@example.com", "User");
     HttpResponsePtr resp;
-    admin.deleteUser(authed(admin_user.principal), [&](const HttpResponsePtr& r) { resp = r; }, target.user.id);
+    admin.deleteUser(
+        authed(admin_user.principal), [&](const HttpResponsePtr& r) { resp = r; }, target.user.id);
     ASSERT_EQ(resp->statusCode(), k200OK);
     Repositories::UserRepository repo;
     EXPECT_FALSE(repo.find(target.user.id).has_value());
@@ -173,7 +174,8 @@ TEST_F(AdminFlowTest, deleteUserAsAdmin) {
 TEST_F(AdminFlowTest, adminCannotDeleteSelf) {
     auto admin_user = seed_user("admin@example.com", "Administrator");
     HttpResponsePtr resp;
-    admin.deleteUser(authed(admin_user.principal), [&](const HttpResponsePtr& r) { resp = r; }, admin_user.user.id);
+    admin.deleteUser(
+        authed(admin_user.principal), [&](const HttpResponsePtr& r) { resp = r; }, admin_user.user.id);
     ASSERT_EQ(resp->statusCode(), k400BadRequest);
     auto body = json::parse(std::string(resp->body()));
     EXPECT_EQ(body["error"].get<std::string>(), "self_delete");
@@ -190,7 +192,8 @@ TEST_F(AdminFlowTest, adminCannotChangeOwnRole) {
     auto req = authed_post(admin_user.principal, {{"role_id", user_role->id}});
     req->setMethod(Patch);
     HttpResponsePtr resp;
-    admin.updateUser(req, [&](const HttpResponsePtr& r) { resp = r; }, admin_user.user.id);
+    admin.updateUser(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, admin_user.user.id);
     ASSERT_EQ(resp->statusCode(), k400BadRequest);
     auto body = json::parse(std::string(resp->body()));
     EXPECT_EQ(body["error"].get<std::string>(), "self_role_change");
@@ -241,7 +244,8 @@ TEST_F(AdminFlowTest, updateRolePatchesFields) {
     auto req = authed_post(admin_user.principal, {{"permissions", kEditorPermsWidened}});
     req->setMethod(Patch);
     HttpResponsePtr resp;
-    admin.updateRole(req, [&](const HttpResponsePtr& r) { resp = r; }, std::to_string(created.id));
+    admin.updateRole(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, std::to_string(created.id));
     ASSERT_EQ(resp->statusCode(), k200OK);
     auto body = json::parse(std::string(resp->body()));
     EXPECT_EQ(body["data"]["permissions"].get<int>(), 7);
@@ -255,7 +259,8 @@ TEST_F(AdminFlowTest, updateRoleEmptyPatchRefused) {
     auto req = authed_post(admin_user.principal, json::object());
     req->setMethod(Patch);
     HttpResponsePtr resp;
-    admin.updateRole(req, [&](const HttpResponsePtr& r) { resp = r; }, std::to_string(created.id));
+    admin.updateRole(
+        req, [&](const HttpResponsePtr& r) { resp = r; }, std::to_string(created.id));
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
 }
 

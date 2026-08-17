@@ -263,7 +263,8 @@ TEST_F(EmployeesApiTest, GetEmployeeSucceeds) {
     auto created_id = json::parse(std::string(create_resp->body()))["data"]["id"].get<std::string>();
 
     HttpResponsePtr resp;
-    ctrl.get(authed(accountant), [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.get(
+        authed(accountant), [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK);
     auto body = json::parse(std::string(resp->body()));
@@ -283,7 +284,8 @@ TEST_F(EmployeesApiTest, GetEmployeeCrossOrgNotFound) {
     auto created_id = json::parse(std::string(create_resp->body()))["data"]["id"].get<std::string>();
 
     HttpResponsePtr resp;
-    ctrl.get(authed(accountant_b), [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.get(
+        authed(accountant_b), [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -293,7 +295,8 @@ TEST_F(EmployeesApiTest, GetEmployeeMalformedIdRejected) {
     auto accountant = member("accountant23@example.com", org.id, "accountant");
 
     HttpResponsePtr resp;
-    ctrl.get(authed(accountant), [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
+    ctrl.get(
+        authed(accountant), [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
 }
@@ -318,7 +321,8 @@ TEST_F(EmployeesApiTest, PatchEmployeeSucceeds) {
     };
     auto patch_req = authed_json(accountant, patch_body, Patch);
     HttpResponsePtr resp;
-    ctrl.patch(patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.patch(
+        patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK);
     auto body = json::parse(std::string(resp->body()));
@@ -342,7 +346,8 @@ TEST_F(EmployeesApiTest, PatchViewerForbidden) {
         {"iin", "837748630575"}, {"last_name", "X"}, {"first_name", "Y"}, {"position", "Z"}, {"salary", "1.00"}};
     auto patch_req = authed_json(viewer, patch_body, Patch);
     HttpResponsePtr resp;
-    ctrl.patch(patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.patch(
+        patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -363,7 +368,8 @@ TEST_F(EmployeesApiTest, PatchCrossOrgNotFound) {
         {"iin", "731284151557"}, {"last_name", "X"}, {"first_name", "Y"}, {"position", "Z"}, {"salary", "1.00"}};
     auto patch_req = authed_json(accountant_b, patch_body, Patch);
     HttpResponsePtr resp;
-    ctrl.patch(patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.patch(
+        patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -380,7 +386,8 @@ TEST_F(EmployeesApiTest, PatchInvalidIinRejected) {
     json patch_body = {{"iin", "123"}, {"last_name", "X"}, {"first_name", "Y"}, {"position", "Z"}, {"salary", "1.00"}};
     auto patch_req = authed_json(accountant, patch_body, Patch);
     HttpResponsePtr resp;
-    ctrl.patch(patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.patch(
+        patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto body = json::parse(std::string(resp->body()));
@@ -400,7 +407,8 @@ TEST_F(EmployeesApiTest, PatchInvalidSalaryRejected) {
         {"iin", "972805129058"}, {"last_name", "X"}, {"first_name", "Y"}, {"position", "Z"}, {"salary", "abc"}};
     auto patch_req = authed_json(accountant, patch_body, Patch);
     HttpResponsePtr resp;
-    ctrl.patch(patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.patch(
+        patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto body = json::parse(std::string(resp->body()));
@@ -426,7 +434,8 @@ TEST_F(EmployeesApiTest, PatchHiredOnRejected) {
                        {"hired_on", "2026-02-01"}};
     auto patch_req = authed_json(accountant, patch_body, Patch);
     HttpResponsePtr resp;
-    ctrl.patch(patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.patch(
+        patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto body = json::parse(std::string(resp->body()));
@@ -451,7 +460,8 @@ TEST_F(EmployeesApiTest, PatchDismissedOnRejected) {
                        {"dismissed_on", "2026-02-01"}};
     auto patch_req = authed_json(accountant, patch_body, Patch);
     HttpResponsePtr resp;
-    ctrl.patch(patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.patch(
+        patch_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto body = json::parse(std::string(resp->body()));
@@ -472,7 +482,8 @@ TEST_F(EmployeesApiTest, DismissEmployeeSucceeds) {
 
     auto dismiss_req = authed_json(accountant, json{{"dismissed_on", "2026-06-30"}});
     HttpResponsePtr resp;
-    ctrl.dismiss(dismiss_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.dismiss(
+        dismiss_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK);
     auto body = json::parse(std::string(resp->body()));
@@ -492,7 +503,8 @@ TEST_F(EmployeesApiTest, DismissViewerForbidden) {
 
     auto dismiss_req = authed_json(viewer, json{{"dismissed_on", "2026-06-30"}});
     HttpResponsePtr resp;
-    ctrl.dismiss(dismiss_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.dismiss(
+        dismiss_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -511,7 +523,8 @@ TEST_F(EmployeesApiTest, DismissCrossOrgNotFound) {
 
     auto dismiss_req = authed_json(accountant_b, json{{"dismissed_on", "2026-06-30"}});
     HttpResponsePtr resp;
-    ctrl.dismiss(dismiss_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.dismiss(
+        dismiss_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -527,7 +540,8 @@ TEST_F(EmployeesApiTest, DismissInvalidDateRejected) {
 
     auto dismiss_req = authed_json(accountant, json{{"dismissed_on", "2026-02-30"}});
     HttpResponsePtr resp;
-    ctrl.dismiss(dismiss_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
+    ctrl.dismiss(
+        dismiss_req, [&](const HttpResponsePtr& r) { resp = r; }, created_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto body = json::parse(std::string(resp->body()));

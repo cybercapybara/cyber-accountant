@@ -14,6 +14,14 @@ export const qk = {
     mine: () => ['orgs', 'mine'] as const,
     members: (orgId: string) => ['orgs', 'members', orgId] as const,
   },
+  requisites: {
+    /// Реквизиты организации + её счета: один ключ, потому что страница и
+    /// пояснение в формах читают их вместе.
+    current: () => ['requisites', 'current'] as const,
+  },
+  bankAccounts: {
+    all: () => ['bank-accounts', 'all'] as const,
+  },
   counterparties: {
     all: (page?: number) =>
       page === undefined

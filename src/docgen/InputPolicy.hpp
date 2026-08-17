@@ -229,6 +229,89 @@ inline bool read_tiyn(const json& input,
  *         случая (чужое поле, кривое целое, несходящаяся разбивка) суть
  *         семантически неверные значения, а не кривая форма запроса.
  */
+/// Реквизиты продавца, которые сервер подставляет вместо клиентских.
+/// Заполняется вызывающим из организации и её основного счёта — сам заголовок
+/// в базу не ходит.
+struct SellerRequisites {
+    std::string name;        ///< organizations.name — есть всегда
+    std::string identifier;  ///< organizations.bin — есть всегда
+    std::string address;     ///< organizations.legal_address, может быть пуст
+    std::string iik;         ///< основной счёт, если назначен
+    std::string bank;
+    std::string bik;
+    std::string kbe;
+    std::string vat_certificate;  ///< только счёт-фактура
+};
+
+/// Шаблоны, у которых продавец — это САМА организация, и потому он не может
+/// приходить от клиента. `reconciliation` сюда НЕ входит намеренно: у него
+/// стороны называются party_a/party_b, и какая из них «мы» — вопрос
+/// вызывающего, а не свойство схемы. Догадка здесь напечатала бы чужие
+/// реквизиты в акте сверки.
+inline bool seller_is_the_organization(const std::string& slug) {
+    return slug == "invoice" || slug == "avr" || slug == "waybill" || slug == "tax_invoice";
+}
+
+/**
+ * @brief Записать реквизиты продавца от лица сервера.
+ * @details Тот же принцип, что у сумм: поле, которое обязан заполнять сервер,
+ *          от клиента не принимается вовсе. До этого `seller` приходил в теле
+ *          целиком (`definitions.party` в схемах объявляет name, identifier,
+ *          address, iik, bik, kbe), из-за чего бухгалтер перенабирал свои же
+ *          банковские реквизиты в каждом документе, и два счёта одной
+ *          организации могли разойтись в номере счёта.
+ *
+ *          Имя и БИН пишутся ВСЕГДА — они у организации есть по определению,
+ *          и `seller` обязателен во всех четырёх схемах. Остальные поля
+ *          пишутся, только если заполнены: организация, ещё не внёсшая адрес
+ *          и счёт, продолжает выпускать документы, просто без этих строк.
+ *          Это сознательный выбор в пользу работоспособности — жёсткая
+ *          проверка «сначала заполните реквизиты» сломала бы выпуск
+ *          документов всем, кто их пока не внёс.
+ * @return false и заполненные поля ошибки, если клиент прислал `seller`.
+ */
+inline bool apply_seller_requisites(const std::string& slug,
+                                    json& input,
+                                    const SellerRequisites& seller,
+                                    std::string& error_field,
+                                    std::string& error_code,
+                                    std::string& error_message) {
+    if (!seller_is_the_organization(slug))
+        return true;
+
+    if (input.contains("seller")) {
+        error_field = "input.seller";
+        error_code = "not_allowed_override";
+        error_message =
+            "'seller' is filled in by the server from the organization's own requisites and may not be supplied "
+            "by the client";
+        return false;
+    }
+
+    json party = json::object();
+    party["name"] = seller.name;
+    party["identifier"] = seller.identifier;
+    // Пустое поле НЕ пишется: схема объявляет его необязательным, а пустая
+    // строка напечатала бы в документе пустую подпись вместо её отсутствия.
+    if (!seller.address.empty())
+        party["address"] = seller.address;
+    if (!seller.iik.empty())
+        party["iik"] = seller.iik;
+    if (!seller.bank.empty())
+        party["bank"] = seller.bank;
+    if (!seller.bik.empty())
+        party["bik"] = seller.bik;
+    if (!seller.kbe.empty())
+        party["kbe"] = seller.kbe;
+    // Свидетельство по НДС объявлено ТОЛЬКО в схеме счёта-фактуры. Писать
+    // его в остальные документы нельзя: их схемы поле не объявляют, и
+    // валидация отвергла бы собственный ввод сервера.
+    if (slug == "tax_invoice" && !seller.vat_certificate.empty())
+        party["vat_certificate"] = seller.vat_certificate;
+    input["seller"] = std::move(party);
+    return true;
+}
+
 inline bool apply_derived_amount(const std::string& slug,
                                  json& input,
                                  std::string& error_field,

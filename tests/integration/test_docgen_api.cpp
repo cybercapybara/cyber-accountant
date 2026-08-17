@@ -35,6 +35,7 @@
 #include "repositories/UserRepository.hpp"
 #include "security/Auth.hpp"
 #include "tenancy/OrgMemberRepository.hpp"
+#include "tenancy/BankAccountRepository.hpp"
 #include "tenancy/OrganizationRepository.hpp"
 #include "test_helpers.hpp"
 
@@ -133,12 +134,11 @@ protected:
     /// P3: the caller supplies the integer `total_tiyn` ONLY — `total` and
     /// `total_words` are derived by the server, and sending either is a 422
     /// (GenerateRejectsClientSuppliedTotalWords). What the document ends up
-    /// storing is expected_invoice_snapshot() below.
+    /// storing is expected_invoice_snapshot(org) below.
     static json valid_invoice_input() {
         return json{
             {"number", "1"},
             {"date", "14.08.2026"},
-            {"seller", {{"name", "Cyber Capybara ТОО"}, {"identifier", "104332181962"}}},
             {"buyer", {{"name", "Покупатель ТОО"}, {"identifier", "001338908381"}}},
             {"items",
              json::array({json{{"name", "Консультации"},
@@ -150,11 +150,19 @@ protected:
         };
     }
 
-    /// valid_invoice_input() plus the two strings the server derives from
-    /// `total_tiyn` — exactly what documents.input_snapshot and the render
-    /// job's payload must carry.
-    static json expected_invoice_snapshot() {
+    /// valid_invoice_input() plus everything the SERVER writes: две строки,
+    /// выведенные из `total_tiyn`, и реквизиты продавца, взятые из самой
+    /// организации. Продавец здесь параметр, а не константа, потому что
+    /// каждый тест заводит свою организацию — и снимок обязан содержать
+    /// именно её реквизиты, иначе тест прошёл бы и на чужих.
+    ///
+    /// Банковских полей тут нет намеренно: у организации не назначен
+    /// основной счёт, и незаполненные поля сервер не пишет вовсе (пустая
+    /// строка напечатала бы в документе пустую строку реквизита вместо её
+    /// отсутствия).
+    static json expected_invoice_snapshot(const Tenancy::Organization& org) {
         json input = valid_invoice_input();
+        input["seller"] = json{{"name", org.name}, {"identifier", org.bin}};
         input["total"] = "1 000,00";
         input["total_words"] = "Одна тысяча тенге 00 тиын";
         return input;
@@ -167,7 +175,6 @@ protected:
         return json{
             {"number", "7"},
             {"date", "14.08.2026"},
-            {"seller", {{"name", "Cyber Capybara ТОО"}, {"identifier", "104332181962"}}},
             {"buyer", {{"name", "Покупатель ТОО"}, {"identifier", "001338908381"}}},
             {"items",
              json::array({json{{"name", "Консультации"},
@@ -248,7 +255,7 @@ TEST_F(DocgenApiTest, GenerateValidInputAcceptedAndEnqueues) {
     ASSERT_TRUE(version.has_value());
     EXPECT_EQ(version->template_version.value_or(""), "v1");
     ASSERT_TRUE(version->input_snapshot.has_value());
-    EXPECT_EQ(*version->input_snapshot, expected_invoice_snapshot());
+    EXPECT_EQ(*version->input_snapshot, expected_invoice_snapshot(org));
 
     // A docgen.render job was enqueued — NOT executed.
     ASSERT_EQ(queue_depth(), 1);
@@ -266,7 +273,7 @@ TEST_F(DocgenApiTest, GenerateValidInputAcceptedAndEnqueues) {
     // time it runs, which an edit arriving first makes the wrong one.
     EXPECT_EQ(job->payload["version_id"], version->id);
     EXPECT_EQ(job->payload["slug"], "invoice");
-    EXPECT_EQ(job->payload["input"], expected_invoice_snapshot());
+    EXPECT_EQ(job->payload["input"], expected_invoice_snapshot(org));
 }
 
 TEST_F(DocgenApiTest, GenerateInvalidInputRejected) {
@@ -436,6 +443,93 @@ TEST_F(DocgenApiTest, GenerateRejectsClientSuppliedTotalWords) {
     EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input.total_words");
     EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
     EXPECT_EQ(queue_depth(), 0);
+}
+
+TEST_F(DocgenApiTest, GenerateRejectsClientSuppliedSeller) {
+    // Продавец — это САМА организация, поэтому он не может приходить от
+    // клиента: иначе счёт печатался бы от чужого имени и с чужим счётом,
+    // оставаясь при этом законным документом этой организации.
+    auto org = seed_org("444260000020", "Seller Override Org LLP");
+    auto accountant = member("seller-override@example.com", org.id, "accountant");
+
+    json input = valid_invoice_input();
+    input["seller"] = json{{"name", "Чужое ТОО"}, {"identifier", "999999999999"}};
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", input}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input.seller");
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    EXPECT_EQ(queue_depth(), 0);
+}
+
+TEST_F(DocgenApiTest, GenerateFillsSellerFromTheOrganizationRequisitesAndPrimaryAccount) {
+    // Ровно та боль, ради которой вводились реквизиты: раньше эти строки
+    // бухгалтер набирал руками в каждом документе.
+    auto org = seed_org("444260000021", "Requisites Org LLP");
+    auto accountant = member("requisites@example.com", org.id, "accountant");
+
+    Tenancy::OrganizationRepository orgs;
+    ASSERT_TRUE(orgs.update_requisites(org.id, "г. Алматы, пр. Абая 1", "Тарасов М.", "Директор"));
+    Tenancy::BankAccountRepository accounts;
+    Tenancy::BankAccount account;
+    account.iik = "KZ12345678901234567";
+    account.bank_name = "АО «Банк ЦентрКредит»";
+    account.bik = "KCJBKZKX";
+    account.kbe = "17";
+    account.is_primary = true;
+    accounts.create(org.id, account);
+
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", valid_invoice_input()}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k202Accepted);
+    auto body = json::parse(std::string(resp->body()));
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.find_in_org(body["document_id"].get<std::string>(), org.id, /*from_primary=*/true);
+    ASSERT_TRUE(doc.has_value());
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    const json& seller = (*version->input_snapshot)["seller"];
+    EXPECT_EQ(seller["name"].get<std::string>(), "Requisites Org LLP");
+    EXPECT_EQ(seller["identifier"].get<std::string>(), "444260000021");
+    EXPECT_EQ(seller["address"].get<std::string>(), "г. Алматы, пр. Абая 1");
+    EXPECT_EQ(seller["iik"].get<std::string>(), "KZ12345678901234567");
+    EXPECT_EQ(seller["bank"].get<std::string>(), "АО «Банк ЦентрКредит»");
+    EXPECT_EQ(seller["bik"].get<std::string>(), "KCJBKZKX");
+    EXPECT_EQ(seller["kbe"].get<std::string>(), "17");
+}
+
+TEST_F(DocgenApiTest, GenerateOmitsUnfilledSellerFieldsInsteadOfPrintingBlanks) {
+    // Организация, ещё не внёсшая адрес и счёт, обязана продолжать выпускать
+    // документы. Пустых строк в снимке при этом быть не должно: пустая
+    // строка напечатала бы в документе пустой реквизит вместо его отсутствия.
+    auto org = seed_org("444260000022", "Bare Org LLP");
+    auto accountant = member("bare@example.com", org.id, "accountant");
+
+    auto req = authed_json(accountant, {{"template_slug", "invoice"}, {"input", valid_invoice_input()}});
+    HttpResponsePtr resp;
+    ctrl.generate(req, [&](const HttpResponsePtr& r) { resp = r; });
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k202Accepted);
+    auto body = json::parse(std::string(resp->body()));
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.find_in_org(body["document_id"].get<std::string>(), org.id, /*from_primary=*/true);
+    ASSERT_TRUE(doc.has_value());
+    auto version = documents.latest_version(org.id, doc->id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    const json& seller = (*version->input_snapshot)["seller"];
+    EXPECT_EQ(seller["name"].get<std::string>(), "Bare Org LLP");
+    EXPECT_FALSE(seller.contains("address"));
+    EXPECT_FALSE(seller.contains("iik"));
+    EXPECT_FALSE(seller.contains("bik"));
 }
 
 TEST_F(DocgenApiTest, GenerateRejectsATaxInvoiceWhoseTotalsDoNotSum) {

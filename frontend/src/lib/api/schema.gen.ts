@@ -4,6 +4,284 @@
  */
 
 export interface paths {
+    "/api/v1/orgs/{orgId}/requisites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set the organization's printable requisites (owner only)
+         * @description Legal address and the signatory printed on documents. Written in ONE request rather than field by field: they appear in the same signature block, so an organization whose signatory position changed but whose name did not would issue documents signed by the wrong person — the handler requires all three even though the verb is PATCH, which is the update verb this API uses everywhere. Reading them needs no separate route — GET /api/v1/orgs/mine already returns the organization, requisites included.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    orgId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["OrgRequisitesWrite"];
+                };
+            };
+            responses: {
+                /** @description Updated organization */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OrganizationDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or the caller is not the owner (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No such organization */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/bank-accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the organization's bank accounts (primary first) */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                    offset?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Bank account page */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BankAccountListResponse"];
+                    };
+                };
+                /** @description No org context, or your role may not read requisites (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Add a bank account (owner only)
+         * @description Write is owner-only and that is a fraud control, not a hierarchy: a swapped IIK sends customer payments to someone else's account and is noticed weeks later. An accountant sees the accounts and would dispute a swap, but does not make one.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BankAccountWrite"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BankAccountDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description An account with that IIK already exists in this organization */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/bank-accounts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a bank account (owner only) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No such account in this organization */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Update a bank account (owner only)
+         * @description Partial — only the keys present in the body change. Setting is_primary clears the previous primary in the same transaction, so the partial unique index cannot turn "make this one primary" into a 409.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BankAccountWrite"];
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BankAccountDetailResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No such account in this organization */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Another account in this organization already uses that IIK */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
     "/": {
         parameters: {
             query?: never;
@@ -5659,7 +5937,7 @@ export interface components {
         Organization: {
             /** Format: uuid */
             id: string;
-            /** @description 12-digit BIN/IIN — format-only in v1 */
+            /** @description 12-digit BIN/IIN — format-only in v1, check digit is P1 */
             bin: string;
             name: string;
             /** @enum {string} */
@@ -5667,8 +5945,60 @@ export interface components {
             vat_payer: boolean;
             /** @enum {string} */
             status: "active" | "suspended" | "archived";
+            /** @description Printed on documents; empty string means "not filled in" */
+            legal_address?: string;
+            /** @description Signatory printed on documents */
+            director_name?: string;
+            /** @default Директор */
+            director_position: string;
+            /** @description VAT registration certificate — printed on the счёт-фактура only */
+            vat_certificate?: string;
             created_at: string;
             updated_at: string;
+        };
+        /** @description All three fields are written together — they print in one signature block, so a partial update could sign a document with the wrong person. An empty string is a legal value and clears the field. */
+        OrgRequisitesWrite: {
+            legal_address: string;
+            director_name: string;
+            director_position: string;
+            /** @description Optional — only a VAT payer has one, and only the счёт-фактура prints it */
+            vat_certificate?: string;
+        };
+        BankAccount: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** @description IBAN KZ..; not format-validated in the database */
+            iik: string;
+            bank_name: string;
+            bik: string;
+            kbe: string;
+            /** @default KZT */
+            currency: string;
+            /** @description At most one per organization, enforced by a partial unique index */
+            is_primary: boolean;
+            created_at: string;
+            updated_at: string;
+        };
+        BankAccountWrite: {
+            iik: string;
+            bank_name: string;
+            bik?: string;
+            kbe?: string;
+            /** @default KZT */
+            currency: string;
+            /** @default false */
+            is_primary: boolean;
+        };
+        BankAccountListResponse: {
+            data: components["schemas"]["BankAccount"][];
+            total: number;
+            limit: number;
+            offset: number;
+        };
+        BankAccountDetailResponse: {
+            data: components["schemas"]["BankAccount"];
         };
         OrganizationWithRole: components["schemas"]["Organization"] & {
             /** @enum {string} */

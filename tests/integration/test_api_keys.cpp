@@ -96,7 +96,8 @@ TEST_F(ApiKeysTest, ListHidesSecretAndRevokeStopsAuth) {
     EXPECT_FALSE(list["data"][0].contains("key_hash"));
 
     HttpResponsePtr delResp;
-    controller.remove(TestHelpers::authed(user), [&](const HttpResponsePtr& r) { delResp = r; }, id);
+    controller.remove(
+        TestHelpers::authed(user), [&](const HttpResponsePtr& r) { delResp = r; }, id);
     EXPECT_EQ(delResp->statusCode(), k200OK);
 
     EXPECT_FALSE(Security::ApiKeys::authenticate(with_key(key)).has_value());  // revoked
@@ -109,7 +110,8 @@ TEST_F(ApiKeysTest, RevokeIsOwnerScoped) {
 
     // Bob can't revoke Alice's key → 404 (no info leak that it exists).
     HttpResponsePtr resp;
-    controller.remove(TestHelpers::authed(bob), [&](const HttpResponsePtr& r) { resp = r; }, id);
+    controller.remove(
+        TestHelpers::authed(bob), [&](const HttpResponsePtr& r) { resp = r; }, id);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
 

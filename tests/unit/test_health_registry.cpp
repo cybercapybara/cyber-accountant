@@ -31,7 +31,8 @@ TEST_F(HealthRegistryTest, DegradedProbeIsIgnoredByReadiness) {
     Core::Application app;
     app.register_health_check("critical-dep", [] { return true; });
     // A degraded (non-critical) dependency that is DOWN must not fail readiness.
-    app.register_health_check("optional-dep", [] { return false; }, /*critical=*/false);
+    app.register_health_check(
+        "optional-dep", [] { return false; }, /*critical=*/false);
     EXPECT_TRUE(app.all_critical_healthy());
 }
 
@@ -44,7 +45,8 @@ TEST_F(HealthRegistryTest, CriticalProbeFailureFailsReadiness) {
 TEST_F(HealthRegistryTest, ReportCarriesCriticalFlag) {
     Core::Application app;
     app.register_health_check("critical-dep", [] { return true; });
-    app.register_health_check("optional-dep", [] { return false; }, /*critical=*/false);
+    app.register_health_check(
+        "optional-dep", [] { return false; }, /*critical=*/false);
     auto report = app.health_report();
     ASSERT_EQ(report.size(), 2u);
     bool saw_optional = false;
