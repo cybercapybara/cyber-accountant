@@ -32,6 +32,7 @@
 #include <nlohmann/json.hpp>
 
 #include "api/Guards.hpp"
+#include "api/HandlerSupport.hpp"
 #include "api/RequestUtils.hpp"
 #include "api/Validation.hpp"
 #include "docgen/BlockCompiler.hpp"
