@@ -185,8 +185,11 @@ TEST_F(OrgRequisitesTest, TwoPrimaryAccountsAreImpossibleEvenBypassingTheReposit
 
     EXPECT_THROW(
         {
+            // Лямбда обязана что-то вернуть: execute_write выводит тип
+            // результата через invoke_result, и void здесь не собирается.
             Database::get().execute_write([&](auto& txn) {
                 txn.exec_params("UPDATE bank_accounts SET is_primary = TRUE WHERE id = $1", second.id);
+                return true;
             });
         },
         std::exception);
