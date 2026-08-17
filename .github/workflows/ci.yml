@@ -397,6 +397,11 @@ jobs:
               - 'scripts/check-render.py'
               - 'scripts/render-blocks.sh'
               - 'scripts/check-render-selftest.sh'
+              # The gate's own DEFINITION lives in this workflow. Without this
+              # line a change to the gate step itself skips the job — and a
+              # skipped job reports success, which is how the blocks gate
+              # looked green twice in a row without ever executing.
+              - '.github/workflows/ci.yml'
 
       - name: Set up Docker Buildx
         if: steps.changes.outputs.docgen == 'true'
