@@ -1234,6 +1234,51 @@ TEST_F(LedgerDocumentsApiTest, EditRejectsServerDerivedMoneyStrings) {
     EXPECT_EQ(repo.list_versions(org.id, doc_id).size(), 1U);
 }
 
+TEST_F(LedgerDocumentsApiTest, EditRejectsAClientSuppliedSeller) {
+    // Точек входа с авторским вводом ДВЕ: создание и правка. Политика,
+    // применённая только к созданию, оставила бы правку дырой — документ,
+    // при создании не принявший чужого продавца, менял бы его правкой.
+    auto org = seed_org("444240000045", "Edit Seller Org LLP");
+    auto p = member("edit-seller@example.com", org.id, "accountant");
+    const std::string doc_id = seed_rendered_invoice(org.id, /*total_tiyn=*/1234567, "seed-bytes");
+
+    json forged = make_invoice_input(/*total_tiyn=*/200000);
+    forged["seller"] = json{{"name", "Чужое ТОО"}, {"identifier", "999999999999"}};
+    HttpResponsePtr resp;
+    ctrl.createVersion(
+        authed_json(p, json{{"input", forged}}), [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
+    ASSERT_NE(resp, nullptr);
+    EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
+    auto body = json::parse(std::string(resp->body()));
+    EXPECT_EQ(body["errors"][0]["code"].get<std::string>(), "not_allowed_override");
+    EXPECT_EQ(body["errors"][0]["field"].get<std::string>(), "input.seller");
+
+    Ledger::DocumentRepository repo;
+    EXPECT_EQ(repo.list_versions(org.id, doc_id).size(), 1U);
+}
+
+TEST_F(LedgerDocumentsApiTest, EditFillsSellerFromTheOrganizationLikeCreationDoes) {
+    auto org = seed_org("444240000046", "Edit Fills Org LLP");
+    auto p = member("edit-fills@example.com", org.id, "accountant");
+    const std::string doc_id = seed_rendered_invoice(org.id, /*total_tiyn=*/1234567, "seed-bytes");
+
+    HttpResponsePtr resp;
+    ctrl.createVersion(
+        authed_json(p, json{{"input", make_invoice_input(/*total_tiyn=*/200000)}}),
+        [&](const HttpResponsePtr& r) { resp = r; },
+        doc_id);
+    ASSERT_NE(resp, nullptr);
+    ASSERT_EQ(resp->statusCode(), k202Accepted) << std::string(resp->body());
+
+    Ledger::DocumentRepository repo;
+    auto version = repo.latest_version(org.id, doc_id);
+    ASSERT_TRUE(version.has_value());
+    ASSERT_TRUE(version->input_snapshot.has_value());
+    const json& seller = (*version->input_snapshot)["seller"];
+    EXPECT_EQ(seller["name"].get<std::string>(), "Edit Fills Org LLP");
+    EXPECT_EQ(seller["identifier"].get<std::string>(), "444240000046");
+}
+
 // Fix round 1: a body that is present but is not a JSON object used to be a
 // 500, not a 400. `contains()` is false on a non-object json, so the `input`
 // type guard was skipped and `body.value("input", …)` threw

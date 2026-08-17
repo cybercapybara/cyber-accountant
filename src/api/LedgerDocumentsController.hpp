@@ -201,8 +201,10 @@
 #include "ledger/DocumentVersion.hpp"
 #include "security/Audit.hpp"
 #include "storage/Storage.hpp"
+#include "tenancy/BankAccountRepository.hpp"
 #include "tenancy/OrgContext.hpp"
 #include "tenancy/OrgPermissions.hpp"
+#include "tenancy/OrganizationRepository.hpp"
 #include "utils/ErrorResponse.hpp"
 #include "utils/Strings.hpp"
 
@@ -747,6 +749,16 @@ public:
                     callback(Validation::response_422(bad_field, bad_code, bad_message));
                     return;
                 }
+                // Реквизиты продавца пишет сервер — и ЗДЕСЬ ТОЖЕ. Точек
+                // входа с авторским вводом две (создание и правка), и
+                // политика, применённая в одной, оставляет вторую дырой:
+                // правкой можно было бы подменить продавца в документе,
+                // который при создании его не принимал.
+                if (!Docgen::InputPolicy::apply_seller_requisites(
+                        slug, input, load_seller(ctx.org_id), bad_field, bad_code, bad_message)) {
+                    callback(Validation::response_422(bad_field, bad_code, bad_message));
+                    return;
+                }
             } else {
                 // Серверная форма: база — снапшот предыдущей версии,
                 // сверху ложатся ТОЛЬКО allowlisted-ключи. Любой другой —
@@ -1137,6 +1149,30 @@ private:
         if (!Storage::is_initialized())
             return nullptr;
         return dynamic_cast<Storage::S3Storage*>(&Storage::get());
+    }
+
+    /// Реквизиты продавца из организации и её ОСНОВНОГО счёта — тот же
+    /// источник, что у POST /documents/generate. Дублируется намеренно
+    /// небольшой функцией, а не выносится в общий заголовок: контроллеры в
+    /// этом проекте не подключают друг друга (api/Api.hpp подключает их сам,
+    /// и перекрёстный include дал бы цикл).
+    static Docgen::InputPolicy::SellerRequisites load_seller(const std::string& org_id) {
+        Docgen::InputPolicy::SellerRequisites seller;
+        Tenancy::OrganizationRepository orgs;
+        if (auto org = orgs.find(org_id)) {
+            seller.name = org->name;
+            seller.identifier = org->bin;
+            seller.address = org->legal_address;
+            seller.vat_certificate = org->vat_certificate;
+        }
+        Tenancy::BankAccountRepository accounts;
+        if (auto primary = accounts.find_primary(org_id)) {
+            seller.iik = primary->iik;
+            seller.bank = primary->bank_name;
+            seller.bik = primary->bik;
+            seller.kbe = primary->kbe;
+        }
+        return seller;
     }
 };
 
