@@ -134,6 +134,12 @@ inline const std::vector<EndpointInfo>& get_endpoints() {
         {"PATCH", "/api/v1/bank-accounts/{1}", "BankAccountsController::patchBankAccount"},
         {"DELETE", "/api/v1/bank-accounts/{1}", "BankAccountsController::deleteBankAccount"},
         {"PATCH", "/api/v1/orgs/{1}/requisites", "OrganizationsController::updateRequisites"},
+        {"GET", "/api/v1/org-templates", "TemplatesController::listTemplates"},
+        {"POST", "/api/v1/org-templates", "TemplatesController::createTemplate"},
+        {"PATCH", "/api/v1/org-templates/{1}", "TemplatesController::patchTemplate"},
+        {"POST", "/api/v1/org-templates/{1}/publish", "TemplatesController::publishTemplate"},
+        {"DELETE", "/api/v1/org-templates/{1}", "TemplatesController::archiveTemplate"},
+        {"GET", "/api/v1/template-variables", "TemplatesController::listVariables"},
     };
     return endpoints;
 }

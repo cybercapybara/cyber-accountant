@@ -174,6 +174,28 @@ public:
     /// Validate @p input against an already-resolved @p info's schema —
     /// avoids a redundant disk scan when the caller already has a
     /// TemplateInfo (e.g. RenderJob, after calling latest() once).
+    /// Allowlist for a template slug: it is used as a raw path component
+    /// (`root_ / slug / ...`), so anything outside `^[a-z][a-z0-9_-]*$` is
+    /// rejected — no `/`, no `..`, no leading digit/hyphen, no uppercase, no
+    /// empty string. This is defense-in-depth path-traversal hardening
+    /// (`Storage::key_is_safe`, `Files::sanitize_filename` are the same
+    /// posture for object-storage keys / filenames elsewhere in this repo):
+    /// a slug ultimately comes from job payloads submitted through the
+    /// generic admin job-submission endpoint, not just from code that
+    /// already trusts it.
+    static bool is_valid_slug(const std::string& slug) {
+        if (slug.empty())
+            return false;
+        if (slug[0] < 'a' || slug[0] > 'z')
+            return false;
+        for (char c : slug) {
+            const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+            if (!ok)
+                return false;
+        }
+        return true;
+    }
+
     static std::optional<std::string> validate(const TemplateInfo& info, const json& input) {
         return validate_against(info.schema, input);
     }
@@ -312,28 +334,6 @@ private:
             return value;
         }
     };
-
-    /// Allowlist for a template slug: it is used as a raw path component
-    /// (`root_ / slug / ...`), so anything outside `^[a-z][a-z0-9_-]*$` is
-    /// rejected — no `/`, no `..`, no leading digit/hyphen, no uppercase, no
-    /// empty string. This is defense-in-depth path-traversal hardening
-    /// (`Storage::key_is_safe`, `Files::sanitize_filename` are the same
-    /// posture for object-storage keys / filenames elsewhere in this repo):
-    /// a slug ultimately comes from job payloads submitted through the
-    /// generic admin job-submission endpoint, not just from code that
-    /// already trusts it.
-    static bool is_valid_slug(const std::string& slug) {
-        if (slug.empty())
-            return false;
-        if (slug[0] < 'a' || slug[0] > 'z')
-            return false;
-        for (char c : slug) {
-            const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
-            if (!ok)
-                return false;
-        }
-        return true;
-    }
 
     /// "v3" -> 3; anything not matching `v` + one-or-more digits -> nullopt
     /// (so a stray README.md or fixtures-only directory next to `vN` ones is

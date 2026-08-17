@@ -38,6 +38,7 @@
 #include "api/OrganizationsController.hpp"
 #include "api/PayrollController.hpp"
 #include "api/TaxController.hpp"
+#include "api/TemplatesController.hpp"
 
 namespace Api {
 

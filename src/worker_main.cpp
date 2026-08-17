@@ -31,7 +31,8 @@
 #include "cache/Cache.hpp"
 #include "core/Core.hpp"
 #include "docgen/BlockCompiler.hpp"
-#include "docgen/RenderJob.hpp"  // "docgen.render" job handler — self-registers on include
+#include "docgen/PublishJob.hpp"  // "docgen.publish_template" — self-registers on include
+#include "docgen/RenderJob.hpp"   // "docgen.render" job handler — self-registers on include
 #include "email/AccountEmailWorker.hpp"
 #include "jobs/BuiltinHandlers.hpp"
 #include "jobs/Dispatcher.hpp"

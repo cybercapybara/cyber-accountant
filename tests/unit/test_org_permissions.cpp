@@ -32,6 +32,8 @@ constexpr const char* kAllResources[] = {
     Resource::kTax,
     Resource::kMembers,
     Resource::kRequisites,
+    Resource::kTemplates,
+    Resource::kHrTemplates,
 };
 
 constexpr const char* kAllActions[] = {Action::kRead, Action::kWrite};
@@ -71,7 +73,8 @@ TEST(OrgPermissions, HrSeesOnlyPeopleResources) {
                             Resource::kDocuments,
                             Resource::kTax,
                             Resource::kMembers,
-                            Resource::kRequisites}) {
+                            Resource::kRequisites,
+                            Resource::kTemplates}) {
         EXPECT_FALSE(allows("hr", res, Action::kRead)) << res;
         EXPECT_FALSE(allows("hr", res, Action::kWrite)) << res;
     }
@@ -132,6 +135,8 @@ TEST(OrgPermissions, WholeMatrixMatchesSpec53) {
         {"owner",      Resource::kTax,             true,  true},
         {"owner",      Resource::kMembers,         true,  true},
         {"owner",      Resource::kRequisites,      true,  true},
+        {"owner",      Resource::kTemplates,       true,  true},
+        {"owner",      Resource::kHrTemplates,     true,  true},
 
         {"accountant", Resource::kEmployees,       true,  true},
         {"accountant", Resource::kHrDocs,          true,  true},
@@ -143,6 +148,8 @@ TEST(OrgPermissions, WholeMatrixMatchesSpec53) {
         {"accountant", Resource::kTax,             true,  true},
         {"accountant", Resource::kMembers,         false, false},
         {"accountant", Resource::kRequisites,      true,  false},
+        {"accountant", Resource::kTemplates,       true,  true},
+        {"accountant", Resource::kHrTemplates,     true,  true},
 
         {"hr",         Resource::kEmployees,       true,  true},
         {"hr",         Resource::kHrDocs,          true,  true},
@@ -154,6 +161,8 @@ TEST(OrgPermissions, WholeMatrixMatchesSpec53) {
         {"hr",         Resource::kTax,             false, false},
         {"hr",         Resource::kMembers,         false, false},
         {"hr",         Resource::kRequisites,      false, false},
+        {"hr",         Resource::kTemplates,       false, false},
+        {"hr",         Resource::kHrTemplates,     true,  true},
 
         {"viewer",     Resource::kEmployees,       true,  false},
         {"viewer",     Resource::kHrDocs,          true,  false},
@@ -165,6 +174,8 @@ TEST(OrgPermissions, WholeMatrixMatchesSpec53) {
         {"viewer",     Resource::kTax,             true,  false},
         {"viewer",     Resource::kMembers,         false, false},
         {"viewer",     Resource::kRequisites,      true,  false},
+        {"viewer",     Resource::kTemplates,       true,  false},
+        {"viewer",     Resource::kHrTemplates,     true,  false},
     };
     // clang-format on
 

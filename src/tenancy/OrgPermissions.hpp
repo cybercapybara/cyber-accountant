@@ -50,6 +50,11 @@ inline constexpr const char* kMembers = "members";
 /// kMembers: это данные, которые ПЕЧАТАЮТСЯ в документах, и читать их
 /// должен всякий, кто эти документы выпускает.
 inline constexpr const char* kRequisites = "requisites";
+/// Шаблоны первичных документов (конструктор, спека §8).
+inline constexpr const char* kTemplates = "templates";
+/// Шаблоны КАДРОВЫХ документов — отдельный ресурс, симметрично делению
+/// kDocuments / kHrDocs: кадровик правит свои шаблоны, но не шаблоны счетов.
+inline constexpr const char* kHrTemplates = "hr_templates";
 }  // namespace Resource
 
 namespace Action {
@@ -93,6 +98,10 @@ inline constexpr MatrixRow kMatrix[] = {
     // через недели. Бухгалтер реквизиты видит (он выпускает по ним документы)
     // и оспорит подмену, но не меняет их сам. Кадровику они не нужны.
     {Resource::kRequisites,       {"rw",      "r",     "",    "r"}},
+    // Шаблоны: правит владелец и бухгалтер. Кадровик — только КАДРОВЫЕ, по
+    // той же логике, по которой ему отдан kHrDocs и закрыт kDocuments.
+    {Resource::kTemplates,        {"rw",     "rw",     "",    "r"}},
+    {Resource::kHrTemplates,      {"rw",     "rw",   "rw",    "r"}},
 };
 // clang-format on
 
