@@ -28,12 +28,14 @@ describe('groupNavLinks', () => {
     expect(ids).toEqual(NAV_GROUPS.filter((g) => ids.includes(g.id)).map((g) => g.id));
   });
 
-  it('gives the owner all four groups and eleven links', () => {
+  it('gives the owner all four groups and twelve links', () => {
     const groups = groupNavLinks(routes, adminUser, 'owner');
     expect(groups.map((g) => g.id)).toEqual(['accounting', 'people', 'tax', 'settings']);
     // Одиннадцатая — «Реквизиты» (migrations/025_org_requisites.sql):
     // единственное место, где задаются печатаемые в документах реквизиты.
-    expect(groups.reduce((n, g) => n + g.links.length, 0)).toBe(11);
+    // Двенадцатая — «Шаблоны» (конструктор): её видят все, кроме неизвестной
+    // роли, но кадровик правит только СВОИ, кадровые (ресурс hr_templates).
+    expect(groups.reduce((n, g) => n + g.links.length, 0)).toBe(12);
   });
 
   it('shows the hr role the people group without payroll, plus settings', () => {
@@ -89,6 +91,7 @@ describe('role → visibility matrix (mirrors OrgPermissions.hpp §5.3)', () => 
         '/taxes',
         '/organizations',
         '/requisites',
+        '/templates',
       ],
     },
     {
@@ -101,11 +104,13 @@ describe('role → visibility matrix (mirrors OrgPermissions.hpp §5.3)', () => 
         '/taxes',
         '/organizations',
         '/requisites',
+        '/templates',
       ],
     },
     // Кадровик: сотрудники и кадровые документы — да; зарплата, журнал,
     // налоги, контрагенты и первичка — нет (в матрице у него пустая ячейка).
-    { role: 'hr', sees: [...publicLinks, ...people, '/organizations'] },
+    // Кадровик видит шаблоны: у него свои, кадровые. Реквизиты — нет.
+    { role: 'hr', sees: [...publicLinks, ...people, '/organizations', '/templates'] },
     {
       role: 'viewer',
       sees: [
@@ -116,6 +121,7 @@ describe('role → visibility matrix (mirrors OrgPermissions.hpp §5.3)', () => 
         '/taxes',
         '/organizations',
         '/requisites',
+        '/templates',
       ],
     },
     // Неизвестная роль и отсутствие роли закрыты так же, как на сервере

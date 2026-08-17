@@ -185,3 +185,9 @@ export type TaxFilingDetailResponse = Schemas['TaxFilingDetailResponse'];
 export type TaxFilingCreateResponse = Schemas['TaxFilingCreateResponse'];
 /** POST /api/v1/tax/filings/{id}/download-url — { url, artifact, key }. */
 export type FilingDownloadUrlResponse = Schemas['FilingDownloadUrlResponse'];
+
+/** Шаблон документа организации (конструктор). */
+export type DocumentTemplate = Schemas['DocumentTemplate'];
+export type DocumentTemplateListResponse = Schemas['DocumentTemplateListResponse'];
+export type DocumentTemplateDetailResponse = Schemas['DocumentTemplateDetailResponse'];
+export type DocumentTemplateWrite = Schemas['DocumentTemplateWrite'];

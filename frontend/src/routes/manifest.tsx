@@ -19,6 +19,7 @@ import type { NavGroupId } from '@/routes/navGroups';
 
 import { HomePage } from '@/pages/Home';
 import { RequisitesPage } from '@/pages/Requisites';
+import { TemplatesPage } from '@/pages/Templates';
 import { AboutPage } from '@/pages/About';
 import { LoginPage } from '@/pages/Login';
 import { RegisterPage } from '@/pages/Register';
@@ -193,6 +194,16 @@ export const routes: RouteEntry[] = [
     navGroup: 'settings',
     // navRoles намеренно не задан: список СВОИХ организаций видит любая
     // роль, включая кадровика, — это и есть точка входа в смену тенанта.
+  },
+  {
+    path: '/templates',
+    element: <TemplatesPage />,
+    guard: 'confirmed',
+    navLabel: 'Шаблоны',
+    navIcon: FileText,
+    navGroup: 'settings',
+    // Кадровик шаблоны ВИДИТ: у него свои, кадровые (ресурс hr_templates).
+    navRoles: ['owner', 'accountant', 'hr', 'viewer'],
   },
   {
     path: '/requisites',

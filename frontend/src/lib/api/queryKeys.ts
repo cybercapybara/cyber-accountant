@@ -14,6 +14,10 @@ export const qk = {
     mine: () => ['orgs', 'mine'] as const,
     members: (orgId: string) => ['orgs', 'members', orgId] as const,
   },
+  templates: {
+    all: () => ['templates', 'all'] as const,
+    variables: () => ['templates', 'variables'] as const,
+  },
   requisites: {
     /// Реквизиты организации + её счета: один ключ, потому что страница и
     /// пояснение в формах читают их вместе.
