@@ -35,6 +35,16 @@ class TemplatesApiTest : public TestHelpers::CoreBackedTest {
 protected:
     Api::TemplatesController ctrl;
 
+    /// Подсистема задач ОБЯЗАНА быть включена: публикация ставит задачу, и без
+    /// этого Jobs::submit честно отказывает 503. Мой тест на 202 сначала падал
+    /// именно так — то есть он проверял путь ОШИБКИ, а не успеха, чего я и не
+    /// заметил, пока сборка не сказала.
+    void config_overrides(json& cfg) override {
+        cfg["jobs"]["enabled"] = true;
+        cfg["database"]["migrations_enabled"] = true;
+        cfg["database"]["migrations_dir"] = "migrations";
+    }
+
     void SetUp() override {
         TestHelpers::CoreBackedTest::SetUp();
         if (::testing::Test::IsSkipped())
