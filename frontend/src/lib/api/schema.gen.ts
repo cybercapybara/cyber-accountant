@@ -4,6 +4,368 @@
  */
 
 export interface paths {
+    "/api/v1/org-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the organization's templates plus the shared platform ones */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Templates visible to this organization */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentTemplateListResponse"];
+                    };
+                };
+                /** @description No org context, or your role may not read templates (org_role_denied) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create a template DRAFT from blocks
+         * @description The blocks are compiled immediately: a draft that does not compile is useless, and an error named at creation is cheaper than one found at publish time. Raw Typst is not reachable through this route at all — that mode belongs to the instance admin, because static labels cannot be derived from raw source and the content layer of the gate would then have nothing to check.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DocumentTemplateWrite"];
+                };
+            };
+            responses: {
+                /** @description Draft created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentTemplateDetailResponse"];
+                    };
+                };
+                /** @description Validation failed (missing/wrong-type field) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your role may not edit this kind of template */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description That template already has a version with this number */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A block is invalid — the error names the block index, e.g. unknown_block_type, unknown_variable, invalid_field_name */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/org-templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Archive a template (never deleted)
+         * @description Issued documents reference a template version, so deleting one would make them unreproducible. Archiving removes it from the picker and rewrites nothing.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Archived */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentTemplateDetailResponse"];
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your role may not archive this kind of template */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No such template in this organization */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Edit a template draft
+         * @description Blocks are the source of truth, so the source, schema, form and expected labels are all regenerated from them. A PUBLISHED version cannot be edited — the database refuses it, because a document issued yesterday points at a template version and editing one would silently rewrite the past.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DocumentTemplateWrite"];
+                };
+            };
+            responses: {
+                /** @description Draft updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DocumentTemplateDetailResponse"];
+                    };
+                };
+                /** @description Malformed id, or blocks missing */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your role may not edit this kind of template */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No such template in this organization */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description That version is published and immutable (template_published_immutable) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A block is invalid — the error names the block index */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/org-templates/{id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run the publish gate and publish the version (asynchronous)
+         * @description 202, not 200, and that is not an optimisation. The gate has to render the template with the REAL engine, and Typst lives only in the worker image — the API image does not carry it and must not. So this enqueues docgen.publish_template; the verdict is in the job result. The template stays a draft unless the check passes.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Publish check queued */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            job_id: string;
+                            /** Format: uuid */
+                            template_id: string;
+                        };
+                    };
+                };
+                /** @description Malformed id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No org context, or your role may not publish this kind of template */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No such template in this organization */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Only a draft can be published (not_a_draft) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description The publish check could not be queued (publish_not_queued) */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/template-variables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The closed catalogue of ready-made template variables
+         * @description Closed on purpose: an unknown identifier is a refusal naming the block, not a silently empty line in a document nobody notices. The VAT rate entry resolves from the tax engine on the document's date, never from a number written into a template.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Variable catalogue */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            data: {
+                                id: string;
+                                label_ru: string;
+                                label_kk: string;
+                                /** @enum {string} */
+                                kind: "text" | "money" | "date" | "percent";
+                            }[];
+                        };
+                    };
+                };
+                /** @description No org context, or your role may not read templates */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{orgId}/requisites": {
         parameters: {
             query?: never;
@@ -144,7 +506,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or the caller is not the owner */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -204,7 +566,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or the caller is not the owner */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -250,14 +612,14 @@ export interface paths {
                         "application/json": components["schemas"]["BankAccountDetailResponse"];
                     };
                 };
-                /** @description Malformed id */
+                /** @description Malformed id, or validation failed */
                 400: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or the caller is not the owner */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -792,7 +1154,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description If the email is registered */
+                /** @description If the email is registered, a reset link is on its way */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -1725,11 +2087,11 @@ export interface paths {
                 query?: {
                     limit?: number;
                     offset?: number;
-                    /** @description Exact action filter */
+                    /** @description Exact action filter, e.g. user.create */
                     action?: string;
                     /** @description Filter by acting principal subject */
                     actor_id?: string;
-                    /** @description Filter by target kind */
+                    /** @description Filter by target kind, e.g. user / role */
                     target_type?: string;
                     /** @description created_at lower bound */
                     from?: string;
@@ -2105,7 +2467,7 @@ export interface paths {
                         "application/json": components["schemas"]["OrgMemberDetailResponse"];
                     };
                 };
-                /** @description Validation failed */
+                /** @description Validation failed, or both user_id and email were given */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -2331,7 +2693,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or caller's role is viewer */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2450,7 +2812,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or caller's role is viewer */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -2548,7 +2910,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or caller's role is viewer */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3258,7 +3620,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or caller's role is viewer */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -3340,7 +3702,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description No org context */
+                /** @description No org context, or caller's role is viewer */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -4095,7 +4457,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Not found */
+                /** @description Not found, already dismissed, or belonging to another organization */
                 404: {
                     headers: {
                         [name: string]: unknown;
@@ -4187,7 +4549,7 @@ export interface paths {
                         "application/json": components["schemas"]["HrOrderDetailResponse"];
                     };
                 };
-                /** @description Validation failed (missing/wrong-type field */
+                /** @description Validation failed (missing/wrong-type field, or a malformed employee_id) */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -4261,7 +4623,7 @@ export interface paths {
                         "application/json": components["schemas"]["GenerateDocumentResponse"];
                     };
                 };
-                /** @description Malformed id */
+                /** @description Malformed id, or body is not a JSON object */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -4372,7 +4734,7 @@ export interface paths {
                         "application/json": components["schemas"]["LaborContractDetailResponse"];
                     };
                 };
-                /** @description Validation failed (missing/wrong-type field */
+                /** @description Validation failed (missing/wrong-type field, or a malformed employee_id) */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -4442,7 +4804,7 @@ export interface paths {
                         "application/json": components["schemas"]["GenerateDocumentResponse"];
                     };
                 };
-                /** @description Malformed id */
+                /** @description Malformed id, or body is not a JSON object */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -4555,7 +4917,7 @@ export interface paths {
                         "application/json": components["schemas"]["VacationDetailResponse"];
                     };
                 };
-                /** @description Validation failed (missing/wrong-type field */
+                /** @description Validation failed (missing/wrong-type field, or a malformed employee_id) */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -5996,6 +6358,44 @@ export interface components {
             total: number;
             limit: number;
             offset: number;
+        };
+        DocumentTemplate: {
+            /** Format: uuid */
+            id: string;
+            /**
+             * Format: uuid
+             * @description null = a PLATFORM template: visible to every tenant, editable only by the instance admin
+             */
+            org_id: string | null;
+            slug: string;
+            /** @description Immutable once published; an edit creates a new version */
+            version: number;
+            /** @enum {string} */
+            mode: "blocks" | "source";
+            /** @description Source of truth for mode=blocks; null for mode=source */
+            blocks?: Record<string, never>[] | null;
+            /** @description Typst text — generated for blocks, authored for source */
+            source: string;
+            /** @description Validation contract for this input */
+            schema: Record<string, never>;
+            /** @description Form description: labels (ru/kk), order, widgets */
+            form: Record<string, never>;
+            /** @description Static labels the template must print. null for mode=source, where they cannot be derived — which is why that mode is admin-only */
+            expected?: string | null;
+            /** @enum {string} */
+            status: "draft" | "published" | "archived";
+            created_at: string;
+            updated_at: string;
+        };
+        DocumentTemplateWrite: {
+            slug: string;
+            blocks: Record<string, never>[];
+        };
+        DocumentTemplateListResponse: {
+            data: components["schemas"]["DocumentTemplate"][];
+        };
+        DocumentTemplateDetailResponse: {
+            data: components["schemas"]["DocumentTemplate"];
         };
         BankAccountDetailResponse: {
             data: components["schemas"]["BankAccount"];

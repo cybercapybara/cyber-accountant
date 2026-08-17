@@ -232,7 +232,8 @@ public:
             const json payload = {{"org_id", ctx.org_id}, {"template_id", id}};
             std::string job_id;
             try {
-                job_id = Jobs::get().submit(Docgen::kPublishJobType, payload);
+                // submit() возвращает объект задачи, а не её идентификатор.
+                job_id = Jobs::get().submit(Docgen::kPublishJobType, payload).id;
             } catch (const std::exception& e) {
                 // Тот же best-effort идиом, что у постановки рендера: перебой
                 // Redis не должен превращаться в 500 без всякой информации.
