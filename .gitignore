@@ -81,7 +81,13 @@ config/local/
 !config/config.sample.json
 
 # Dependencies
-third_party/
+# `third_party/*`, а НЕ `third_party/`: исключение самого каталога не даёт git в
+# него заходить, и отрицания для файлов внутри тогда не работают вовсе.
+third_party/*
+# ИСКЛЮЧЕНИЕ: внесённый единый заголовок inja. Он ОБЯЗАН быть в репозитории —
+# раньше CMake скачивал его с GitHub при настройке, и когда GitHub ответил 429,
+# сборка перестала настраиваться вовсе. Сумма файла проверяется в CMakeLists.
+!third_party/inja-include/
 external/
 
 # Package managers

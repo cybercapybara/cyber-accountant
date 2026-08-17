@@ -125,14 +125,30 @@ find_package(CURL REQUIRED)
 # on the full repo — inja v3.4.0 ships unconditional install(TARGETS
 # nlohmann_json) which conflicts with vcpkg's nlohmann_json target.
 # Pulling just the single header avoids that whole CMake mess.
+# VENDORED, not downloaded. This used to be a file(DOWNLOAD ...) from
+# raw.githubusercontent.com at CONFIGURE time, which made every clean build
+# depend on GitHub being reachable AND not rate-limiting us. On 2026-08-17 that
+# stopped being theoretical: GitHub answered 429 to both the action download and
+# this fetch, and the sanitizer/tsan jobs could not configure at all — a build
+# failing for a reason that has nothing to do with the code. Vendoring the one
+# header removes the dependency outright.
+#
+# The hash below is still asserted, now against the checked-in copy, so an
+# accidental edit to a vendored third-party file fails the configure step
+# instead of shipping quietly. It is the SAME hash the download used to verify,
+# so this is provably the identical file (inja v3.4.0, MIT, license text kept in
+# the header — see third_party/inja/README.md).
 set(INJA_VERSION v3.4.0)
-set(INJA_INCLUDE_DIR ${CMAKE_BINARY_DIR}/_deps/inja-single)
-file(DOWNLOAD
-    https://raw.githubusercontent.com/pantor/inja/${INJA_VERSION}/single_include/inja/inja.hpp
-    ${INJA_INCLUDE_DIR}/inja/inja.hpp
-    SHOW_PROGRESS
-    TLS_VERIFY ON
-    EXPECTED_HASH SHA256=8022ce5a782e911598accc42311ac44a0b9ccd9ad5995f439c828fb534974543)
+set(INJA_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/inja-include)
+set(INJA_EXPECTED_SHA256 8022ce5a782e911598accc42311ac44a0b9ccd9ad5995f439c828fb534974543)
+file(SHA256 ${INJA_INCLUDE_DIR}/inja/inja.hpp INJA_ACTUAL_SHA256)
+if(NOT INJA_ACTUAL_SHA256 STREQUAL INJA_EXPECTED_SHA256)
+    message(FATAL_ERROR
+        "third_party/inja-include/inja/inja.hpp does not match the expected inja ${INJA_VERSION} hash.\n"
+        "  expected: ${INJA_EXPECTED_SHA256}\n"
+        "  actual:   ${INJA_ACTUAL_SHA256}\n"
+        "A vendored third-party header must not be edited in place.")
+endif()
 add_library(pantor_inja INTERFACE)
 add_library(pantor::inja ALIAS pantor_inja)
 target_include_directories(pantor_inja INTERFACE ${INJA_INCLUDE_DIR})
