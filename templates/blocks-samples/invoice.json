@@ -1,0 +1,16 @@
+[
+  { "type": "header", "title": "Счёт на оплату" },
+  { "type": "fields", "rows": [
+      { "label": "Основание", "label_kk": "Негіздеме", "field": "basis" },
+      { "label": "Директор", "variable": "org.director_name" },
+      { "label": "Расчётный счёт", "variable": "org.iik" }
+  ]},
+  { "type": "table", "field": "items", "columns": [
+      { "title": "Наименование", "key": "name" },
+      { "title": "Кол-во", "key": "qty" },
+      { "title": "Цена", "key": "price" }
+  ]},
+  { "type": "totals", "label": "Итого к оплате" },
+  { "type": "text", "text": "Оплата в течение 10 банковских дней. Скидка *20%* не применяется." },
+  { "type": "signatures", "parties": ["Поставщик", "Покупатель"] }
+]

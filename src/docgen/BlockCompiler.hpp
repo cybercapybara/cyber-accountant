@@ -244,8 +244,7 @@ inline std::optional<Error> compile(const json& blocks, Compiled& out) {
             body += "#table(columns: (" + widths + "),\n  " + header_cells + "\n";
             body += "  ..d." + items_field + ".map(it => (";
             for (std::size_t k = 0; k < keys.size(); ++k)
-                body += (k ? ", " : "") + std::string("[#it.at(") + detail::literal(keys[k]) +
-                        ", default: \"\")]";
+                body += (k ? ", " : "") + std::string("[#it.at(") + detail::literal(keys[k]) + ", default: \"\")]";
             body += ")).flatten()\n)\n#v(3mm)\n";
 
             json item_props = json::object();

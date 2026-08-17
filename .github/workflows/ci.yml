@@ -389,6 +389,7 @@ jobs:
               # its self-test has to re-run against every template.
               - 'scripts/render-templates.sh'
               - 'scripts/check-render.py'
+              - 'scripts/render-blocks.sh'
               - 'scripts/check-render-selftest.sh'
 
       - name: Set up Docker Buildx
@@ -473,6 +474,27 @@ jobs:
           path: render-out/**/main.pdf
           if-no-files-found: error
           retention-days: 14
+
+      - name: Compile a template FROM BLOCKS and gate its PDF
+        if: steps.changes.outputs.docgen == 'true'
+        # The constructor's own gate. The block compiler's unit tests assert on
+        # SUBSTRINGS of the generated source — they cannot tell whether it
+        # compiles, and a stray closing paren once slipped through them and
+        # broke the whole binary. Here the generated template goes through the
+        # real Typst and its PDF through the same four layers as a built-in
+        # one. templates/blocks-samples/invoice.json deliberately carries a
+        # label with asterisks (`Скидка *20%*`): if labels ever stop being
+        # emitted as string literals, those asterisks vanish from the PDF text
+        # and the content layer fails.
+        run: |
+          docker run --rm \
+            -v "$PWD/scripts:/scripts:ro" \
+            -v "$PWD/render-out:/render-out" \
+            -e KEEP_RENDERS=/render-out \
+            -w /app \
+            --entrypoint /bin/bash \
+            cyber-accountant-template:worker-render \
+            /scripts/render-blocks.sh
 
       - name: Prove the gate bites (six deliberate breakages)
         if: steps.changes.outputs.docgen == 'true'

@@ -30,11 +30,13 @@
 
 #include "cache/Cache.hpp"
 #include "core/Core.hpp"
+#include "docgen/BlockCompiler.hpp"
 #include "docgen/RenderJob.hpp"  // "docgen.render" job handler — self-registers on include
 #include "email/AccountEmailWorker.hpp"
 #include "jobs/BuiltinHandlers.hpp"
 #include "jobs/Dispatcher.hpp"
 #include "jobs/Jobs.hpp"
+#include "money/Money.hpp"
 #include "observability/Observability.hpp"
 #include "observability/Trace.hpp"
 #include "utils/Config.hpp"
@@ -281,6 +283,99 @@ int run_render_template(const std::string& slug, const std::string& fixture_path
     }
 }
 
+/**
+ * @brief `--compile-blocks <blocks.json> <outdir>` — собрать шаблон из блоков,
+ *        порождённой фикстурой отрендерить его настоящим движком и выложить
+ *        рядом `expected.txt`, чтобы гейт мог проверить получившийся PDF.
+ * @details ЗАЧЕМ ЭТОТ РЕЖИМ. Модульные тесты сборщика сверяют ПОДСТРОКИ в
+ *          собранном тексте — они не проверяют, что текст компилируется, и
+ *          пропустили лишнюю скобу, из-за которой не собирался весь бинарник.
+ *          Здесь шаблон проходит через реальный Typst, и это единственная
+ *          проверка, которая может об этом судить.
+ *
+ *          Как и `--render-template`, режим автономен: ни Postgres, ни Redis,
+ *          ни Storage. Иначе гейт шаблонов превратился бы в проверку
+ *          доступности базы.
+ */
+int run_compile_blocks(const std::string& blocks_path, const std::string& out_dir) {
+    try {
+        std::ifstream blocks_file(blocks_path);
+        if (!blocks_file)
+            throw std::runtime_error("cannot open blocks: " + blocks_path);
+        nlohmann::json blocks;
+        blocks_file >> blocks;
+
+        Docgen::Blocks::Compiled compiled;
+        if (auto err = Docgen::Blocks::compile(blocks, compiled))
+            throw std::runtime_error("block " + std::to_string(err->block_index) + " " + err->code + ": " +
+                                     err->message);
+
+        std::filesystem::create_directories(out_dir);
+
+        // Фикстура порождается ИЗ СХЕМЫ, а не пишется рядом руками: шаблон
+        // собран только что, и написанная человеком фикстура к нему разошлась
+        // бы при первой же правке блоков.
+        nlohmann::json input = nlohmann::json::object();
+        const auto& props = compiled.schema["properties"];
+        for (auto it = props.begin(); it != props.end(); ++it) {
+            const std::string& name = it.key();
+            const std::string type = it.value().value("type", "string");
+            if (type == "integer") {
+                input[name] = 123456;  // 1 234,56 ₸ — целое в тиынах
+            } else if (type == "array") {
+                nlohmann::json row = nlohmann::json::object();
+                if (it.value().contains("items") && it.value()["items"].contains("properties")) {
+                    for (auto c = it.value()["items"]["properties"].begin();
+                         c != it.value()["items"]["properties"].end();
+                         ++c)
+                        row[c.key()] = "проверка";
+                }
+                input[name] = nlohmann::json::array({row});
+            } else {
+                input[name] = "проверка";
+            }
+        }
+        // Денежные строки пишет СЕРВЕР из целого — здесь ровно та же
+        // деривация, что в рабочем пути (P3 §3).
+        if (input.contains("total_tiyn")) {
+            const long long tiyn = input["total_tiyn"].get<long long>();
+            input["total"] = Money::format_tiyn_ru(tiyn);
+            input["total_words"] = Money::to_words_ru(tiyn);
+        }
+
+        std::ofstream expected(std::filesystem::path(out_dir) / "expected.txt", std::ios::binary | std::ios::trunc);
+        expected << compiled.expected;
+        expected.close();
+
+        std::ofstream fixture(std::filesystem::path(out_dir) / "fixture.json", std::ios::binary | std::ios::trunc);
+        fixture << input.dump(2);
+        fixture.close();
+
+        // Гейт ОТВЕРГАЕТ напечатанную сумму, у которой нет объявления
+        // `amount <путь> <тиын>`: без него фикстура могла бы зафиксировать
+        // неверный формат денег как правильный — именно так v0.4.2 напечатала
+        // 450000.00 на сданной ФНО 300.00 при зелёном гейте. Объявление
+        // пишется здесь, а не сборщиком: конкретное ЧИСЛО выбирает этот режим.
+        if (input.contains("total_tiyn")) {
+            const auto fixtures_dir = std::filesystem::path(out_dir) / "fixtures";
+            std::filesystem::create_directories(fixtures_dir);
+            std::ofstream per_fixture(fixtures_dir / "fixture.expected.txt", std::ios::binary | std::ios::trunc);
+            per_fixture << "amount total " << input["total_tiyn"].get<long long>() << "\n";
+            per_fixture.close();
+        }
+
+        const nlohmann::json normalized = Docgen::TemplateRegistry::normalize_input(compiled.schema, input);
+        Docgen::write_typst_inputs_from_source(compiled.source, normalized, out_dir);
+        Docgen::compile_typst(out_dir, Docgen::typst_cmd());
+
+        std::cout << "PASS blocks " << blocks_path << std::endl;
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "FAIL blocks " << blocks_path << ": " << e.what() << std::endl;
+        return 1;
+    }
+}
+
 int main(int argc, char* argv[]) {
     if (argc > 1 && std::string(argv[1]) == "--render-template") {
         if (argc < 5) {
@@ -288,6 +383,13 @@ int main(int argc, char* argv[]) {
             return 2;
         }
         return run_render_template(argv[2], argv[3], argv[4]);
+    }
+    if (argc > 1 && std::string(argv[1]) == "--compile-blocks") {
+        if (argc < 4) {
+            std::cerr << "Usage: cyber_accountant_worker --compile-blocks <blocks.json> <outdir>" << std::endl;
+            return 2;
+        }
+        return run_compile_blocks(argv[2], argv[3]);
     }
 
     try {
