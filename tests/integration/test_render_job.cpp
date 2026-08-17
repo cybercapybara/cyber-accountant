@@ -30,6 +30,7 @@
 #include <nlohmann/json.hpp>
 
 #include "database/Database.hpp"
+#include "docgen/DocumentTemplateRepository.hpp"
 #include "docgen/RenderJob.hpp"
 #include "docgen/TemplateRegistry.hpp"
 #include "jobs/Job.hpp"
@@ -281,6 +282,101 @@ TEST_F(RenderJobTest, RenderJobHappyPath) {
     auto stored_bytes = Storage::get().get(key);
     ASSERT_TRUE(stored_bytes.has_value());
     EXPECT_EQ(*stored_bytes, kFakePdfBytes);
+}
+
+TEST_F(RenderJobTest, ACustomTemplateFromTheDatabaseIsRenderedInsteadOfTheBuiltInOne) {
+    // Это тот момент, ради которого существует хранилище шаблонов: пока
+    // разрешение из базы не встроено в рендер, шаблон можно завести, но он
+    // никуда не попадёт.
+    use_succeeding_engine_stub();
+    auto org_id = make_org("111280000020");
+
+    Docgen::DocumentTemplateRepository templates;
+    Docgen::DocumentTemplate custom;
+    custom.org_id = org_id;
+    custom.slug = "invoice";
+    custom.version = 1;
+    custom.mode = Docgen::TemplateMode::kSource;
+    custom.source = "#let d = json(\"input.json\")\n= Мой счёт #d.number\n";
+    // Схема нарочно СЛАБЕЕ встроенной: требуется только `number`. Если бы
+    // рендер продолжал валидировать по схеме с диска, этот ввод не прошёл бы.
+    custom.schema = json{{"type", "object"},
+                         {"required", json::array({"number"})},
+                         {"properties", json{{"number", json{{"type", "string"}}}}}};
+    custom.status = Docgen::TemplateStatus::kPublished;
+    templates.create(custom, std::nullopt);
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id, "invoice", "generated", "draft", std::nullopt, "invoice", "v1");
+
+    json payload = {
+        {"org_id", org_id}, {"document_id", doc.id}, {"slug", "invoice"}, {"input", json{{"number", "77"}}}};
+    auto result = Docgen::process_job(payload);
+    ASSERT_TRUE(result.contains("key"));
+
+    // Собрался именно пользовательский шаблон: движок-заглушка получила
+    // main.typ с его текстом. Проверяем по тому, что ввод, недостаточный для
+    // встроенной схемы (нет date/seller/buyer/items/total_tiyn), прошёл.
+    auto stored = documents.find_in_org(doc.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_EQ(stored->status, "final");
+}
+
+TEST_F(RenderJobTest, ADraftCustomTemplateIsIgnoredAndTheBuiltInOneIsUsed) {
+    // Незаконченный шаблон не должен попадать в документы. Проверяем не
+    // «упало», а «взялся встроенный»: ввод, годный для встроенной схемы,
+    // рендерится, хотя у организации есть черновик с тем же слагом.
+    use_succeeding_engine_stub();
+    auto org_id = make_org("111280000021");
+
+    Docgen::DocumentTemplateRepository templates;
+    Docgen::DocumentTemplate draft_tpl;
+    draft_tpl.org_id = org_id;
+    draft_tpl.slug = "invoice";
+    draft_tpl.version = 1;
+    draft_tpl.mode = Docgen::TemplateMode::kSource;
+    draft_tpl.source = "#let d = json(\"input.json\")\n= Черновик\n";
+    draft_tpl.schema = json{{"type", "object"}, {"required", json::array({"number"})}};
+    draft_tpl.status = Docgen::TemplateStatus::kDraft;
+    templates.create(draft_tpl, std::nullopt);
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(org_id, "invoice", "generated", "draft", std::nullopt, "invoice", "v1");
+    json payload = {{"org_id", org_id}, {"document_id", doc.id}, {"slug", "invoice"}, {"input", valid_invoice_input()}};
+    ASSERT_NO_THROW(Docgen::process_job(payload));
+
+    auto stored = documents.find_in_org(doc.id, org_id, /*from_primary=*/true);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_EQ(stored->status, "final");
+}
+
+TEST_F(RenderJobTest, AnotherOrgsCustomTemplateIsNeverPickedUp) {
+    use_succeeding_engine_stub();
+    auto mine = make_org("111280000022");
+    auto theirs = make_org("111280000023");
+
+    Docgen::DocumentTemplateRepository templates;
+    Docgen::DocumentTemplate theirs_tpl;
+    theirs_tpl.org_id = theirs;
+    theirs_tpl.slug = "invoice";
+    theirs_tpl.version = 1;
+    theirs_tpl.mode = Docgen::TemplateMode::kSource;
+    theirs_tpl.source = "#let d = json(\"input.json\")\n= Чужой шаблон\n";
+    // Схема требует поле, которого во вводе нет. Если бы чужой шаблон
+    // подхватился, рендер упал бы на валидации — и это ровно тот признак,
+    // по которому утечка между арендаторами была бы видна.
+    theirs_tpl.schema = json{{"type", "object"}, {"required", json::array({"their_only_field"})}};
+    theirs_tpl.status = Docgen::TemplateStatus::kPublished;
+    templates.create(theirs_tpl, std::nullopt);
+
+    Ledger::DocumentRepository documents;
+    auto doc = documents.create(mine, "invoice", "generated", "draft", std::nullopt, "invoice", "v1");
+    json payload = {{"org_id", mine}, {"document_id", doc.id}, {"slug", "invoice"}, {"input", valid_invoice_input()}};
+    ASSERT_NO_THROW(Docgen::process_job(payload));
+
+    auto stored = documents.find_in_org(doc.id, mine, /*from_primary=*/true);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_EQ(stored->status, "final");
 }
 
 TEST_F(RenderJobTest, RenderJobInvalidInputFails) {

@@ -74,6 +74,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "docgen/DocumentTemplateRepository.hpp"
 #include "docgen/Renderer.hpp"
 #include "docgen/TemplateRegistry.hpp"
 #include "files/FileKeys.hpp"
@@ -309,7 +310,27 @@ inline std::string engine_version(Engine /*engine*/) {
  */
 inline std::string render_and_compile(const std::string& slug,
                                       const json& input,
-                                      const std::filesystem::path& out_dir) {
+                                      const std::filesystem::path& out_dir,
+                                      const std::string& org_id = "") {
+    // Порядок разрешения — §5.1 спеки конструктора: шаблон организации,
+    // шаблон площадки, затем встроенный с диска.
+    //
+    // ПУСТОЙ org_id намеренно НЕ ходит в базу вовсе. Так работает режим
+    // `--render-template`, которым гейт template-render рендерит фикстуры в
+    // CI: там ни организации, ни базы нет, и попытка соединения превратила бы
+    // проверку шаблонов в проверку доступности Postgres.
+    if (!org_id.empty()) {
+        DocumentTemplateRepository templates;
+        if (auto custom = templates.resolve(org_id, slug)) {
+            if (auto err = TemplateRegistry::validate_against(custom->schema, input))
+                throw std::runtime_error("docgen: schema validation failed: " + *err);
+            const json normalized = TemplateRegistry::normalize_input(custom->schema, input);
+            write_typst_inputs_from_source(custom->source, normalized, out_dir);
+            compile_typst(out_dir, typst_cmd());
+            return engine_version(Engine::kTypst);
+        }
+    }
+
     TemplateRegistry registry;
     auto info = registry.latest(slug);
     if (!info)
@@ -363,7 +384,7 @@ inline json process_job(const json& payload) {
     // on the version below. Taken from the render itself, never re-derived
     // from the slug afterwards: the template on disk is what chooses the
     // engine, and it may have been converted between the two.
-    const std::string engine = render_and_compile(slug, input, tmp.path());
+    const std::string engine = render_and_compile(slug, input, tmp.path(), org_id);
 
     const auto pdf_path = tmp.path() / "main.pdf";
     std::ifstream pdf_file(pdf_path, std::ios::binary);

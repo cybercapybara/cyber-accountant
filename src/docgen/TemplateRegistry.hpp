@@ -175,9 +175,21 @@ public:
     /// avoids a redundant disk scan when the caller already has a
     /// TemplateInfo (e.g. RenderJob, after calling latest() once).
     static std::optional<std::string> validate(const TemplateInfo& info, const json& input) {
+        return validate_against(info.schema, input);
+    }
+
+    /**
+     * @brief То же, но по СХЕМЕ, а не по шаблону с диска.
+     * @details Пользовательский шаблон живёт в `document_templates`
+     *          (migrations/027), файла у него нет, а проверять его ввод надо
+     *          той же самой проверкой — иначе у шаблонов из базы оказался бы
+     *          более слабый контракт, чем у встроенных, и разошлись бы они
+     *          молча. `validate(info, input)` теперь просто зовёт эту.
+     */
+    static std::optional<std::string> validate_against(const json& schema, const json& input) {
         try {
             nlohmann::json_schema::json_validator validator;
-            validator.set_root_schema(info.schema);
+            validator.set_root_schema(schema);
             validator.validate(input);
         } catch (const std::exception& e) {
             return std::string(e.what());

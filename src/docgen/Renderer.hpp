@@ -81,4 +81,39 @@ inline void write_typst_inputs(const TemplateInfo& info,
         throw std::runtime_error("write_typst_inputs: failed writing input.json to " + out_dir.string());
 }
 
+/**
+ * @brief То же, но шаблон приходит ТЕКСТОМ, а не файлом на диске.
+ * @details Нужен для пользовательских шаблонов: они живут в
+ *          `document_templates` (migrations/027), и файла у них нет вовсе.
+ *          Отдельная функция, а не «сохранить во временный файл и позвать
+ *          первую»: лишний файл — это лишний способ ошибиться, а песочница
+ *          Typst (`--root <out_dir>`) и без того ограничивает всё содержимое
+ *          этим каталогом.
+ *
+ *          Данные по-прежнему НЕ становятся кодом: `input.json` пишется
+ *          отдельным файлом, и шаблон читает его сам (`json("input.json")`).
+ *          Подстановки в текст шаблона не происходит ни здесь, ни где-либо
+ *          ещё — именно поэтому экранирования нет и добавлять его было бы
+ *          регрессией.
+ */
+inline void write_typst_inputs_from_source(const std::string& source,
+                                           const json& normalized_input,
+                                           const std::filesystem::path& out_dir) {
+    std::ofstream tmpl(out_dir / "main.typ", std::ios::binary | std::ios::trunc);
+    if (!tmpl)
+        throw std::runtime_error("write_typst_inputs_from_source: cannot write main.typ to " + out_dir.string());
+    tmpl << source;
+    tmpl.close();
+    if (!tmpl)
+        throw std::runtime_error("write_typst_inputs_from_source: failed writing main.typ to " + out_dir.string());
+
+    std::ofstream data(out_dir / "input.json", std::ios::binary | std::ios::trunc);
+    if (!data)
+        throw std::runtime_error("write_typst_inputs_from_source: cannot write input.json to " + out_dir.string());
+    data << normalized_input.dump();
+    data.close();
+    if (!data)
+        throw std::runtime_error("write_typst_inputs_from_source: failed writing input.json to " + out_dir.string());
+}
+
 }  // namespace Docgen
