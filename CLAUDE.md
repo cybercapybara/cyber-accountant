@@ -129,7 +129,19 @@ below), then runs three steps:
    word's own ink above AND below it in the same pixel columns. An underline,
    a `\midrule` or a signature line has ink on one side only; measured over
    all 23 fixtures, zero findings.
-3. `scripts/check-render-selftest.sh` — breaks payslip, fno_910, tax_invoice,
+3. `scripts/render-blocks.sh` — compiles every
+   `templates/blocks-samples/*.json` through the worker's `--compile-blocks`
+   mode (block compiler → Typst source → **real engine**) and gates the PDF
+   with the same `check-render.py`. This exists because the block compiler's
+   unit tests assert on SUBSTRINGS of the generated source and cannot tell
+   whether it compiles — a stray closing paren slipped past all twelve of them
+   and broke the whole binary. The fixture and `expected.txt` are DERIVED from
+   the generated schema, never hand-written, because a hand-written pair drifts
+   from a template that is regenerated on every edit. `blocks-samples/
+   invoice.json` deliberately carries a label with asterisks: if labels ever
+   stop being emitted as Typst string literals, they vanish from the PDF text
+   and the content layer fails.
+4. `scripts/check-render-selftest.sh` — breaks payslip, fno_910, tax_invoice,
    fno_300 and labor_contract on purpose and fails unless the gate catches all
    six and names what went wrong. The fno_300 case breaks the FIXTURE, not the
    template, and is the regression test for the gate's own fixture-as-oracle
@@ -206,6 +218,14 @@ change — it means putting that layer back.
   part of some later "TeX cleanup" would blank the Cyrillic in every document.
   The same CI step asserts `typst fonts` still lists Noto Sans, which is what
   would catch that.
+
+**A skipped job reports success.** `template-render` runs behind a
+`dorny/paths-filter` gate, so a commit that touches none of the filtered paths
+skips every step and the job still shows green. That happened twice in a row
+while the blocks gate had never once executed. The filter therefore includes
+`src/worker_main.cpp` (it holds `--render-template` and `--compile-blocks`) and
+`.github/workflows/ci.yml` (the gate's own definition). **Verify a gate by STEP
+status and its log output, never by the run's conclusion.**
 
 ## Don'ts
 
