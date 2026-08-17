@@ -384,6 +384,12 @@ jobs:
             docgen:
               - 'templates/**'
               - 'src/docgen/**'
+              # The render ENTRY POINTS live here: --render-template and
+              # --compile-blocks. Omitting this file made the whole job skip on
+              # a commit that changed nothing else — and a skipped job reports
+              # success, so the blocks gate had never actually run once while
+              # looking green.
+              - 'src/worker_main.cpp'
               - 'docker/Dockerfile'
               # The gate itself: a change to the render script, the PDF gate or
               # its self-test has to re-run against every template.
