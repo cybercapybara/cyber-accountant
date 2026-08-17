@@ -73,7 +73,7 @@ inline const char* owning_endpoint(const std::string& slug) {
 /// Денежные поля, которые сервер форматирует сам из целых чисел тиын. Пути
 /// точечные и не глубже одного уровня вложенности.
 struct DerivedAmount {
-    std::string tiyn_path;  ///< итоговое целое, которое ОБЯЗАН прислать клиент
+    std::string tiyn_path;    ///< итоговое целое, которое ОБЯЗАН прислать клиент
     std::string amount_path;  ///< сюда сервер пишет Money::format_tiyn_ru(итог)
     std::string words_path;   ///< сюда сервер пишет Money::to_words_ru(итог)
     /// Слагаемые итога: {путь целого, путь его строки}. Пустой список —

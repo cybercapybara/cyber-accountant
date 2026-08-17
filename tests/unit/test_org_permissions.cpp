@@ -31,9 +31,17 @@ constexpr const char* kAllResources[] = {
     Resource::kDocuments,
     Resource::kTax,
     Resource::kMembers,
+    Resource::kRequisites,
 };
 
 constexpr const char* kAllActions[] = {Action::kRead, Action::kWrite};
+
+/// Список выше переписан РУКАМИ, а комментарий обещает обход таблицы целиком.
+/// Ресурс, добавленный в kMatrix и забытый здесь, не попал бы ни в один свип —
+/// и молчаливо остался бы непроверенным. Проверка ломает сборку теста ровно в
+/// тот момент, когда списки разошлись.
+static_assert(std::size(Tenancy::OrgPerm::detail::kMatrix) == std::size(kAllResources),
+              "добавили ресурс в kMatrix — допишите его в kAllResources, иначе свипы его не увидят");
 
 TEST(OrgPermissions, OwnerAndAccountantHaveFullLedgerAccess) {
     for (const auto* role : {"owner", "accountant"}) {
@@ -62,7 +70,8 @@ TEST(OrgPermissions, HrSeesOnlyPeopleResources) {
                             Resource::kCounterparties,
                             Resource::kDocuments,
                             Resource::kTax,
-                            Resource::kMembers}) {
+                            Resource::kMembers,
+                            Resource::kRequisites}) {
         EXPECT_FALSE(allows("hr", res, Action::kRead)) << res;
         EXPECT_FALSE(allows("hr", res, Action::kWrite)) << res;
     }
@@ -122,6 +131,7 @@ TEST(OrgPermissions, WholeMatrixMatchesSpec53) {
         {"owner",      Resource::kDocuments,       true,  true},
         {"owner",      Resource::kTax,             true,  true},
         {"owner",      Resource::kMembers,         true,  true},
+        {"owner",      Resource::kRequisites,      true,  true},
 
         {"accountant", Resource::kEmployees,       true,  true},
         {"accountant", Resource::kHrDocs,          true,  true},
@@ -132,6 +142,7 @@ TEST(OrgPermissions, WholeMatrixMatchesSpec53) {
         {"accountant", Resource::kDocuments,       true,  true},
         {"accountant", Resource::kTax,             true,  true},
         {"accountant", Resource::kMembers,         false, false},
+        {"accountant", Resource::kRequisites,      true,  false},
 
         {"hr",         Resource::kEmployees,       true,  true},
         {"hr",         Resource::kHrDocs,          true,  true},
@@ -142,6 +153,7 @@ TEST(OrgPermissions, WholeMatrixMatchesSpec53) {
         {"hr",         Resource::kDocuments,       false, false},
         {"hr",         Resource::kTax,             false, false},
         {"hr",         Resource::kMembers,         false, false},
+        {"hr",         Resource::kRequisites,      false, false},
 
         {"viewer",     Resource::kEmployees,       true,  false},
         {"viewer",     Resource::kHrDocs,          true,  false},
@@ -152,6 +164,7 @@ TEST(OrgPermissions, WholeMatrixMatchesSpec53) {
         {"viewer",     Resource::kDocuments,       true,  false},
         {"viewer",     Resource::kTax,             true,  false},
         {"viewer",     Resource::kMembers,         false, false},
+        {"viewer",     Resource::kRequisites,      true,  false},
     };
     // clang-format on
 

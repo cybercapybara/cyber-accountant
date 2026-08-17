@@ -187,8 +187,7 @@ TEST_F(OrganizationsApiTest, AdminCreatingOrgBecomesOwner) {
     // GET /orgs/{id}/members shows the admin as owner of the org they made
     // (admin-fallback path, since the admin never switched into this org).
     HttpResponsePtr roster_resp;
-    orgs_ctrl.listMembers(
-        authed(admin.principal), [&](const HttpResponsePtr& r) { roster_resp = r; }, org_id);
+    orgs_ctrl.listMembers(authed(admin.principal), [&](const HttpResponsePtr& r) { roster_resp = r; }, org_id);
     ASSERT_NE(roster_resp, nullptr);
     ASSERT_EQ(roster_resp->statusCode(), k200OK);
     auto roster_body = json::parse(std::string(roster_resp->body()));
@@ -265,8 +264,7 @@ TEST_F(OrganizationsApiTest, SwitchIssuesOrgToken) {
 
     auto req = authed(user.principal, Post);
     HttpResponsePtr resp;
-    orgs_ctrl.switchOrg(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    orgs_ctrl.switchOrg(req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK);
     auto body = json::parse(std::string(resp->body()));
@@ -302,8 +300,7 @@ TEST_F(OrganizationsApiTest, SwitchForbiddenForNonMember) {
 
     auto req = authed(user.principal, Post);
     HttpResponsePtr resp;
-    orgs_ctrl.switchOrg(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    orgs_ctrl.switchOrg(req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -321,16 +318,14 @@ TEST_F(OrganizationsApiTest, OwnerManagesMembers) {
     // Add.
     auto add_req = authed_json(owner_principal, {{"user_id", target.user.id}, {"role", "viewer"}}, Post);
     HttpResponsePtr add_resp;
-    orgs_ctrl.addMember(
-        add_req, [&](const HttpResponsePtr& r) { add_resp = r; }, org.id);
+    orgs_ctrl.addMember(add_req, [&](const HttpResponsePtr& r) { add_resp = r; }, org.id);
     ASSERT_NE(add_resp, nullptr);
     EXPECT_EQ(add_resp->statusCode(), k201Created);
 
     // Change role.
     auto patch_req = authed_json(owner_principal, {{"role", "accountant"}}, Patch);
     HttpResponsePtr patch_resp;
-    orgs_ctrl.updateMemberRole(
-        patch_req, [&](const HttpResponsePtr& r) { patch_resp = r; }, org.id, target.user.id);
+    orgs_ctrl.updateMemberRole(patch_req, [&](const HttpResponsePtr& r) { patch_resp = r; }, org.id, target.user.id);
     ASSERT_NE(patch_resp, nullptr);
     EXPECT_EQ(patch_resp->statusCode(), k200OK);
     auto patch_body = json::parse(std::string(patch_resp->body()));
@@ -339,8 +334,7 @@ TEST_F(OrganizationsApiTest, OwnerManagesMembers) {
     // Remove.
     auto del_req = authed(owner_principal, Delete);
     HttpResponsePtr del_resp;
-    orgs_ctrl.removeMember(
-        del_req, [&](const HttpResponsePtr& r) { del_resp = r; }, org.id, target.user.id);
+    orgs_ctrl.removeMember(del_req, [&](const HttpResponsePtr& r) { del_resp = r; }, org.id, target.user.id);
     ASSERT_NE(del_resp, nullptr);
     EXPECT_EQ(del_resp->statusCode(), k200OK);
     EXPECT_FALSE(members.find_membership(org.id, target.user.id).has_value());
@@ -356,8 +350,7 @@ TEST_F(OrganizationsApiTest, ViewerCannotManageMembers) {
 
     auto req = authed_json(viewer_principal, {{"user_id", target.user.id}, {"role", "viewer"}}, Post);
     HttpResponsePtr resp;
-    orgs_ctrl.addMember(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    orgs_ctrl.addMember(req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -372,8 +365,7 @@ TEST_F(OrganizationsApiTest, LastOwnerNotRemovable) {
     // Cannot remove the last owner.
     auto del_req = authed(owner_principal, Delete);
     HttpResponsePtr del_resp;
-    orgs_ctrl.removeMember(
-        del_req, [&](const HttpResponsePtr& r) { del_resp = r; }, org.id, owner.user.id);
+    orgs_ctrl.removeMember(del_req, [&](const HttpResponsePtr& r) { del_resp = r; }, org.id, owner.user.id);
     ASSERT_NE(del_resp, nullptr);
     EXPECT_EQ(del_resp->statusCode(), k409Conflict);
     auto del_body = json::parse(std::string(del_resp->body()));
@@ -383,8 +375,7 @@ TEST_F(OrganizationsApiTest, LastOwnerNotRemovable) {
     // Cannot demote the last owner either.
     auto patch_req = authed_json(owner_principal, {{"role", "viewer"}}, Patch);
     HttpResponsePtr patch_resp;
-    orgs_ctrl.updateMemberRole(
-        patch_req, [&](const HttpResponsePtr& r) { patch_resp = r; }, org.id, owner.user.id);
+    orgs_ctrl.updateMemberRole(patch_req, [&](const HttpResponsePtr& r) { patch_resp = r; }, org.id, owner.user.id);
     ASSERT_NE(patch_resp, nullptr);
     EXPECT_EQ(patch_resp->statusCode(), k409Conflict);
     auto patch_body = json::parse(std::string(patch_resp->body()));
@@ -406,8 +397,7 @@ TEST_F(OrganizationsApiTest, ListMembersReturnsRoster) {
     auto owner_principal = with_org(owner.principal, org.id);
 
     HttpResponsePtr resp;
-    orgs_ctrl.listMembers(
-        authed(owner_principal), [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    orgs_ctrl.listMembers(authed(owner_principal), [&](const HttpResponsePtr& r) { resp = r; }, org.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK);
     auto body = json::parse(std::string(resp->body()));
@@ -443,8 +433,7 @@ TEST_F(OrganizationsApiTest, ListMembersForbiddenForViewer) {
     auto viewer_principal = with_org(viewer.principal, org.id);
 
     HttpResponsePtr resp;
-    orgs_ctrl.listMembers(
-        authed(viewer_principal), [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    orgs_ctrl.listMembers(authed(viewer_principal), [&](const HttpResponsePtr& r) { resp = r; }, org.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -461,8 +450,7 @@ TEST_F(OrganizationsApiTest, ListMembersForbiddenForOutsiderOwner) {
     auto owner_b_principal = with_org(owner_of_b.principal, org_b.id);
 
     HttpResponsePtr resp;
-    orgs_ctrl.listMembers(
-        authed(owner_b_principal), [&](const HttpResponsePtr& r) { resp = r; }, org_a.id);
+    orgs_ctrl.listMembers(authed(owner_b_principal), [&](const HttpResponsePtr& r) { resp = r; }, org_a.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -477,8 +465,7 @@ TEST_F(OrganizationsApiTest, AddMemberByEmail) {
 
     auto req = authed_json(owner_principal, {{"email", target.user.email}, {"role", "accountant"}}, Post);
     HttpResponsePtr resp;
-    orgs_ctrl.addMember(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    orgs_ctrl.addMember(req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k201Created);
     auto body = json::parse(std::string(resp->body()));
@@ -496,8 +483,7 @@ TEST_F(OrganizationsApiTest, AddMemberByUnknownEmail) {
 
     auto req = authed_json(owner_principal, {{"email", "nobody@example.com"}, {"role", "viewer"}}, Post);
     HttpResponsePtr resp;
-    orgs_ctrl.addMember(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    orgs_ctrl.addMember(req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
     auto body = json::parse(std::string(resp->body()));
@@ -515,8 +501,7 @@ TEST_F(OrganizationsApiTest, AddMemberByEmailAndUserIdRejected) {
     auto req = authed_json(
         owner_principal, {{"user_id", target.user.id}, {"email", target.user.email}, {"role", "viewer"}}, Post);
     HttpResponsePtr resp;
-    orgs_ctrl.addMember(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    orgs_ctrl.addMember(req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
     EXPECT_FALSE(members.find_membership(org.id, target.user.id).has_value());
@@ -539,8 +524,7 @@ TEST_F(OrganizationsApiTest, HrIsAnAcceptedMemberRole) {
 
     auto req = authed_json(owner_principal, {{"user_id", target.user.id}, {"role", "hr"}}, Post);
     HttpResponsePtr resp;
-    orgs_ctrl.addMember(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    orgs_ctrl.addMember(req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k201Created);
     auto body = json::parse(std::string(resp->body()));
@@ -563,8 +547,7 @@ TEST_F(OrganizationsApiTest, UnknownMemberRoleStillRejected) {
 
     auto req = authed_json(owner_principal, {{"user_id", target.user.id}, {"role", "manager"}}, Post);
     HttpResponsePtr resp;
-    orgs_ctrl.addMember(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
+    orgs_ctrl.addMember(req, [&](const HttpResponsePtr& r) { resp = r; }, org.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
     auto body = json::parse(std::string(resp->body()));
@@ -589,8 +572,7 @@ TEST_F(OrganizationsApiTest, LastOwnerNotDemotableToHr) {
 
     auto req = authed_json(owner_principal, {{"role", "hr"}}, Patch);
     HttpResponsePtr resp;
-    orgs_ctrl.updateMemberRole(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, org.id, owner.user.id);
+    orgs_ctrl.updateMemberRole(req, [&](const HttpResponsePtr& r) { resp = r; }, org.id, owner.user.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k409Conflict);
     auto body = json::parse(std::string(resp->body()));

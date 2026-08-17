@@ -129,6 +129,11 @@ inline const std::vector<EndpointInfo>& get_endpoints() {
         {"POST", "/api/v1/jobs/dlq/{id}/requeue", "Requeue a DLQ job"},
         {"GET", "/api/v1/jobs/{id}", "Get job status"},
         {"DELETE", "/api/v1/jobs/{id}", "Cancel job"},
+        {"GET", "/api/v1/bank-accounts", "BankAccountsController::listBankAccounts"},
+        {"POST", "/api/v1/bank-accounts", "BankAccountsController::createBankAccount"},
+        {"PATCH", "/api/v1/bank-accounts/{1}", "BankAccountsController::patchBankAccount"},
+        {"DELETE", "/api/v1/bank-accounts/{1}", "BankAccountsController::deleteBankAccount"},
+        {"PUT", "/api/v1/orgs/{1}/requisites", "OrganizationsController::updateRequisites"},
     };
     return endpoints;
 }

@@ -26,6 +26,12 @@ struct Organization {
     std::string tax_regime;  // 'snr_simplified' | 'standard'
     bool vat_payer = false;
     std::string status;  // 'active' | 'suspended' | 'archived'
+    /// Реквизиты для печати в документах (migrations/025_org_requisites.sql).
+    /// NOT NULL DEFAULT '' в БД, поэтому пустая строка — «не заполнено», а не
+    /// отсутствие колонки; подстановка в документ обязана это различать.
+    std::string legal_address;
+    std::string director_name;
+    std::string director_position;
     std::string created_at;
     std::string updated_at;
 
@@ -38,6 +44,9 @@ struct Organization {
         o.tax_regime = row["tax_regime"].template as<std::string>();
         o.vat_payer = row["vat_payer"].template as<bool>();
         o.status = row["status"].template as<std::string>();
+        o.legal_address = row["legal_address"].template as<std::string>();
+        o.director_name = row["director_name"].template as<std::string>();
+        o.director_position = row["director_position"].template as<std::string>();
         o.created_at = row["created_at"].template as<std::string>();
         o.updated_at = row["updated_at"].template as<std::string>();
         return o;
@@ -53,6 +62,9 @@ inline void to_json(nlohmann::json& j, const Organization& o) {
         {"tax_regime", o.tax_regime},
         {"vat_payer", o.vat_payer},
         {"status", o.status},
+        {"legal_address", o.legal_address},
+        {"director_name", o.director_name},
+        {"director_position", o.director_position},
         {"created_at", o.created_at},
         {"updated_at", o.updated_at},
     };

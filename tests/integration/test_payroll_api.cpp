@@ -361,8 +361,7 @@ TEST_F(PayrollApiTest, ApproveMovesRunToApproved) {
     auto run = seeded_run(org.id, 2026, 6, /*approve=*/false);
 
     HttpResponsePtr resp;
-    ctrl.approve(
-        authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
+    ctrl.approve(authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK);
     EXPECT_EQ(body_of(resp)["data"]["status"].get<std::string>(), "approved");
@@ -375,8 +374,7 @@ TEST_F(PayrollApiTest, ApproveTwiceConflicts) {
     auto run = seeded_run(org.id, 2026, 7, /*approve=*/true);
 
     HttpResponsePtr resp;
-    ctrl.approve(
-        authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
+    ctrl.approve(authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k409Conflict);
     EXPECT_EQ(body_of(resp)["error"].get<std::string>(), "invalid_run_state");
@@ -389,8 +387,7 @@ TEST_F(PayrollApiTest, ApproveViewerForbidden) {
     auto run = seeded_run(org.id, 2026, 8, /*approve=*/false);
 
     HttpResponsePtr resp;
-    ctrl.approve(
-        authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
+    ctrl.approve(authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -404,8 +401,7 @@ TEST_F(PayrollApiTest, ApproveCrossOrgNotFound) {
     auto run_a = seeded_run(org_a.id, 2026, 9, /*approve=*/false);
 
     HttpResponsePtr resp;
-    ctrl.approve(
-        authed(member_b, Post), [&](const HttpResponsePtr& r) { resp = r; }, run_a.id);
+    ctrl.approve(authed(member_b, Post), [&](const HttpResponsePtr& r) { resp = r; }, run_a.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -415,8 +411,7 @@ TEST_F(PayrollApiTest, ApproveMalformedIdBadRequest) {
     auto accountant = member("payroll-acc15@example.com", org.id, "accountant");
 
     HttpResponsePtr resp;
-    ctrl.approve(
-        authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
+    ctrl.approve(authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
     EXPECT_EQ(body_of(resp)["error"].get<std::string>(), "invalid_id");
@@ -432,8 +427,7 @@ TEST_F(PayrollApiTest, PostToJournalReturnsBalancedEntry) {
     auto run = seeded_run(org.id, 2026, 10, /*approve=*/true);
 
     HttpResponsePtr resp;
-    ctrl.postToJournal(
-        authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
+    ctrl.postToJournal(authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK) << resp->body();
     const std::string entry_id = body_of(resp)["entry_id"].get<std::string>();
@@ -466,8 +460,7 @@ TEST_F(PayrollApiTest, PostToJournalUnapprovedRunConflicts) {
     auto run = seeded_run(org.id, 2026, 11, /*approve=*/false);
 
     HttpResponsePtr resp;
-    ctrl.postToJournal(
-        authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
+    ctrl.postToJournal(authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k409Conflict);
     EXPECT_EQ(body_of(resp)["error"].get<std::string>(), "invalid_run_state");
@@ -480,14 +473,12 @@ TEST_F(PayrollApiTest, PostToJournalTwiceConflicts) {
     auto run = seeded_run(org.id, 2026, 12, /*approve=*/true);
 
     HttpResponsePtr first;
-    ctrl.postToJournal(
-        authed(accountant, Post), [&](const HttpResponsePtr& r) { first = r; }, run.id);
+    ctrl.postToJournal(authed(accountant, Post), [&](const HttpResponsePtr& r) { first = r; }, run.id);
     ASSERT_NE(first, nullptr);
     ASSERT_EQ(first->statusCode(), k200OK) << first->body();
 
     HttpResponsePtr second;
-    ctrl.postToJournal(
-        authed(accountant, Post), [&](const HttpResponsePtr& r) { second = r; }, run.id);
+    ctrl.postToJournal(authed(accountant, Post), [&](const HttpResponsePtr& r) { second = r; }, run.id);
     ASSERT_NE(second, nullptr);
     EXPECT_EQ(second->statusCode(), k409Conflict);
     EXPECT_EQ(body_of(second)["error"].get<std::string>(), "invalid_run_state");
@@ -502,8 +493,7 @@ TEST_F(PayrollApiTest, PostToJournalEmptyRunConflicts) {
     auto run = seeded_run(org.id, 2026, 2, /*approve=*/true);
 
     HttpResponsePtr resp;
-    ctrl.postToJournal(
-        authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
+    ctrl.postToJournal(authed(accountant, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k409Conflict);
     EXPECT_EQ(body_of(resp)["error"].get<std::string>(), "empty_run");
@@ -516,8 +506,7 @@ TEST_F(PayrollApiTest, PostToJournalViewerForbidden) {
     auto run = seeded_run(org.id, 2026, 3, /*approve=*/true);
 
     HttpResponsePtr resp;
-    ctrl.postToJournal(
-        authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
+    ctrl.postToJournal(authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -530,8 +519,7 @@ TEST_F(PayrollApiTest, PostToJournalCrossOrgNotFound) {
     auto run_a = seeded_run(org_a.id, 2026, 4, /*approve=*/true);
 
     HttpResponsePtr resp;
-    ctrl.postToJournal(
-        authed(member_b, Post), [&](const HttpResponsePtr& r) { resp = r; }, run_a.id);
+    ctrl.postToJournal(authed(member_b, Post), [&](const HttpResponsePtr& r) { resp = r; }, run_a.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -546,8 +534,7 @@ TEST_F(PayrollApiTest, ListPayslipsReturnsOnePerEmployee) {
     auto run = seeded_run(org.id, 2026, 5, /*approve=*/false);
 
     HttpResponsePtr resp;
-    ctrl.listPayslips(
-        authed(viewer), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
+    ctrl.listPayslips(authed(viewer), [&](const HttpResponsePtr& r) { resp = r; }, run.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK);
     auto data = body_of(resp)["data"];
@@ -565,8 +552,7 @@ TEST_F(PayrollApiTest, ListPayslipsCrossOrgNotFound) {
     auto run_a = seeded_run(org_a.id, 2026, 6, /*approve=*/false);
 
     HttpResponsePtr resp;
-    ctrl.listPayslips(
-        authed(member_b), [&](const HttpResponsePtr& r) { resp = r; }, run_a.id);
+    ctrl.listPayslips(authed(member_b), [&](const HttpResponsePtr& r) { resp = r; }, run_a.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -585,8 +571,7 @@ TEST_F(PayrollApiTest, GeneratePayslipDocumentQueuesRender) {
     // GeneratePayslipRejectsClientSuppliedNetWords).
     auto req = authed_json(accountant, json::object());
     HttpResponsePtr resp;
-    ctrl.generatePayslip(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
+    ctrl.generatePayslip(req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k202Accepted) << resp->body();
     auto payload = body_of(resp);
@@ -612,8 +597,7 @@ TEST_F(PayrollApiTest, GeneratePayslipDerivesNetWordsFromTheStoredNet) {
 
     auto req = authed_json(accountant, json::object());
     HttpResponsePtr resp;
-    ctrl.generatePayslip(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
+    ctrl.generatePayslip(req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k202Accepted) << resp->body();
 
@@ -652,8 +636,7 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsClientSuppliedNetWords) {
     const long before = queue_depth();
     auto req = authed_json(accountant, json{{"net_words", "Один тенге 00 тиын"}});
     HttpResponsePtr resp;
-    ctrl.generatePayslip(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
+    ctrl.generatePayslip(req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto errors = body_of(resp)["errors"];
@@ -669,8 +652,7 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsClientSuppliedNetWords) {
     // "any key outside the allowlist is a 422" promise is literally true.
     auto empty_obj_req = authed_json(accountant, json{{"net_words", json::object()}});
     HttpResponsePtr empty_obj_resp;
-    ctrl.generatePayslip(
-        empty_obj_req, [&](const HttpResponsePtr& r) { empty_obj_resp = r; }, run.id, employee.id);
+    ctrl.generatePayslip(empty_obj_req, [&](const HttpResponsePtr& r) { empty_obj_resp = r; }, run.id, employee.id);
     ASSERT_NE(empty_obj_resp, nullptr);
     EXPECT_EQ(empty_obj_resp->statusCode(), k422UnprocessableEntity);
     EXPECT_EQ(body_of(empty_obj_resp)["errors"][0]["field"].get<std::string>(), "net_words");
@@ -708,8 +690,7 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsAuthoritativeOverrideAndKeepsTheTru
     json malicious = {{"net", "1.00"}};
     auto bad_req = authed_json(accountant, malicious);
     HttpResponsePtr bad_resp;
-    ctrl.generatePayslip(
-        bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; }, run.id, employee.id);
+    ctrl.generatePayslip(bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; }, run.id, employee.id);
     ASSERT_NE(bad_resp, nullptr);
     ASSERT_EQ(bad_resp->statusCode(), k422UnprocessableEntity) << bad_resp->body();
     auto bad_body = body_of(bad_resp);
@@ -723,8 +704,7 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsAuthoritativeOverrideAndKeepsTheTru
     json malicious_iin = {{"employee", {{"iin", "999999999999"}}}};
     auto iin_req = authed_json(accountant, malicious_iin);
     HttpResponsePtr iin_resp;
-    ctrl.generatePayslip(
-        iin_req, [&](const HttpResponsePtr& r) { iin_resp = r; }, run.id, employee.id);
+    ctrl.generatePayslip(iin_req, [&](const HttpResponsePtr& r) { iin_resp = r; }, run.id, employee.id);
     ASSERT_NE(iin_resp, nullptr);
     EXPECT_EQ(iin_resp->statusCode(), k422UnprocessableEntity);
     EXPECT_EQ(body_of(iin_resp)["errors"][0]["field"].get<std::string>(), "employee.iin");
@@ -735,8 +715,7 @@ TEST_F(PayrollApiTest, GeneratePayslipRejectsAuthoritativeOverrideAndKeepsTheTru
     // actually computed.
     auto good_req = authed_json(accountant, json::object());
     HttpResponsePtr good_resp;
-    ctrl.generatePayslip(
-        good_req, [&](const HttpResponsePtr& r) { good_resp = r; }, run.id, employee.id);
+    ctrl.generatePayslip(good_req, [&](const HttpResponsePtr& r) { good_resp = r; }, run.id, employee.id);
     ASSERT_NE(good_resp, nullptr);
     ASSERT_EQ(good_resp->statusCode(), k202Accepted) << good_resp->body();
     const std::string document_id = body_of(good_resp)["document_id"].get<std::string>();
@@ -764,8 +743,7 @@ TEST_F(PayrollApiTest, GeneratePayslipDocumentViewerForbidden) {
 
     auto req = authed_json(viewer, json::object());
     HttpResponsePtr resp;
-    ctrl.generatePayslip(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
+    ctrl.generatePayslip(req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, employee.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -781,8 +759,7 @@ TEST_F(PayrollApiTest, GeneratePayslipDocumentForeignEmployeeNotFound) {
 
     auto req = authed_json(accountant, json::object());
     HttpResponsePtr resp;
-    ctrl.generatePayslip(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, latecomer.id);
+    ctrl.generatePayslip(req, [&](const HttpResponsePtr& r) { resp = r; }, run.id, latecomer.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }

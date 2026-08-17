@@ -39,7 +39,12 @@ class OrganizationRepository : public Repositories::CrudBase<OrganizationReposit
 public:
     // CrudBase contract — supplies find(id) / list(limit,offset) / count().
     static constexpr const char* kTable = "organizations";
-    static constexpr const char* kColumns = "id, bin, name, tax_regime, vat_payer, status, created_at, updated_at";
+    /// Список колонок ЯВНЫЙ, а не `*`: Organization::from_row читает каждое
+    /// поле по имени, поэтому колонка, добавленная миграцией и забытая здесь,
+    /// роняет чтение в рантайме, а не на сборке.
+    static constexpr const char* kColumns =
+        "id, bin, name, tax_regime, vat_payer, status, "
+        "legal_address, director_name, director_position, created_at, updated_at";
     static constexpr const char* kIdColumn = "id";
     static constexpr const char* kOrderBy = "created_at DESC";
 
@@ -57,7 +62,8 @@ public:
                     auto r = txn.exec_params(
                         "INSERT INTO organizations (bin, name, tax_regime, vat_payer) "
                         "VALUES ($1, $2, $3, $4) "
-                        "RETURNING id, bin, name, tax_regime, vat_payer, status, created_at, updated_at",
+                        "RETURNING id, bin, name, tax_regime, vat_payer, status, "
+                        "legal_address, director_name, director_position, created_at, updated_at",
                         bin,
                         name,
                         tax_regime,
@@ -81,6 +87,35 @@ public:
     bool update_status(const std::string& id, const std::string& status) {
         return Database::get().execute_write([&](auto& txn) {
             auto r = txn.exec_params("UPDATE organizations SET status = $2 WHERE id = $1 RETURNING id", id, status);
+            return !r.empty();
+        });
+    }
+
+    /**
+     * @brief Реквизиты для печати в документах
+     *        (migrations/025_org_requisites.sql).
+     * @details Три поля пишутся ОДНИМ запросом, а не тремя сеттерами: они
+     *          печатаются в одном блоке подписи, и организация, у которой
+     *          обновилась должность подписанта, но не ФИО, выпустила бы
+     *          документ с чужой подписью. Пустая строка — законное значение
+     *          («не заполнено»), поэтому очистка поля здесь возможна и не
+     *          требует отдельного метода.
+     * @return false, если такой организации нет — ожидаемая ветка для 404,
+     *         как в update_status.
+     */
+    bool update_requisites(const std::string& id,
+                           const std::string& legal_address,
+                           const std::string& director_name,
+                           const std::string& director_position) {
+        return Database::get().execute_write([&](auto& txn) {
+            auto r = txn.exec_params(
+                "UPDATE organizations "
+                "SET legal_address = $2, director_name = $3, director_position = $4 "
+                "WHERE id = $1 RETURNING id",
+                id,
+                legal_address,
+                director_name,
+                director_position);
             return !r.empty();
         });
     }

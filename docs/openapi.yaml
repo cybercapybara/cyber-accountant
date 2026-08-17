@@ -246,13 +246,69 @@ components:
       required: [id, bin, name, tax_regime, vat_payer, status, created_at, updated_at]
       properties:
         id:         { type: string, format: uuid }
-        bin:        { type: string, pattern: '^[0-9]{12}$', description: 12-digit BIN/IIN — format-only in v1, check digit is P1 }
+        bin:        { type: string, pattern: '^[0-9]{12}$', description: '12-digit BIN/IIN — format-only in v1, check digit is P1' }
         name:       { type: string }
         tax_regime: { type: string, enum: [snr_simplified, standard] }
         vat_payer:  { type: boolean }
         status:     { type: string, enum: [active, suspended, archived] }
+        legal_address:     { type: string, description: 'Printed on documents; empty string means "not filled in"' }
+        director_name:     { type: string, description: 'Signatory printed on documents' }
+        director_position: { type: string, default: Директор }
         created_at: { type: string }
         updated_at: { type: string }
+
+    OrgRequisitesWrite:
+      type: object
+      description: >
+        All three fields are written together — they print in one signature
+        block, so a partial update could sign a document with the wrong person.
+        An empty string is a legal value and clears the field.
+      required: [legal_address, director_name, director_position]
+      properties:
+        legal_address:     { type: string }
+        director_name:     { type: string }
+        director_position: { type: string }
+
+    BankAccount:
+      type: object
+      required: [id, org_id, iik, bank_name, bik, kbe, currency, is_primary, created_at, updated_at]
+      properties:
+        id:         { type: string, format: uuid }
+        org_id:     { type: string, format: uuid }
+        iik:        { type: string, description: 'IBAN KZ..; not format-validated in the database' }
+        bank_name:  { type: string }
+        bik:        { type: string }
+        kbe:        { type: string }
+        currency:   { type: string, default: KZT }
+        is_primary: { type: boolean, description: 'At most one per organization, enforced by a partial unique index' }
+        created_at: { type: string }
+        updated_at: { type: string }
+
+    BankAccountWrite:
+      type: object
+      required: [iik, bank_name]
+      properties:
+        iik:        { type: string }
+        bank_name:  { type: string }
+        bik:        { type: string }
+        kbe:        { type: string }
+        currency:   { type: string, default: KZT }
+        is_primary: { type: boolean, default: false }
+
+    BankAccountListResponse:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:   { type: array, items: { $ref: '#/components/schemas/BankAccount' } }
+        total:  { type: integer }
+        limit:  { type: integer }
+        offset: { type: integer }
+
+    BankAccountDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/BankAccount' }
 
     # GET /api/v1/orgs/mine item shape: Organization + the caller's role in it.
     OrganizationWithRole:
@@ -1203,6 +1259,110 @@ components:
 
 # -----------------------------------------------------------------------------
 paths:
+  /api/v1/orgs/{orgId}/requisites:
+    parameters:
+      - { name: orgId, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: Set the organization's printable requisites (owner only)
+      description: >
+        Legal address and the signatory printed on documents. Written in ONE
+        request rather than field by field: they appear in the same signature
+        block, so an organization whose signatory position changed but whose
+        name did not would issue documents signed by the wrong person. Reading
+        them needs no separate route — GET /api/v1/orgs/mine already returns
+        the organization, requisites included.
+      tags: [organizations]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrgRequisitesWrite' }
+      responses:
+        '200':
+          description: Updated organization
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrganizationDetailResponse' }
+        '400': { description: Validation failed (wrong-type field) }
+        '403': { description: 'No org context, or the caller is not the owner (org_role_denied)' }
+        '404': { description: No such organization }
+
+  /api/v1/bank-accounts:
+    get:
+      summary: List the organization's bank accounts (primary first)
+      tags: [bank-accounts]
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Bank account page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BankAccountListResponse' }
+        '403': { description: 'No org context, or your role may not read requisites (org_role_denied)' }
+    post:
+      summary: Add a bank account (owner only)
+      description: >
+        Write is owner-only and that is a fraud control, not a hierarchy: a
+        swapped IIK sends customer payments to someone else's account and is
+        noticed weeks later. An accountant sees the accounts and would dispute
+        a swap, but does not make one.
+      tags: [bank-accounts]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BankAccountWrite' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BankAccountDetailResponse' }
+        '400': { description: Validation failed (missing/wrong-type field) }
+        '403': { description: No org context, or the caller is not the owner }
+        '409': { description: An account with that IIK already exists in this organization }
+
+  /api/v1/bank-accounts/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      summary: Update a bank account (owner only)
+      description: >
+        Partial — only the keys present in the body change. Setting is_primary
+        clears the previous primary in the same transaction, so the partial
+        unique index cannot turn "make this one primary" into a 409.
+      tags: [bank-accounts]
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BankAccountWrite' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BankAccountDetailResponse' }
+        '400': { description: Malformed id, or validation failed }
+        '403': { description: No org context, or the caller is not the owner }
+        '404': { description: No such account in this organization }
+        '409': { description: Another account in this organization already uses that IIK }
+    delete:
+      summary: Delete a bank account (owner only)
+      tags: [bank-accounts]
+      security: [{ BearerAuth: [] }]
+      responses:
+        '204': { description: Deleted }
+        '400': { description: Malformed id }
+        '403': { description: No org context, or the caller is not the owner }
+        '404': { description: No such account in this organization }
+
   /:
     get:
       summary: Endpoint discovery — list every registered route

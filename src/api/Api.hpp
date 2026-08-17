@@ -25,6 +25,7 @@
 #include "api/ApiKeyController.hpp"
 #include "api/AuditController.hpp"
 #include "api/AuthController.hpp"
+#include "api/BankAccountsController.hpp"
 #include "api/CounterpartiesController.hpp"
 #include "api/DocgenController.hpp"
 #include "api/EmployeesController.hpp"

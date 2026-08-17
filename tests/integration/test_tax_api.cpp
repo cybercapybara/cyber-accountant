@@ -1136,8 +1136,7 @@ TEST_F(TaxFilingApiTest, GetFilingMalformedIdBadRequest) {
     auto viewer = member("filing-viewer16@example.com", org.id, "viewer");
 
     HttpResponsePtr resp;
-    ctrl.getFiling(
-        authed(viewer), [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
+    ctrl.getFiling(authed(viewer), [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
     EXPECT_EQ(body_of(resp)["error"].get<std::string>(), "invalid_id");
@@ -1160,14 +1159,12 @@ TEST_F(TaxFilingApiTest, GetFilingCrossOrgNotFound) {
     const std::string filing_id = body_of(created)["filing_id"].get<std::string>();
 
     HttpResponsePtr mine;
-    ctrl.getFiling(
-        authed(member_a), [&](const HttpResponsePtr& r) { mine = r; }, filing_id);
+    ctrl.getFiling(authed(member_a), [&](const HttpResponsePtr& r) { mine = r; }, filing_id);
     ASSERT_NE(mine, nullptr);
     EXPECT_EQ(mine->statusCode(), k200OK);
 
     HttpResponsePtr theirs;
-    ctrl.getFiling(
-        authed(member_b), [&](const HttpResponsePtr& r) { theirs = r; }, filing_id);
+    ctrl.getFiling(authed(member_b), [&](const HttpResponsePtr& r) { theirs = r; }, filing_id);
     ASSERT_NE(theirs, nullptr);
     EXPECT_EQ(theirs->statusCode(), k404NotFound);
 }
@@ -1196,8 +1193,7 @@ TEST_F(TaxFilingApiTest, DownloadUrlArtifactSwitch) {
     auto pending = authed(accountant, Post);
     pending->setParameter("artifact", "pdf");
     HttpResponsePtr not_rendered;
-    ctrl.filingDownloadUrl(
-        pending, [&](const HttpResponsePtr& r) { not_rendered = r; }, filing_id);
+    ctrl.filingDownloadUrl(pending, [&](const HttpResponsePtr& r) { not_rendered = r; }, filing_id);
     ASSERT_NE(not_rendered, nullptr);
     EXPECT_EQ(not_rendered->statusCode(), k409Conflict);
     EXPECT_EQ(body_of(not_rendered)["error"].get<std::string>(), "not_rendered");
@@ -1220,8 +1216,7 @@ TEST_F(TaxFilingApiTest, DownloadUrlArtifactSwitch) {
     auto xml_req = authed(accountant, Post);
     xml_req->setParameter("artifact", "xml");
     HttpResponsePtr xml_resp;
-    ctrl.filingDownloadUrl(
-        xml_req, [&](const HttpResponsePtr& r) { xml_resp = r; }, filing_id);
+    ctrl.filingDownloadUrl(xml_req, [&](const HttpResponsePtr& r) { xml_resp = r; }, filing_id);
     ASSERT_NE(xml_resp, nullptr);
     ASSERT_EQ(xml_resp->statusCode(), k200OK) << xml_resp->body();
     auto xml_body = body_of(xml_resp);
@@ -1232,8 +1227,7 @@ TEST_F(TaxFilingApiTest, DownloadUrlArtifactSwitch) {
     auto pdf_req = authed(accountant, Post);
     pdf_req->setParameter("artifact", "pdf");
     HttpResponsePtr pdf_resp;
-    ctrl.filingDownloadUrl(
-        pdf_req, [&](const HttpResponsePtr& r) { pdf_resp = r; }, filing_id);
+    ctrl.filingDownloadUrl(pdf_req, [&](const HttpResponsePtr& r) { pdf_resp = r; }, filing_id);
     ASSERT_NE(pdf_resp, nullptr);
     ASSERT_EQ(pdf_resp->statusCode(), k200OK) << pdf_resp->body();
     auto pdf_body = body_of(pdf_resp);
@@ -1248,8 +1242,7 @@ TEST_F(TaxFilingApiTest, DownloadUrlArtifactSwitch) {
     auto bogus = authed(accountant, Post);
     bogus->setParameter("artifact", "docx");
     HttpResponsePtr bogus_resp;
-    ctrl.filingDownloadUrl(
-        bogus, [&](const HttpResponsePtr& r) { bogus_resp = r; }, filing_id);
+    ctrl.filingDownloadUrl(bogus, [&](const HttpResponsePtr& r) { bogus_resp = r; }, filing_id);
     ASSERT_NE(bogus_resp, nullptr);
     EXPECT_EQ(bogus_resp->statusCode(), k422UnprocessableEntity);
     EXPECT_EQ(body_of(bogus_resp)["errors"][0]["field"].get<std::string>(), "artifact");
@@ -1260,8 +1253,7 @@ TEST_F(TaxFilingApiTest, DownloadUrlMalformedIdBadRequest) {
     auto viewer = member("filing-viewer11@example.com", org.id, "viewer");
 
     HttpResponsePtr resp;
-    ctrl.filingDownloadUrl(
-        authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
+    ctrl.filingDownloadUrl(authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
 }

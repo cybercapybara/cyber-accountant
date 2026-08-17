@@ -284,8 +284,8 @@ TEST_F(HrRepoTest, CrossOrgIsolated) {
     // migrations/012_hr.sql's isolation guarantee, not application code
     // (foreign_key_violation, SQLSTATE 23503 — same shape as
     // test_journal_schema.cpp's CrossOrgLineRejectedByCompositeFk).
-    EXPECT_THROW({ hr.create_order(org_b, emp_a.id, "hire", "ORD-B-0001", "2026-01-10", "2026-01-10"); },
-                 pqxx::sql_error);
+    EXPECT_THROW(
+        { hr.create_order(org_b, emp_a.id, "hire", "ORD-B-0001", "2026-01-10", "2026-01-10"); }, pqxx::sql_error);
 
     // org_a's own view is unaffected by any of the above.
     EXPECT_EQ(employees.count_in_org(org_a), 1);

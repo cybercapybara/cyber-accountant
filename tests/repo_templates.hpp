@@ -127,12 +127,12 @@ inline std::string missing_template_reason(const std::string& slug, const std::s
 
 /// Same contract for a repo path that is not a docgen template — the email
 /// templates under `templates/email`, say.
-#define REQUIRE_REPO_PATH(path)                                                                             \
-    do {                                                                                                    \
-        if (!::TestTemplates::checkout_reachable())                                                         \
-            GTEST_SKIP() << ::TestTemplates::no_checkout_reason();                                          \
-        if (!std::filesystem::exists(path))                                                                 \
-            FAIL() << "the repo checkout is reachable but '" << (path)                                      \
+#define REQUIRE_REPO_PATH(path)                                                                           \
+    do {                                                                                                  \
+        if (!::TestTemplates::checkout_reachable())                                                       \
+            GTEST_SKIP() << ::TestTemplates::no_checkout_reason();                                        \
+        if (!std::filesystem::exists(path))                                                               \
+            FAIL() << "the repo checkout is reachable but '" << (path)                                    \
                    << "' is not — it was renamed, moved or deleted. That is a broken repository, not an " \
-                      "environment to skip over.";                                                          \
+                      "environment to skip over.";                                                        \
     } while (false)

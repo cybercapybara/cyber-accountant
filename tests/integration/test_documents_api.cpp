@@ -547,8 +547,7 @@ TEST_F(LedgerDocumentsApiTest, GetDocumentSucceeds) {
 
     auto viewer = member("viewer5@example.com", org.id, "viewer");
     HttpResponsePtr resp;
-    ctrl.get(
-        authed(viewer), [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ctrl.get(authed(viewer), [&](const HttpResponsePtr& r) { resp = r; }, created.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK);
     auto body = json::parse(std::string(resp->body()));
@@ -564,8 +563,7 @@ TEST_F(LedgerDocumentsApiTest, GetDocumentCrossOrgNotFound) {
 
     auto viewer_b = member("viewer6@example.com", org_b.id, "viewer");
     HttpResponsePtr resp;
-    ctrl.get(
-        authed(viewer_b), [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ctrl.get(authed(viewer_b), [&](const HttpResponsePtr& r) { resp = r; }, created.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -581,8 +579,7 @@ TEST_F(LedgerDocumentsApiTest, DownloadUrlWithoutFileConflict) {
 
     auto viewer = member("viewer7@example.com", org.id, "viewer");
     HttpResponsePtr resp;
-    ctrl.downloadUrl(
-        authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ctrl.downloadUrl(authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, created.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k409Conflict);
     auto body = json::parse(std::string(resp->body()));
@@ -597,8 +594,7 @@ TEST_F(LedgerDocumentsApiTest, DownloadUrlCrossOrgNotFound) {
 
     auto viewer_b = member("viewer8@example.com", org_b.id, "viewer");
     HttpResponsePtr resp;
-    ctrl.downloadUrl(
-        authed(viewer_b, Post), [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ctrl.downloadUrl(authed(viewer_b, Post), [&](const HttpResponsePtr& r) { resp = r; }, created.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -626,8 +622,7 @@ TEST_F(LedgerDocumentsApiTest, DownloadUrlViewerAllowed) {
 
     auto viewer = member("viewerdl@example.com", org.id, "viewer");
     HttpResponsePtr resp;
-    ctrl.downloadUrl(
-        authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ctrl.downloadUrl(authed(viewer, Post), [&](const HttpResponsePtr& r) { resp = r; }, created.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k200OK);
     auto body = json::parse(std::string(resp->body()));
@@ -766,8 +761,7 @@ TEST_F(LedgerDocumentsApiTest, ConfirmUploadViewerForbidden) {
 
     auto req = authed_json(viewer, {{"size_bytes", 10}, {"checksum_sha256", std::string(64, 'a')}});
     HttpResponsePtr resp;
-    ctrl.confirmUpload(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ctrl.confirmUpload(req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
 }
@@ -786,8 +780,7 @@ TEST_F(LedgerDocumentsApiTest, ConfirmUploadObjectMissingConflict) {
 
     auto confirm_req = authed_json(accountant, {{"size_bytes", 10}, {"checksum_sha256", std::string(64, 'a')}});
     HttpResponsePtr resp;
-    ctrl.confirmUpload(
-        confirm_req, [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
+    ctrl.confirmUpload(confirm_req, [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k409Conflict);
     auto body = json::parse(std::string(resp->body()));
@@ -803,8 +796,7 @@ TEST_F(LedgerDocumentsApiTest, ConfirmUploadCrossOrgNotFound) {
 
     auto req = authed_json(accountant_b, {{"size_bytes", 10}, {"checksum_sha256", std::string(64, 'a')}});
     HttpResponsePtr resp;
-    ctrl.confirmUpload(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ctrl.confirmUpload(req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -823,8 +815,7 @@ TEST_F(LedgerDocumentsApiTest, ConfirmUploadRejectedForGeneratedDocument) {
 
     auto req = authed_json(accountant, {{"size_bytes", 42}, {"checksum_sha256", std::string(64, 'e')}});
     HttpResponsePtr resp;
-    ctrl.confirmUpload(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ctrl.confirmUpload(req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k409Conflict);
     auto body = json::parse(std::string(resp->body()));
@@ -891,8 +882,7 @@ TEST_F(LedgerDocumentsApiTest, ConfirmUploadInvalidChecksumFormatRejected) {
 
     auto req = authed_json(accountant, {{"size_bytes", 10}, {"checksum_sha256", "not-a-valid-checksum"}});
     HttpResponsePtr resp;
-    ctrl.confirmUpload(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ctrl.confirmUpload(req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto body = json::parse(std::string(resp->body()));
@@ -909,8 +899,7 @@ TEST_F(LedgerDocumentsApiTest, ConfirmUploadMissingFieldRejected) {
 
     auto req = authed_json(accountant, {{"checksum_sha256", std::string(64, 'a')}});  // no size_bytes
     HttpResponsePtr resp;
-    ctrl.confirmUpload(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
+    ctrl.confirmUpload(req, [&](const HttpResponsePtr& r) { resp = r; }, created.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
     auto body = json::parse(std::string(resp->body()));
@@ -965,8 +954,7 @@ TEST_F(LedgerDocumentsApiTest, UploadConfirmAndDownloadRoundTrip) {
     auto confirm_req = authed_json(
         accountant, {{"size_bytes", static_cast<long long>(payload.size())}, {"checksum_sha256", checksum}});
     HttpResponsePtr confirm_resp;
-    ctrl.confirmUpload(
-        confirm_req, [&](const HttpResponsePtr& r) { confirm_resp = r; }, doc_id);
+    ctrl.confirmUpload(confirm_req, [&](const HttpResponsePtr& r) { confirm_resp = r; }, doc_id);
     ASSERT_NE(confirm_resp, nullptr);
     ASSERT_EQ(confirm_resp->statusCode(), k200OK);
     auto confirm_body = json::parse(std::string(confirm_resp->body()));
@@ -981,8 +969,7 @@ TEST_F(LedgerDocumentsApiTest, UploadConfirmAndDownloadRoundTrip) {
 
     // 4. Mint a download URL and fetch it back — round trip complete.
     HttpResponsePtr dl_resp;
-    ctrl.downloadUrl(
-        authed(accountant, Post), [&](const HttpResponsePtr& r) { dl_resp = r; }, doc_id);
+    ctrl.downloadUrl(authed(accountant, Post), [&](const HttpResponsePtr& r) { dl_resp = r; }, doc_id);
     ASSERT_NE(dl_resp, nullptr);
     ASSERT_EQ(dl_resp->statusCode(), k200OK);
     const std::string download_url = json::parse(std::string(dl_resp->body()))["url"].get<std::string>();
@@ -1010,16 +997,14 @@ TEST_F(LedgerDocumentsApiTest, EditCreatesANewVersionAndKeepsTheOldPdf) {
     const std::string doc_id = seed_rendered_invoice(org.id, /*total_tiyn=*/1234567, original_pdf);
 
     HttpResponsePtr before;
-    ctrl.get(
-        authed(p), [&](const HttpResponsePtr& r) { before = r; }, doc_id);
+    ctrl.get(authed(p), [&](const HttpResponsePtr& r) { before = r; }, doc_id);
     ASSERT_NE(before, nullptr);
     ASSERT_EQ(before->statusCode(), k200OK);
     const std::string old_key = json::parse(std::string(before->body()))["data"]["s3_key"].get<std::string>();
 
     const json edit = {{"input", make_invoice_input(/*total_tiyn=*/200000)}};
     HttpResponsePtr resp;
-    ctrl.createVersion(
-        authed_json(p, edit), [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
+    ctrl.createVersion(authed_json(p, edit), [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k202Accepted) << std::string(resp->body());
     auto body = json::parse(std::string(resp->body()));
@@ -1027,8 +1012,7 @@ TEST_F(LedgerDocumentsApiTest, EditCreatesANewVersionAndKeepsTheOldPdf) {
     EXPECT_TRUE(body["render_queued"].get<bool>());
 
     HttpResponsePtr versions;
-    ctrl.listVersions(
-        authed(p), [&](const HttpResponsePtr& r) { versions = r; }, doc_id);
+    ctrl.listVersions(authed(p), [&](const HttpResponsePtr& r) { versions = r; }, doc_id);
     ASSERT_NE(versions, nullptr);
     ASSERT_EQ(versions->statusCode(), k200OK);
     auto version_body = json::parse(std::string(versions->body()));
@@ -1045,8 +1029,7 @@ TEST_F(LedgerDocumentsApiTest, EditCreatesANewVersionAndKeepsTheOldPdf) {
     // overwriting. Fetched with bare curl, so the bytes are proven, not the
     // row.
     HttpResponsePtr url1;
-    ctrl.versionDownloadUrl(
-        authed(p, Post), [&](const HttpResponsePtr& r) { url1 = r; }, doc_id, "1");
+    ctrl.versionDownloadUrl(authed(p, Post), [&](const HttpResponsePtr& r) { url1 = r; }, doc_id, "1");
     ASSERT_NE(url1, nullptr);
     ASSERT_EQ(url1->statusCode(), k200OK);
     const std::string url = json::parse(std::string(url1->body()))["url"].get<std::string>();
@@ -1146,8 +1129,7 @@ TEST_F(LedgerDocumentsApiTest, RenderingVersionTwoLeavesVersionOnesPdfDownloadab
 
     // Version 1: its own presigned URL, its own bytes — unchanged.
     HttpResponsePtr url1;
-    ctrl.versionDownloadUrl(
-        authed(p, Post), [&](const HttpResponsePtr& r) { url1 = r; }, doc_id, "1");
+    ctrl.versionDownloadUrl(authed(p, Post), [&](const HttpResponsePtr& r) { url1 = r; }, doc_id, "1");
     ASSERT_NE(url1, nullptr);
     ASSERT_EQ(url1->statusCode(), k200OK);
     EXPECT_EQ(run_capture("curl -s '" + json::parse(std::string(url1->body()))["url"].get<std::string>() + "'"),
@@ -1155,8 +1137,7 @@ TEST_F(LedgerDocumentsApiTest, RenderingVersionTwoLeavesVersionOnesPdfDownloadab
 
     // Version 2: its own presigned URL, the freshly rendered bytes.
     HttpResponsePtr url2;
-    ctrl.versionDownloadUrl(
-        authed(p, Post), [&](const HttpResponsePtr& r) { url2 = r; }, doc_id, "2");
+    ctrl.versionDownloadUrl(authed(p, Post), [&](const HttpResponsePtr& r) { url2 = r; }, doc_id, "2");
     ASSERT_NE(url2, nullptr);
     ASSERT_EQ(url2->statusCode(), k200OK);
     EXPECT_EQ(run_capture("curl -s '" + json::parse(std::string(url2->body()))["url"].get<std::string>() + "'"),
@@ -1191,8 +1172,7 @@ TEST_F(LedgerDocumentsApiTest, EditRejectsFieldsOutsideTheCreationAllowlist) {
     // forgery this endpoint must make unrepresentable.
     const json edit = {{"input", {{"director", "С.С."}, {"accountant", "И.И."}, {"tax_tenge", "1,00"}}}};
     HttpResponsePtr resp;
-    ctrl.createVersion(
-        authed_json(p, edit), [&](const HttpResponsePtr& r) { resp = r; }, filing_doc);
+    ctrl.createVersion(authed_json(p, edit), [&](const HttpResponsePtr& r) { resp = r; }, filing_doc);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto body = json::parse(std::string(resp->body()));
@@ -1223,8 +1203,7 @@ TEST_F(LedgerDocumentsApiTest, EditRejectsServerDerivedMoneyStrings) {
     json forged = make_invoice_input(/*total_tiyn=*/100);
     forged["total_words"] = "Один миллион тенге 00 тиын";
     HttpResponsePtr resp;
-    ctrl.createVersion(
-        authed_json(p, json{{"input", forged}}), [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
+    ctrl.createVersion(authed_json(p, json{{"input", forged}}), [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto body = json::parse(std::string(resp->body()));
@@ -1247,8 +1226,7 @@ TEST_F(LedgerDocumentsApiTest, EditWithANonObjectBodyIsABadRequest) {
 
     for (const json& bad : {json(nullptr), json::array(), json("x"), json(5)}) {
         HttpResponsePtr resp;
-        ctrl.createVersion(
-            authed_json(p, bad), [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
+        ctrl.createVersion(authed_json(p, bad), [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
         ASSERT_NE(resp, nullptr) << bad.dump();
         EXPECT_EQ(resp->statusCode(), k400BadRequest) << bad.dump();
         auto body = json::parse(std::string(resp->body()));
@@ -1256,8 +1234,7 @@ TEST_F(LedgerDocumentsApiTest, EditWithANonObjectBodyIsABadRequest) {
     }
     // `input` present but of the wrong type stays the field-level 400 it was.
     HttpResponsePtr typed;
-    ctrl.createVersion(
-        authed_json(p, json{{"input", 5}}), [&](const HttpResponsePtr& r) { typed = r; }, doc_id);
+    ctrl.createVersion(authed_json(p, json{{"input", 5}}), [&](const HttpResponsePtr& r) { typed = r; }, doc_id);
     ASSERT_NE(typed, nullptr);
     EXPECT_EQ(typed->statusCode(), k400BadRequest);
     auto typed_body = json::parse(std::string(typed->body()));
@@ -1285,8 +1262,7 @@ TEST_F(LedgerDocumentsApiTest, EditWithNoBodyRerendersTheStoredInputUnchanged) {
     ASSERT_TRUE(v1->input_snapshot.has_value());
 
     HttpResponsePtr resp;
-    ctrl.createVersion(
-        authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, filing_doc);
+    ctrl.createVersion(authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, filing_doc);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k202Accepted) << std::string(resp->body());
     EXPECT_EQ(json::parse(std::string(resp->body()))["version_no"].get<int>(), 2);
@@ -1312,8 +1288,7 @@ TEST_F(LedgerDocumentsApiTest, EditOfAServerBuiltFormCarriesDerivedFiguresForwar
 
     const json edit = {{"input", {{"director", "Новый директор"}}}};
     HttpResponsePtr resp;
-    ctrl.createVersion(
-        authed_json(p, edit), [&](const HttpResponsePtr& r) { resp = r; }, filing_doc);
+    ctrl.createVersion(authed_json(p, edit), [&](const HttpResponsePtr& r) { resp = r; }, filing_doc);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k202Accepted) << std::string(resp->body());
 
@@ -1355,8 +1330,7 @@ TEST_F(LedgerDocumentsApiTest, VersionDownloadUrlIsFourOhFourForAnUnknownVersion
     const std::string doc_id = seed_rendered_invoice(org.id, /*total_tiyn=*/1234567, "seed-bytes");
 
     HttpResponsePtr resp;
-    ctrl.versionDownloadUrl(
-        authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, doc_id, "99");
+    ctrl.versionDownloadUrl(authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, doc_id, "99");
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
 }
@@ -1371,8 +1345,7 @@ TEST_F(LedgerDocumentsApiTest, VersionDownloadUrlRejectsAMalformedVersionNumber)
 
     for (const auto* bad : {"abc", "0", "-1", "1.5", ""}) {
         HttpResponsePtr resp;
-        ctrl.versionDownloadUrl(
-            authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, doc_id, bad);
+        ctrl.versionDownloadUrl(authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, doc_id, bad);
         ASSERT_NE(resp, nullptr) << bad;
         EXPECT_EQ(resp->statusCode(), k400BadRequest) << bad;
         auto body = json::parse(std::string(resp->body()));
@@ -1398,8 +1371,7 @@ TEST_F(LedgerDocumentsApiTest, VersionDownloadUrlIsAConflictWhileTheRenderIsPend
     ASSERT_EQ(edited->statusCode(), k202Accepted) << std::string(edited->body());
 
     HttpResponsePtr resp;
-    ctrl.versionDownloadUrl(
-        authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, doc_id, "2");
+    ctrl.versionDownloadUrl(authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, doc_id, "2");
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k409Conflict);
     auto body = json::parse(std::string(resp->body()));
@@ -1420,8 +1392,7 @@ TEST_F(LedgerDocumentsApiTest, ViewerCannotEditButCanListVersions) {
     EXPECT_EQ(repo.list_versions(org.id, doc_id).size(), 1U);
 
     HttpResponsePtr list_resp;
-    ctrl.listVersions(
-        authed(v), [&](const HttpResponsePtr& r) { list_resp = r; }, doc_id);
+    ctrl.listVersions(authed(v), [&](const HttpResponsePtr& r) { list_resp = r; }, doc_id);
     ASSERT_NE(list_resp, nullptr);
     EXPECT_EQ(list_resp->statusCode(), k200OK);
 }
@@ -1433,8 +1404,7 @@ TEST_F(LedgerDocumentsApiTest, VersionRoutesAreFourOhFourAcrossOrganizations) {
     auto accountant_b = member("edit9@example.com", org_b.id, "accountant");
 
     HttpResponsePtr list_resp;
-    ctrl.listVersions(
-        authed(accountant_b), [&](const HttpResponsePtr& r) { list_resp = r; }, doc_id);
+    ctrl.listVersions(authed(accountant_b), [&](const HttpResponsePtr& r) { list_resp = r; }, doc_id);
     ASSERT_NE(list_resp, nullptr);
     EXPECT_EQ(list_resp->statusCode(), k404NotFound);
 
@@ -1447,8 +1417,7 @@ TEST_F(LedgerDocumentsApiTest, VersionRoutesAreFourOhFourAcrossOrganizations) {
     EXPECT_EQ(edit_resp->statusCode(), k404NotFound);
 
     HttpResponsePtr dl_resp;
-    ctrl.versionDownloadUrl(
-        authed(accountant_b, Post), [&](const HttpResponsePtr& r) { dl_resp = r; }, doc_id, "1");
+    ctrl.versionDownloadUrl(authed(accountant_b, Post), [&](const HttpResponsePtr& r) { dl_resp = r; }, doc_id, "1");
     ASSERT_NE(dl_resp, nullptr);
     EXPECT_EQ(dl_resp->statusCode(), k404NotFound);
 
@@ -1532,8 +1501,7 @@ TEST_F(LedgerDocumentsApiTest, DeletesADocumentWithNoPostedLink) {
     auto doc = repo.create(org.id, "incoming", "uploaded", "inbox");
 
     HttpResponsePtr resp;
-    ctrl.remove(
-        authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc.id);
+    ctrl.remove(authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k204NoContent);
     EXPECT_TRUE(resp->body().empty());
@@ -1555,8 +1523,7 @@ TEST_F(LedgerDocumentsApiTest, DeletesADocumentLinkedOnlyToADraftEntry) {
     ASSERT_TRUE(repo.link_entry(org.id, doc.id, draft_entry));
 
     HttpResponsePtr resp;
-    ctrl.remove(
-        authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc.id);
+    ctrl.remove(authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k204NoContent);
     EXPECT_FALSE(repo.find_in_org(doc.id, org.id, /*from_primary=*/true).has_value());
@@ -1578,8 +1545,7 @@ TEST_F(LedgerDocumentsApiTest, RefusesToDeleteADocumentOnAPostedEntry) {
     ASSERT_TRUE(repo.link_entry(org.id, doc.id, seed_posted_entry(org.id, p.subject)));
 
     HttpResponsePtr resp;
-    ctrl.remove(
-        authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc.id);
+    ctrl.remove(authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k409Conflict);
     EXPECT_EQ(json::parse(std::string(resp->body()))["error"].get<std::string>(), "document_has_posted_entries");
@@ -1614,8 +1580,7 @@ TEST_F(LedgerDocumentsApiTest, HrDocumentReferencedByAnOrderIsFourZeroNineNotFiv
     ASSERT_FALSE(repo.has_posted_entry_link(org.id, hr_doc));  // не проводка держит документ
 
     HttpResponsePtr resp;
-    ctrl.remove(
-        authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, hr_doc);
+    ctrl.remove(authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, hr_doc);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k409Conflict);
     EXPECT_EQ(json::parse(std::string(resp->body()))["error"].get<std::string>(), "document_referenced");
@@ -1644,8 +1609,7 @@ TEST_F(LedgerDocumentsApiTest, DocumentReferencedByATaxFilingIsAConflictRaisedAt
     ASSERT_FALSE(repo.has_posted_entry_link(org.id, doc_id));  // не проводка держит документ
 
     HttpResponsePtr resp;
-    ctrl.remove(
-        authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
+    ctrl.remove(authed(p, Delete), [&](const HttpResponsePtr& r) { resp = r; }, doc_id);
     ASSERT_NE(resp, nullptr);
     // Не 500 — значит, отложенный 23503 действительно был пойман снаружи
     // execute_write и переведён в доменный исход.
@@ -1665,14 +1629,12 @@ TEST_F(LedgerDocumentsApiTest, VoidRequiresAReasonAndIsIdempotentlyRejected) {
     auto doc = repo.create(org.id, "invoice", "generated", "final");
 
     HttpResponsePtr missing;
-    ctrl.voidDocument(
-        authed_json(p, json::object()), [&](const HttpResponsePtr& r) { missing = r; }, doc.id);
+    ctrl.voidDocument(authed_json(p, json::object()), [&](const HttpResponsePtr& r) { missing = r; }, doc.id);
     ASSERT_NE(missing, nullptr);
     EXPECT_EQ(missing->statusCode(), k400BadRequest);
 
     HttpResponsePtr blank;
-    ctrl.voidDocument(
-        authed_json(p, json{{"reason", "  "}}), [&](const HttpResponsePtr& r) { blank = r; }, doc.id);
+    ctrl.voidDocument(authed_json(p, json{{"reason", "  "}}), [&](const HttpResponsePtr& r) { blank = r; }, doc.id);
     ASSERT_NE(blank, nullptr);
     EXPECT_EQ(blank->statusCode(), k422UnprocessableEntity);
 
@@ -1687,8 +1649,7 @@ TEST_F(LedgerDocumentsApiTest, VoidRequiresAReasonAndIsIdempotentlyRejected) {
     EXPECT_EQ(json::parse(std::string(too_long->body()))["errors"][0]["code"].get<std::string>(), "too_long");
 
     HttpResponsePtr first;
-    ctrl.voidDocument(
-        authed_json(p, json{{"reason", "дубль"}}), [&](const HttpResponsePtr& r) { first = r; }, doc.id);
+    ctrl.voidDocument(authed_json(p, json{{"reason", "дубль"}}), [&](const HttpResponsePtr& r) { first = r; }, doc.id);
     ASSERT_NE(first, nullptr);
     EXPECT_EQ(first->statusCode(), k200OK);
 
@@ -1724,8 +1685,7 @@ TEST_F(LedgerDocumentsApiTest, AVoidedDocumentCannotBeDeleted) {
     ASSERT_EQ(voided->statusCode(), k200OK);
 
     HttpResponsePtr del;
-    ctrl.remove(
-        authed(p, Delete), [&](const HttpResponsePtr& r) { del = r; }, doc.id);
+    ctrl.remove(authed(p, Delete), [&](const HttpResponsePtr& r) { del = r; }, doc.id);
     ASSERT_NE(del, nullptr);
     EXPECT_EQ(del->statusCode(), k409Conflict);
     EXPECT_EQ(json::parse(std::string(del->body()))["error"].get<std::string>(), "document_voided");
@@ -1771,14 +1731,12 @@ TEST_F(LedgerDocumentsApiTest, ViewerCanNeitherDeleteNorVoid) {
     auto doc = repo.create(org.id, "invoice", "generated", "final");
 
     HttpResponsePtr del;
-    ctrl.remove(
-        authed(v, Delete), [&](const HttpResponsePtr& r) { del = r; }, doc.id);
+    ctrl.remove(authed(v, Delete), [&](const HttpResponsePtr& r) { del = r; }, doc.id);
     ASSERT_NE(del, nullptr);
     EXPECT_EQ(del->statusCode(), k403Forbidden);
 
     HttpResponsePtr voided;
-    ctrl.voidDocument(
-        authed_json(v, json{{"reason", "нет"}}), [&](const HttpResponsePtr& r) { voided = r; }, doc.id);
+    ctrl.voidDocument(authed_json(v, json{{"reason", "нет"}}), [&](const HttpResponsePtr& r) { voided = r; }, doc.id);
     ASSERT_NE(voided, nullptr);
     EXPECT_EQ(voided->statusCode(), k403Forbidden);
 
@@ -1815,8 +1773,7 @@ TEST_F(LedgerDocumentsApiTest, HrRoleMayVoidHrDocumentsButNotPrimaryOnes) {
     EXPECT_EQ(invoice_resp->statusCode(), k403Forbidden);
 
     HttpResponsePtr invoice_del;
-    ctrl.remove(
-        authed(hr_user, Delete), [&](const HttpResponsePtr& r) { invoice_del = r; }, invoice.id);
+    ctrl.remove(authed(hr_user, Delete), [&](const HttpResponsePtr& r) { invoice_del = r; }, invoice.id);
     ASSERT_NE(invoice_del, nullptr);
     EXPECT_EQ(invoice_del->statusCode(), k403Forbidden);
     EXPECT_TRUE(repo.find_in_org(invoice.id, org.id, /*from_primary=*/true).has_value());
@@ -1824,8 +1781,7 @@ TEST_F(LedgerDocumentsApiTest, HrRoleMayVoidHrDocumentsButNotPrimaryOnes) {
     // А свой кадровый документ он и удалить может — если тот ничем не занят.
     auto spare_hr_doc = repo.create(org.id, "hr", "uploaded", "inbox");
     HttpResponsePtr hr_del;
-    ctrl.remove(
-        authed(hr_user, Delete), [&](const HttpResponsePtr& r) { hr_del = r; }, spare_hr_doc.id);
+    ctrl.remove(authed(hr_user, Delete), [&](const HttpResponsePtr& r) { hr_del = r; }, spare_hr_doc.id);
     ASSERT_NE(hr_del, nullptr);
     EXPECT_EQ(hr_del->statusCode(), k204NoContent);
 }

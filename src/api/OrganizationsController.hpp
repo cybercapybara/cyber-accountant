@@ -79,6 +79,7 @@ public:
     ADD_METHOD_TO(OrganizationsController::addMember, "/api/v1/orgs/{1}/members", Post);
     ADD_METHOD_TO(OrganizationsController::updateMemberRole, "/api/v1/orgs/{1}/members/{2}", Patch);
     ADD_METHOD_TO(OrganizationsController::removeMember, "/api/v1/orgs/{1}/members/{2}", Delete);
+    ADD_METHOD_TO(OrganizationsController::updateRequisites, "/api/v1/orgs/{1}/requisites", Put);
     METHOD_LIST_END
 
     // ---------------------------------------------------------------------
@@ -523,6 +524,62 @@ public:
             members.remove(id, user_id);
             Security::Audit::record(actor_of(req), "org.member.remove", "organization", id, {{"user_id", user_id}});
             callback(Response::ok({{"message", "Member removed"}}));
+        });
+    }
+
+    // ---------------------------------------------------------------------
+    // PUT /api/v1/orgs/{id}/requisites
+    //
+    // Реквизиты, которые ПЕЧАТАЮТСЯ в документах: юридический адрес и
+    // подписант. До этой фазы их не существовало вовсе — реквизиты сторон
+    // присылал клиент в теле каждого документа, и два счёта одной
+    // организации могли разойтись.
+    //
+    // Владелец или админ площадки: тот же страж, что у управления составом
+    // участников. Три поля пишутся ОДНИМ запросом — они печатаются в одном
+    // блоке подписи, и частичное обновление подписало бы документ не тем
+    // человеком. Пустая строка — законное значение («не заполнено»).
+    // ---------------------------------------------------------------------
+    void updateRequisites(const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback,
+                          const std::string& id) {
+        if (auto err = require_admin_or_org_owner(req, id)) {
+            callback(err);
+            return;
+        }
+        if (!is_valid_uuid(id)) {
+            callback(ErrorResponse::bad_request("invalid_id", "Malformed organization id"));
+            return;
+        }
+        json body;
+        if (!Validation::parse_body(req, body, callback))
+            return;
+
+        std::string legal_address;
+        std::string director_name;
+        std::string director_position;
+        if (!Validation::require_string(body, "legal_address", legal_address, callback))
+            return;
+        if (!Validation::require_string(body, "director_name", director_name, callback))
+            return;
+        if (!Validation::require_string(body, "director_position", director_position, callback))
+            return;
+
+        with_repo_errors(callback, "orgs updateRequisites", [&] {
+            Tenancy::OrganizationRepository orgs;
+            if (!orgs.update_requisites(id, legal_address, director_name, director_position)) {
+                callback(ErrorResponse::not_found("organization"));
+                return;
+            }
+            auto updated = orgs.find(id);
+            if (!updated) {
+                // Строка была секунду назад и исчезла между UPDATE и SELECT —
+                // гонка с удалением организации. Отвечаем 404, а не 500:
+                // для вызывающего результат тот же, что «не найдено».
+                callback(ErrorResponse::not_found("organization"));
+                return;
+            }
+            callback(Response::ok({{"data", json(*updated)}}));
         });
     }
 

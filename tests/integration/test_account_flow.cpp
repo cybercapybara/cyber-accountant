@@ -83,8 +83,7 @@ TEST_F(AccountFlowTest, confirmTokenMarksUserConfirmed) {
     HttpResponsePtr resp;
     auto req = HttpRequest::newHttpRequest();
     req->setMethod(Post);
-    account.confirm(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, token);
+    account.confirm(req, [&](const HttpResponsePtr& r) { resp = r; }, token);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k200OK);
 
@@ -108,8 +107,7 @@ TEST_F(AccountFlowTest, confirmRejectsTamperedToken) {
     HttpResponsePtr resp;
     auto req = HttpRequest::newHttpRequest();
     req->setMethod(Post);
-    account.confirm(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, token);
+    account.confirm(req, [&](const HttpResponsePtr& r) { resp = r; }, token);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
     auto body = json::parse(std::string(resp->body()));
@@ -139,8 +137,7 @@ TEST_F(AccountFlowTest, applyResetRotatesPasswordHash) {
         Security::Tokens::issue(kSecret, user->id, Security::Tokens::Purpose::ResetPassword, std::chrono::hours(1));
     auto req = post_json({{"new_password", "newpassword42"}});
     HttpResponsePtr resp;
-    account.applyReset(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, token);
+    account.applyReset(req, [&](const HttpResponsePtr& r) { resp = r; }, token);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k200OK);
 
@@ -159,8 +156,7 @@ TEST_F(AccountFlowTest, applyResetRefusesShortPassword) {
         Security::Tokens::issue(kSecret, user->id, Security::Tokens::Purpose::ResetPassword, std::chrono::hours(1));
     auto req = post_json({{"new_password", "abc"}});
     HttpResponsePtr resp;
-    account.applyReset(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, token);
+    account.applyReset(req, [&](const HttpResponsePtr& r) { resp = r; }, token);
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
 }
 
@@ -178,8 +174,7 @@ TEST_F(AccountFlowTest, changeEmailTokenSwapsAddress) {
     auto req = HttpRequest::newHttpRequest();
     req->setMethod(Post);
     HttpResponsePtr resp;
-    account.applyChangeEmail(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, token);
+    account.applyChangeEmail(req, [&](const HttpResponsePtr& r) { resp = r; }, token);
     ASSERT_EQ(resp->statusCode(), k200OK);
 
     auto by_new = repo.find_by_email("f-new@example.com");
@@ -201,15 +196,13 @@ TEST_F(AccountFlowTest, confirmTokenRejectsReplay) {
     HttpResponsePtr first, second;
     auto req1 = HttpRequest::newHttpRequest();
     req1->setMethod(Post);
-    account.confirm(
-        req1, [&](const HttpResponsePtr& r) { first = r; }, token);
+    account.confirm(req1, [&](const HttpResponsePtr& r) { first = r; }, token);
     ASSERT_NE(first, nullptr);
     EXPECT_EQ(first->statusCode(), k200OK);
 
     auto req2 = HttpRequest::newHttpRequest();
     req2->setMethod(Post);
-    account.confirm(
-        req2, [&](const HttpResponsePtr& r) { second = r; }, token);
+    account.confirm(req2, [&](const HttpResponsePtr& r) { second = r; }, token);
     ASSERT_NE(second, nullptr);
     EXPECT_EQ(second->statusCode(), k400BadRequest);  // one-shot: token already used
 }
@@ -250,15 +243,13 @@ TEST_F(AccountFlowTest, applyChangeEmailRejectsReplay) {
     HttpResponsePtr first, second;
     auto req1 = HttpRequest::newHttpRequest();
     req1->setMethod(Post);
-    account.applyChangeEmail(
-        req1, [&](const HttpResponsePtr& r) { first = r; }, token);
+    account.applyChangeEmail(req1, [&](const HttpResponsePtr& r) { first = r; }, token);
     ASSERT_NE(first, nullptr);
     EXPECT_EQ(first->statusCode(), k200OK);
 
     auto req2 = HttpRequest::newHttpRequest();
     req2->setMethod(Post);
-    account.applyChangeEmail(
-        req2, [&](const HttpResponsePtr& r) { second = r; }, token);
+    account.applyChangeEmail(req2, [&](const HttpResponsePtr& r) { second = r; }, token);
     ASSERT_NE(second, nullptr);
     EXPECT_EQ(second->statusCode(), k400BadRequest);  // one-shot (same-user precheck passes, nonce blocks)
 }
@@ -278,8 +269,7 @@ TEST_F(AccountFlowTest, changeEmailConflictsOnDuplicate) {
     auto req = HttpRequest::newHttpRequest();
     req->setMethod(Post);
     HttpResponsePtr resp;
-    account.applyChangeEmail(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, token);
+    account.applyChangeEmail(req, [&](const HttpResponsePtr& r) { resp = r; }, token);
     EXPECT_EQ(resp->statusCode(), k409Conflict);
 }
 

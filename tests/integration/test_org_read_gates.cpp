@@ -180,15 +180,13 @@ protected:
 
     HttpResponsePtr documents_get(const Principal& p, const std::string& id) {
         HttpResponsePtr resp;
-        documents_.get(
-            authed(p), [&](const HttpResponsePtr& r) { resp = r; }, id);
+        documents_.get(authed(p), [&](const HttpResponsePtr& r) { resp = r; }, id);
         return resp;
     }
 
     HttpResponsePtr documents_download_url(const Principal& p, const std::string& id) {
         HttpResponsePtr resp;
-        documents_.downloadUrl(
-            authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, id);
+        documents_.downloadUrl(authed(p, Post), [&](const HttpResponsePtr& r) { resp = r; }, id);
         return resp;
     }
 
@@ -228,8 +226,7 @@ TEST_F(OrgReadGatesTest, HrIsDeniedReadOnPayrollJournalTaxAndDocuments) {
         {"GET /payroll-runs/{id}/payslips",
          [&](const Principal& p) {
              HttpResponsePtr r;
-             payroll_.listPayslips(
-                 authed(p), [&](const HttpResponsePtr& x) { r = x; }, kAbsentId);
+             payroll_.listPayslips(authed(p), [&](const HttpResponsePtr& x) { r = x; }, kAbsentId);
              return r;
          }},
         // journal (3 — план счетов относится к тому же ресурсу)
@@ -242,8 +239,7 @@ TEST_F(OrgReadGatesTest, HrIsDeniedReadOnPayrollJournalTaxAndDocuments) {
         {"GET /journal-entries/{id}",
          [&](const Principal& p) {
              HttpResponsePtr r;
-             journal_.get(
-                 authed(p), [&](const HttpResponsePtr& x) { r = x; }, kAbsentId);
+             journal_.get(authed(p), [&](const HttpResponsePtr& x) { r = x; }, kAbsentId);
              return r;
          }},
         {"GET /accounts",
@@ -262,8 +258,7 @@ TEST_F(OrgReadGatesTest, HrIsDeniedReadOnPayrollJournalTaxAndDocuments) {
         {"GET /counterparties/{id}",
          [&](const Principal& p) {
              HttpResponsePtr r;
-             counterparties_.get(
-                 authed(p), [&](const HttpResponsePtr& x) { r = x; }, kAbsentId);
+             counterparties_.get(authed(p), [&](const HttpResponsePtr& x) { r = x; }, kAbsentId);
              return r;
          }},
         // tax (7 — включая getFiling и POST-выдачу пресайна)
@@ -300,15 +295,13 @@ TEST_F(OrgReadGatesTest, HrIsDeniedReadOnPayrollJournalTaxAndDocuments) {
         {"GET /tax/filings/{id}",
          [&](const Principal& p) {
              HttpResponsePtr r;
-             tax_.getFiling(
-                 authed(p), [&](const HttpResponsePtr& x) { r = x; }, kAbsentId);
+             tax_.getFiling(authed(p), [&](const HttpResponsePtr& x) { r = x; }, kAbsentId);
              return r;
          }},
         {"POST /tax/filings/{id}/download-url",
          [&](const Principal& p) {
              HttpResponsePtr r;
-             tax_.filingDownloadUrl(
-                 authed(p, Post), [&](const HttpResponsePtr& x) { r = x; }, kAbsentId);
+             tax_.filingDownloadUrl(authed(p, Post), [&](const HttpResponsePtr& x) { r = x; }, kAbsentId);
              return r;
          }},
         // documents-как-реестр (1): шаблоны — тоже чтение ресурса documents
@@ -460,8 +453,7 @@ TEST_F(OrgReadGatesTest, HrMayReadEmployeesAndHrDocuments) {
     EXPECT_EQ(employees_list->statusCode(), k200OK) << "GET /employees";
 
     HttpResponsePtr employee_one;
-    employees_.get(
-        authed(hr), [&](const HttpResponsePtr& r) { employee_one = r; }, kAbsentId);
+    employees_.get(authed(hr), [&](const HttpResponsePtr& r) { employee_one = r; }, kAbsentId);
     ASSERT_NE(employee_one, nullptr);
     // Не 403: роль пропущена, дальше отвечает уже сам ресурс.
     EXPECT_EQ(employee_one->statusCode(), k404NotFound) << "GET /employees/{id}";
@@ -505,8 +497,7 @@ TEST_F(OrgReadGatesTest, HrCannotWriteToTheLedgerTaxesOrPayroll) {
     EXPECT_EQ(run->statusCode(), k403Forbidden) << "POST /payroll-runs";
 
     HttpResponsePtr posted;
-    payroll_.postToJournal(
-        authed(hr, Post), [&](const HttpResponsePtr& r) { posted = r; }, kAbsentId);
+    payroll_.postToJournal(authed(hr, Post), [&](const HttpResponsePtr& r) { posted = r; }, kAbsentId);
     ASSERT_NE(posted, nullptr);
     EXPECT_EQ(posted->statusCode(), k403Forbidden) << "POST /payroll-runs/{id}/post-to-journal";
 

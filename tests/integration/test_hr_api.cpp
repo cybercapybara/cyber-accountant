@@ -326,8 +326,7 @@ TEST_F(HrApiTest, GenerateOrderDocumentAcceptedAndEnqueues) {
     json extra = {{"director", "Ахметов Ерлан Серикович"}};
     auto req = authed_json(accountant, extra);
     HttpResponsePtr resp;
-    ctrl.generateOrderDocument(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, order.id);
+    ctrl.generateOrderDocument(req, [&](const HttpResponsePtr& r) { resp = r; }, order.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k202Accepted);
     auto body = json::parse(std::string(resp->body()));
@@ -368,8 +367,7 @@ TEST_F(HrApiTest, GenerateOrderDocumentViewerForbidden) {
 
     auto req = authed(viewer, Post);
     HttpResponsePtr resp;
-    ctrl.generateOrderDocument(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, order.id);
+    ctrl.generateOrderDocument(req, [&](const HttpResponsePtr& r) { resp = r; }, order.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
     EXPECT_EQ(queue_depth(), 0);
@@ -386,8 +384,7 @@ TEST_F(HrApiTest, GenerateOrderDocumentCrossOrgNotFound) {
 
     auto req = authed(accountant_b, Post);
     HttpResponsePtr resp;
-    ctrl.generateOrderDocument(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, order.id);
+    ctrl.generateOrderDocument(req, [&](const HttpResponsePtr& r) { resp = r; }, order.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
     EXPECT_EQ(queue_depth(), 0);
@@ -405,8 +402,7 @@ TEST_F(HrApiTest, GenerateOrderDocumentMissingRequiredFieldRejected) {
     // from any stored column) is missing.
     auto req = authed(accountant, Post);
     HttpResponsePtr resp;
-    ctrl.generateOrderDocument(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, order.id);
+    ctrl.generateOrderDocument(req, [&](const HttpResponsePtr& r) { resp = r; }, order.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto body = json::parse(std::string(resp->body()));
@@ -528,8 +524,7 @@ TEST_F(HrApiTest, GenerateContractDocumentAcceptedAndEnqueues) {
                   {"work_schedule", "Пятидневная рабочая неделя"}};
     auto req = authed_json(accountant, extra);
     HttpResponsePtr resp;
-    ctrl.generateContractDocument(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, contract.id);
+    ctrl.generateContractDocument(req, [&](const HttpResponsePtr& r) { resp = r; }, contract.id);
     ASSERT_NE(resp, nullptr);
     ASSERT_EQ(resp->statusCode(), k202Accepted);
     auto body = json::parse(std::string(resp->body()));
@@ -577,8 +572,7 @@ TEST_F(HrApiTest, GenerateContractDocumentViewerForbidden) {
 
     auto req = authed(viewer, Post);
     HttpResponsePtr resp;
-    ctrl.generateContractDocument(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, contract.id);
+    ctrl.generateContractDocument(req, [&](const HttpResponsePtr& r) { resp = r; }, contract.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k403Forbidden);
     EXPECT_EQ(queue_depth(), 0);
@@ -595,8 +589,7 @@ TEST_F(HrApiTest, GenerateContractDocumentCrossOrgNotFound) {
 
     auto req = authed(accountant_b, Post);
     HttpResponsePtr resp;
-    ctrl.generateContractDocument(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, contract.id);
+    ctrl.generateContractDocument(req, [&](const HttpResponsePtr& r) { resp = r; }, contract.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k404NotFound);
     EXPECT_EQ(queue_depth(), 0);
@@ -614,8 +607,7 @@ TEST_F(HrApiTest, GenerateContractDocumentMissingRequiredFieldRejected) {
     // fields the server now derives are already present).
     auto req = authed(accountant, Post);
     HttpResponsePtr resp;
-    ctrl.generateContractDocument(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, contract.id);
+    ctrl.generateContractDocument(req, [&](const HttpResponsePtr& r) { resp = r; }, contract.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto body = json::parse(std::string(resp->body()));
@@ -630,8 +622,7 @@ TEST_F(HrApiTest, GenerateContractDocumentMalformedIdRejected) {
 
     auto req = authed(accountant, Post);
     HttpResponsePtr resp;
-    ctrl.generateContractDocument(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
+    ctrl.generateContractDocument(req, [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
 }
@@ -655,8 +646,7 @@ TEST_F(HrApiTest, GenerateContractDocumentOverrideSalaryRejectedAndValueUnchange
                       {"employer", {{"director", "Ахметов Ерлан Серикович"}}}};
     auto bad_req = authed_json(accountant, malicious);
     HttpResponsePtr bad_resp;
-    ctrl.generateContractDocument(
-        bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; }, contract.id);
+    ctrl.generateContractDocument(bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; }, contract.id);
     ASSERT_NE(bad_resp, nullptr);
     EXPECT_EQ(bad_resp->statusCode(), k422UnprocessableEntity);
     auto bad_body = json::parse(std::string(bad_resp->body()));
@@ -668,8 +658,7 @@ TEST_F(HrApiTest, GenerateContractDocumentOverrideSalaryRejectedAndValueUnchange
                   {"employer", {{"director", "Ахметов Ерлан Серикович"}}}};
     auto good_req = authed_json(accountant, legit);
     HttpResponsePtr good_resp;
-    ctrl.generateContractDocument(
-        good_req, [&](const HttpResponsePtr& r) { good_resp = r; }, contract.id);
+    ctrl.generateContractDocument(good_req, [&](const HttpResponsePtr& r) { good_resp = r; }, contract.id);
     ASSERT_NE(good_resp, nullptr);
     ASSERT_EQ(good_resp->statusCode(), k202Accepted);
     auto good_body = json::parse(std::string(good_resp->body()));
@@ -704,8 +693,7 @@ TEST_F(HrApiTest, GenerateContractDocumentRejectsClientSuppliedSalaryWords) {
                  {"employer", {{"director", "Ахметов Ерлан Серикович"}}}};
     auto req = authed_json(accountant, body);
     HttpResponsePtr resp;
-    ctrl.generateContractDocument(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, contract.id);
+    ctrl.generateContractDocument(req, [&](const HttpResponsePtr& r) { resp = r; }, contract.id);
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k422UnprocessableEntity);
     auto payload = json::parse(std::string(resp->body()));
@@ -720,8 +708,7 @@ TEST_F(HrApiTest, GenerateOrderDocumentMalformedIdRejected) {
 
     auto req = authed(accountant, Post);
     HttpResponsePtr resp;
-    ctrl.generateOrderDocument(
-        req, [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
+    ctrl.generateOrderDocument(req, [&](const HttpResponsePtr& r) { resp = r; }, "not-a-uuid");
     ASSERT_NE(resp, nullptr);
     EXPECT_EQ(resp->statusCode(), k400BadRequest);
 }
@@ -744,8 +731,7 @@ TEST_F(HrApiTest, GenerateOrderDocumentOverrideIinRejectedAndValueUnchanged) {
     json malicious = {{"director", "Ахметов Ерлан Серикович"}, {"employee", {{"iin", "999999999999"}}}};
     auto bad_req = authed_json(accountant, malicious);
     HttpResponsePtr bad_resp;
-    ctrl.generateOrderDocument(
-        bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; }, order.id);
+    ctrl.generateOrderDocument(bad_req, [&](const HttpResponsePtr& r) { bad_resp = r; }, order.id);
     ASSERT_NE(bad_resp, nullptr);
     EXPECT_EQ(bad_resp->statusCode(), k422UnprocessableEntity);
     auto bad_body = json::parse(std::string(bad_resp->body()));
@@ -756,8 +742,7 @@ TEST_F(HrApiTest, GenerateOrderDocumentOverrideIinRejectedAndValueUnchanged) {
     json legit = {{"director", "Ахметов Ерлан Серикович"}};
     auto good_req = authed_json(accountant, legit);
     HttpResponsePtr good_resp;
-    ctrl.generateOrderDocument(
-        good_req, [&](const HttpResponsePtr& r) { good_resp = r; }, order.id);
+    ctrl.generateOrderDocument(good_req, [&](const HttpResponsePtr& r) { good_resp = r; }, order.id);
     ASSERT_NE(good_resp, nullptr);
     ASSERT_EQ(good_resp->statusCode(), k202Accepted);
     auto good_body = json::parse(std::string(good_resp->body()));

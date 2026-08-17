@@ -45,6 +45,11 @@ inline constexpr const char* kCounterparties = "counterparties";
 inline constexpr const char* kDocuments = "documents";
 inline constexpr const char* kTax = "tax";
 inline constexpr const char* kMembers = "members";
+/// Реквизиты организации и её расчётные счета
+/// (migrations/025_org_requisites.sql). Отдельный ресурс, а не часть
+/// kMembers: это данные, которые ПЕЧАТАЮТСЯ в документах, и читать их
+/// должен всякий, кто эти документы выпускает.
+inline constexpr const char* kRequisites = "requisites";
 }  // namespace Resource
 
 namespace Action {
@@ -83,6 +88,11 @@ inline constexpr MatrixRow kMatrix[] = {
     {Resource::kDocuments,        {"rw",     "rw",     "",   "r"}},
     {Resource::kTax,              {"rw",     "rw",     "",   "r"}},
     {Resource::kMembers,          {"rw",      "",      "",    ""}},
+    // Запись — ТОЛЬКО владелец, и это не про иерархию, а про мошенничество:
+    // подменённый ИИК уводит платежи покупателей на чужой счёт, а заметят это
+    // через недели. Бухгалтер реквизиты видит (он выпускает по ним документы)
+    // и оспорит подмену, но не меняет их сам. Кадровику они не нужны.
+    {Resource::kRequisites,       {"rw",      "r",     "",    "r"}},
 };
 // clang-format on
 
