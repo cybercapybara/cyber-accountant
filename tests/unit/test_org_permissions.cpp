@@ -316,8 +316,11 @@ TEST(OrgPermissions, TheAgentIsAtLeastAsCapableAsAnAccountantEverywhereElse) {
         if (std::string(res) == Resource::kMembers || std::string(res) == Resource::kRequisites)
             continue;  // две сознательные ямы, проверены выше
         for (const auto* action : kAllActions) {
-            if (allows("accountant", res, action))
+            // Скобки обязательны: EXPECT_TRUE разворачивается в if/else, и без
+            // них компилятор видит висячий else (-Werror=dangling-else).
+            if (allows("accountant", res, action)) {
                 EXPECT_TRUE(allows("agent", res, action)) << res << " / " << action;
+            }
         }
     }
 }
