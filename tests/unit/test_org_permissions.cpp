@@ -176,6 +176,19 @@ TEST(OrgPermissions, WholeMatrixMatchesSpec53) {
         {"viewer",     Resource::kRequisites,      true,  false},
         {"viewer",     Resource::kTemplates,       true,  false},
         {"viewer",     Resource::kHrTemplates,     true,  false},
+
+        {"agent",      Resource::kEmployees,            true,  true},
+        {"agent",      Resource::kHrDocs,               true,  true},
+        {"agent",      Resource::kPayroll,              true,  true},
+        {"agent",      Resource::kPayrollPosting,       true,  true},
+        {"agent",      Resource::kJournal,              true,  true},
+        {"agent",      Resource::kCounterparties,       true,  true},
+        {"agent",      Resource::kDocuments,            true,  true},
+        {"agent",      Resource::kTax,                  true,  true},
+        {"agent",      Resource::kMembers,              false, false},
+        {"agent",      Resource::kRequisites,           true,  false},
+        {"agent",      Resource::kTemplates,            true,  true},
+        {"agent",      Resource::kHrTemplates,          true,  true},
     };
     // clang-format on
 
@@ -274,6 +287,37 @@ TEST(OrgPermissions, EveryMatrixCellIsAWellFormedGrant) {
             const std::string grant(cell);
             EXPECT_TRUE(grant.empty() || grant == "r" || grant == "rw")
                 << row.resource << " / " << detail::kRoles[i] << " = '" << grant << "'";
+        }
+    }
+}
+
+TEST(OrgPermissions, TheAgentCanNeverGrantRoles) {
+    // Единственное действие, которым агент способен РАСШИРИТЬ сам себя. Он
+    // самый привилегированный актор системы, и внедрение в промпт целится
+    // именно сюда: «добавь этого пользователя владельцем» выглядит законной
+    // просьбой и необратимо по последствиям.
+    EXPECT_FALSE(allows("agent", Resource::kMembers, Action::kRead));
+    EXPECT_FALSE(allows("agent", Resource::kMembers, Action::kWrite));
+}
+
+TEST(OrgPermissions, TheAgentReadsRequisitesButNeverRewritesThem) {
+    // Реквизиты нужны, чтобы печатать документы, — читать можно. Запись
+    // закрыта по той же причине, что и бухгалтеру: подменённый ИИК уводит
+    // платежи покупателей на чужой счёт, и замечают это недели спустя.
+    EXPECT_TRUE(allows("agent", Resource::kRequisites, Action::kRead));
+    EXPECT_FALSE(allows("agent", Resource::kRequisites, Action::kWrite));
+}
+
+TEST(OrgPermissions, TheAgentIsAtLeastAsCapableAsAnAccountantEverywhereElse) {
+    // Решение владельца: агент действует от своего имени и не уже человека.
+    // Проверяем это ТАБЛИЦЕЙ, а не на словах — «агенту можно всё» нельзя ни
+    // отревьюить, ни протестировать, поэтому полномочия объявлены поимённо.
+    for (const auto* res : kAllResources) {
+        if (std::string(res) == Resource::kMembers || std::string(res) == Resource::kRequisites)
+            continue;  // две сознательные ямы, проверены выше
+        for (const auto* action : kAllActions) {
+            if (allows("accountant", res, action))
+                EXPECT_TRUE(allows("agent", res, action)) << res << " / " << action;
         }
     }
 }

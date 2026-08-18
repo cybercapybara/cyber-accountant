@@ -66,7 +66,7 @@ namespace detail {
 
 /// Колонки таблицы §5.3 в порядке следования. Роли, которой здесь нет, не
 /// принадлежит ни одна ячейка — значит, она закрыта на всё.
-inline constexpr const char* kRoles[] = {"owner", "accountant", "hr", "viewer"};
+inline constexpr const char* kRoles[] = {"owner", "accountant", "hr", "viewer", "agent"};
 inline constexpr std::size_t kRoleCount = std::size(kRoles);
 
 /// Одна строка таблицы §5.3. Элементы @c grants идут ПОЗИЦИОННО по kRoles.
@@ -83,25 +83,41 @@ struct MatrixRow {
 /// съехавшая колонка здесь стоит дороже единообразия форматирования.
 // clang-format off
 inline constexpr MatrixRow kMatrix[] = {
-    //  ресурс                      owner accountant   hr  viewer
-    {Resource::kEmployees,        {"rw",     "rw",   "rw",   "r"}},
-    {Resource::kHrDocs,           {"rw",     "rw",   "rw",   "r"}},
-    {Resource::kPayroll,          {"rw",     "rw",     "",   "r"}},
-    {Resource::kPayrollPosting,   {"rw",     "rw",     "",    ""}},
-    {Resource::kJournal,          {"rw",     "rw",     "",   "r"}},
-    {Resource::kCounterparties,   {"rw",     "rw",     "",   "r"}},
-    {Resource::kDocuments,        {"rw",     "rw",     "",   "r"}},
-    {Resource::kTax,              {"rw",     "rw",     "",   "r"}},
-    {Resource::kMembers,          {"rw",      "",      "",    ""}},
+    //  ресурс                      owner accountant   hr  viewer  agent
+    {Resource::kEmployees,        {"rw",     "rw",   "rw",   "r", "rw"}},
+    {Resource::kHrDocs,           {"rw",     "rw",   "rw",   "r", "rw"}},
+    {Resource::kPayroll,          {"rw",     "rw",     "",   "r", "rw"}},
+    {Resource::kPayrollPosting,   {"rw",     "rw",     "",    "", "rw"}},
+    {Resource::kJournal,          {"rw",     "rw",     "",   "r", "rw"}},
+    {Resource::kCounterparties,   {"rw",     "rw",     "",   "r", "rw"}},
+    {Resource::kDocuments,        {"rw",     "rw",     "",   "r", "rw"}},
+    {Resource::kTax,              {"rw",     "rw",     "",   "r", "rw"}},
+    // АГЕНТ: две сознательные ЯМЫ в его широких полномочиях.
+    //
+    // `members` закрыт наглухо. Агент — самый привилегированный актор системы,
+    // и раздача ролей это единственное действие, которым он может РАСШИРИТЬ
+    // сам себя. Внедрение в промпт (через текст письма, присланный документ,
+    // название контрагента) целится именно сюда: «добавь этого пользователя
+    // владельцем» — законно выглядящая просьба, необратимая по последствиям.
+    //
+    // `requisites` — только чтение (реквизиты нужны, чтобы печатать документы).
+    // Запись закрыта по той же причине, по какой закрыта бухгалтеру: подменённый
+    // ИИК уводит платежи покупателей на чужой счёт, и замечают это недели
+    // спустя. Тихая подмена банковских реквизитов — ровно то, ради чего в
+    // такую систему и вламываются.
+    //
+    // Во всём остальном агент действует как бухгалтер и шире человека в другом
+    // измерении: он работает по триггерам, без человеческого запроса.
+    {Resource::kMembers,          {"rw",      "",      "",    "", ""}},
     // Запись — ТОЛЬКО владелец, и это не про иерархию, а про мошенничество:
     // подменённый ИИК уводит платежи покупателей на чужой счёт, а заметят это
     // через недели. Бухгалтер реквизиты видит (он выпускает по ним документы)
     // и оспорит подмену, но не меняет их сам. Кадровику они не нужны.
-    {Resource::kRequisites,       {"rw",      "r",     "",    "r"}},
+    {Resource::kRequisites,       {"rw",      "r",     "",    "r", "r"}},
     // Шаблоны: правит владелец и бухгалтер. Кадровик — только КАДРОВЫЕ, по
     // той же логике, по которой ему отдан kHrDocs и закрыт kDocuments.
-    {Resource::kTemplates,        {"rw",     "rw",     "",    "r"}},
-    {Resource::kHrTemplates,      {"rw",     "rw",   "rw",    "r"}},
+    {Resource::kTemplates,        {"rw",     "rw",     "",    "r", "rw"}},
+    {Resource::kHrTemplates,      {"rw",     "rw",   "rw",    "r", "rw"}},
 };
 // clang-format on
 
@@ -142,11 +158,12 @@ constexpr const char* grant_for(const MatrixRow (&rows)[N], std::string_view rol
 /// только тесты. Эти проверки ломают сборку прямо в файле, который правят,
 /// добавляя роль: новую роль дописывают В КОНЕЦ kRoles и добавляют сюда свою
 /// строку, а порядок уже существующих остаётся неподвижным.
-static_assert(kRoleCount == 4, "добавили роль — допишите её static_assert ниже и колонку в каждую строку kMatrix");
+static_assert(kRoleCount == 5, "добавили роль — допишите её static_assert ниже и колонку в каждую строку kMatrix");
 static_assert(role_index("owner") == 0, "порядок kRoles изменился — гранты kMatrix сдвинулись");
 static_assert(role_index("accountant") == 1, "порядок kRoles изменился — гранты kMatrix сдвинулись");
 static_assert(role_index("hr") == 2, "порядок kRoles изменился — гранты kMatrix сдвинулись");
 static_assert(role_index("viewer") == 3, "порядок kRoles изменился — гранты kMatrix сдвинулись");
+static_assert(role_index("agent") == 4, "порядок kRoles изменился — гранты kMatrix сдвинулись");
 static_assert(role_index("nope") == kRoleCount, "неизвестная роль обязана не иметь колонки вовсе");
 
 }  // namespace detail
