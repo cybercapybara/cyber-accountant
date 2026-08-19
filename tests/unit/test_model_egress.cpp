@@ -23,7 +23,6 @@ using Agent::Egress::refusal_reason;
 TEST(ModelEgress, TheClusterProxyIsAllowed) {
     for (const char* url : {"http://guardrails-llm-filter.guardrails.svc.cluster.local:8080",
                             "http://guardrails-llm-filter.guardrails.svc:8080",
-                            "http://guardrails-llm-filter.guardrails:8080",
                             "http://guardrails-llm-filter:8080"}) {
         EXPECT_TRUE(refusal_reason(url).empty()) << url;
     }
@@ -62,11 +61,40 @@ TEST(ModelEgress, NonHttpSchemesAreRefused) {
         EXPECT_FALSE(refusal_reason(url).empty()) << url;
 }
 
-TEST(ModelEgress, PublicDomainsWithTwoSegmentsAreStillRefused) {
-    // `service.namespace` разрешено, и на этом можно было бы проехать с
-    // `evil.com`. Публичные зоны верхнего уровня отсекаются явно.
-    for (const char* h : {"evil.com", "example.org", "sneaky.net", "some.io", "model.ai"})
+TEST(ModelEgress, AnyTwoSegmentHostIsRefusedBecauseADenylistOfZonesIsUnbounded) {
+    // НАЙДЕНО ПРОВЕРКОЙ БЕЗОПАСНОСТИ, и находка настоящая. Первая редакция
+    // разрешала любые два сегмента и отсекала публичные домены ПЕРЕЧНЕМ зон
+    // (.com/.org/.net/.io/.ai). Зон тысячи — и всё, чего в перечне нет,
+    // проходило насквозь. Список исключений открыт, значит защита открыта.
+    //
+    // Теперь разрешение построено списком ДОПУСТИМЫХ ФОРМ, поэтому отвергается
+    // любой двухсегментный хост, включая те, что в прежний перечень не входили.
+    for (const char* h : {"evil.com",
+                          "example.org",
+                          "sneaky.net",
+                          "some.io",
+                          "model.ai",
+                          // ровно те, что проезжали через перечень зон:
+                          "evil.ru",
+                          "evil.kz",
+                          "attacker.xyz",
+                          "evil.co",
+                          "bad.dev",
+                          "x.tk"})
         EXPECT_FALSE(is_allowed_host(h)) << h;
+}
+
+TEST(ModelEgress, TheUnambiguousClusterFormsStillWork) {
+    // Плата за строгость: `сервис.namespace` больше не принимается, потому что
+    // синтаксически неотличим от публичного домена. Однозначные формы —
+    // принимаются, и отказ прямо предлагает ими воспользоваться.
+    EXPECT_TRUE(is_allowed_host("guardrails-llm-filter"));
+    EXPECT_TRUE(is_allowed_host("guardrails-llm-filter.guardrails.svc"));
+    EXPECT_TRUE(is_allowed_host("guardrails-llm-filter.guardrails.svc.cluster.local"));
+    EXPECT_FALSE(is_allowed_host("guardrails-llm-filter.guardrails"));
+
+    const auto reason = refusal_reason("http://guardrails-llm-filter.guardrails:8080");
+    EXPECT_NE(reason.find(".svc"), std::string::npos) << "отказ не подсказывает допустимую форму";
 }
 
 TEST(ModelEgress, TheRefusalExplainsWhyRatherThanJustSayingNo) {

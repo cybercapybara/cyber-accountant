@@ -61,7 +61,9 @@ inline std::string host_of(const std::string& url) {
  * @details Разрешаем только кластерные имена: `<service>`,
  *          `<service>.<namespace>`, `<...>.svc`, `<...>.svc.cluster.local`.
  *          Всё остальное — отказ, включая:
- *          - публичные домены (`api.anthropic.com`);
+ *          - любые публичные домены, включая двухсегментные (`evil.ru`),
+ *            потому что разрешение построено СПИСКОМ ДОПУСТИМЫХ ФОРМ, а не
+ *            перечнем запрещённых зон;
  *          - `localhost` и петлевой адрес: соблазн «поставлю туннель рядом»
  *            обходит маскирование ровно так же, как прямой адрес;
  *          - IP-адреса: имя сервиса в кластере не бывает адресом, а адрес
@@ -78,20 +80,24 @@ inline bool is_allowed_host(const std::string& host) {
     if (looks_numeric)
         return false;
 
+    // ДАЛЬШЕ — ЗАКРЫТЫЙ СПИСОК ФОРМ, А НЕ СПИСОК ИСКЛЮЧЕНИЙ.
+    //
+    // Первая редакция разрешала любые два сегмента (`service.namespace`), а
+    // публичные домены пыталась отсечь перечнем зон (.com/.org/.net/...).
+    // Это неверно ПО УСТРОЙСТВУ: зон тысячи, и `evil.ru`, `evil.kz`,
+    // `attacker.xyz` проходили насквозь. Перечень исключений открыт, значит
+    // защита открыта.
+    //
+    // Поэтому форма `service.namespace` не разрешается вовсе: синтаксически
+    // она НЕОТЛИЧИМА от публичного домена, и никакая проверка строки их не
+    // разведёт. Внутрикластерный адрес всегда можно записать однозначно —
+    // односоставным именем либо с `.svc`, — и сообщение об отказе прямо это
+    // предлагает.
     if (host.find('.') == std::string::npos)
         return true;  // односоставное имя сервиса в том же пространстве
     if (host.size() >= 4 && host.compare(host.size() - 4, 4, ".svc") == 0)
-        return true;
-    if (host.find(".svc.") != std::string::npos)
-        return true;
-    // `service.namespace` — два сегмента без публичного домена верхнего уровня.
-    const std::size_t dots = static_cast<std::size_t>(std::count(host.begin(), host.end(), '.'));
-    static constexpr const char* kPublicSuffixes[] = {".com", ".org", ".net", ".io", ".ai", ".dev", ".cloud"};
-    const bool public_suffix = std::any_of(std::begin(kPublicSuffixes), std::end(kPublicSuffixes), [&](const char* s) {
-        const std::string suffix(s);
-        return host.size() > suffix.size() && host.compare(host.size() - suffix.size(), suffix.size(), suffix) == 0;
-    });
-    return dots == 1 && !public_suffix;
+        return true;                                 // <service>.<namespace>.svc
+    return host.find(".svc.") != std::string::npos;  // ...svc.cluster.local
 }
 
 /// Причина отказа для сообщения об ошибке. Пусто = адрес допустим.
@@ -101,7 +107,10 @@ inline std::string refusal_reason(const std::string& url) {
         return "адрес модели должен быть http(s): '" + url + "'";
     if (!is_allowed_host(host))
         return "агент обязан ходить к модели ТОЛЬКО через прокси внутри кластера, а адрес ведёт на '" + host +
-               "'. Прокси — граница маскирования персональных данных; прямой адрес отключает её";
+               "'. Прокси — граница маскирования персональных данных; прямой адрес отключает её. "
+               "Допустимы односоставное имя сервиса либо форма с '.svc' "
+               "(например, guardrails-llm-filter.guardrails.svc.cluster.local): форма 'сервис.namespace' "
+               "синтаксически неотличима от публичного домена и поэтому не принимается";
     return {};
 }
 
